@@ -204,3 +204,45 @@ class TestSourceOwnedPoolSurvives:
         session.refresh(legacy)
         assert legacy.enabled is False
         assert legacy.archived_at is not None
+
+
+class TestRetiredBatchGetsAnEnd:
+    """A retired Batch is terminal, so it carries an end time for its duration."""
+
+    def test_roll_up_stamps_completed_at(self, session):
+        from apo.services.execution_retirement import retire_legacy_execution_rows
+
+        _seed_installation(session)
+        legacy = _pool(session, slug="legacy-pool")
+        att = _bundled_attempt(session, pool_id=legacy.id, status="running")
+        ts = _now()
+
+        retire_legacy_execution_rows(session, now=ts)
+
+        batch = session.get(AgentTaskBatchRunDB, att.batch_run_id)
+        assert batch.status == "error"
+        assert batch.completed_at.replace(tzinfo=None) == ts.replace(tzinfo=None)
+
+    def test_backfills_terminal_batches_without_end(self, session):
+        from apo.services.execution_retirement import retire_legacy_execution_rows
+
+        _seed_installation(session)
+        last_end = _now() - timedelta(hours=2)
+        session.add(AgentTaskBatchRunDB(id="bch-ended", project="p1", selection_type="task", status="error", created_at=_now()))
+        session.add(AgentTaskBatchRunDB(id="bch-empty", project="p1", selection_type="task", status="cancelled", created_at=_now()))
+        session.add(AgentTaskBatchRunDB(id="bch-live", project="p1", selection_type="task", status="running", created_at=_now()))
+        session.flush()
+        session.add(AgentTaskRunDB(id="run-a", batch_run_id="bch-ended", task_id="a", task_path="a", status="error", completed_at=last_end - timedelta(seconds=5)))
+        session.add(AgentTaskRunDB(id="run-b", batch_run_id="bch-ended", task_id="b", task_path="b", status="error", completed_at=last_end))
+        session.commit()
+        ts = _now()
+
+        assert retire_legacy_execution_rows(session, now=ts) == 2
+        assert retire_legacy_execution_rows(session, now=_now()) == 0
+
+        ended = session.get(AgentTaskBatchRunDB, "bch-ended")
+        empty = session.get(AgentTaskBatchRunDB, "bch-empty")
+        live = session.get(AgentTaskBatchRunDB, "bch-live")
+        assert ended.completed_at.replace(tzinfo=None) == last_end.replace(tzinfo=None)
+        assert empty.completed_at.replace(tzinfo=None) == ts.replace(tzinfo=None)
+        assert live.completed_at is None

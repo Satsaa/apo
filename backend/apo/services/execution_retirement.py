@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import cast
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from apo.db_helpers import as_column
 from apo.models.db import (
@@ -52,6 +52,7 @@ def retire_legacy_execution_rows(session: Session, *, now: datetime | None = Non
     - Terminalizes queued/leased/running ``assignment_kind="bundled"`` Attempts
       as cancelled with ``failure_kind="execution_retired"``.
     - Rolls their linked Task Runs / Batches into terminal state.
+    - Stamps ``completed_at`` on terminal Batches that lack one.
     - Revokes non-source-owned persistent Executors + legacy enrollment tokens.
     - Disables/archives non-system legacy Pools; clears stale Project defaults.
     - Preserves caller/source-owned work, the canonical source-owned Pool, and
@@ -62,6 +63,7 @@ def retire_legacy_execution_rows(session: Session, *, now: datetime | None = Non
 
     changed += _retire_bundled_schedules(session, ts)
     changed += _retire_bundled_attempts(session, ts)
+    changed += _stamp_terminal_batches_without_end(session, ts)
     changed += _retire_legacy_executors(session, ts)
     changed += _retire_legacy_pools(session, ts)
 
@@ -172,8 +174,37 @@ def _roll_up_logical_run(session: Session, attempt: TaskExecutionAttemptDB, ts: 
     batch = session.get(AgentTaskBatchRunDB, attempt.batch_run_id)
     if batch is not None and batch.status not in BATCH_RUN_TERMINAL:
         batch.status = "error"
+        batch.completed_at = batch.completed_at or ts
         batch.cancelled_tasks = (batch.cancelled_tasks or 0) + 1
         session.add(batch)
+
+
+def _stamp_terminal_batches_without_end(session: Session, ts: datetime) -> int:
+    """Give terminal Batches without ``completed_at`` their last Task Run's end.
+
+    Duration displays read a Batch with no end as still running and count up
+    to now. Batches retired before the roll-up stamped an end are repaired
+    here; ``ts`` covers a Batch with no finished Task Run.
+    """
+    batches = session.exec(
+        select(AgentTaskBatchRunDB).where(
+            as_column(AgentTaskBatchRunDB.status).in_(list(BATCH_RUN_TERMINAL)),
+            as_column(AgentTaskBatchRunDB.completed_at).is_(None),
+        )
+    ).all()
+    if not batches:
+        return 0
+    last_ends: dict[str, datetime | None] = dict(
+        session.exec(
+            select(AgentTaskRunDB.batch_run_id, func.max(AgentTaskRunDB.completed_at))
+            .where(as_column(AgentTaskRunDB.batch_run_id).in_([b.id for b in batches]))
+            .group_by(AgentTaskRunDB.batch_run_id)
+        ).all()
+    )
+    for batch in batches:
+        batch.completed_at = last_ends.get(batch.id) or ts
+        session.add(batch)
+    return len(batches)
 
 
 def _retire_legacy_executors(session: Session, ts: datetime) -> int:

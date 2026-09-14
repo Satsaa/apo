@@ -44,8 +44,9 @@ export function formatRelative(value: string | null, nowMs: number | null): stri
   return formatDate(value);
 }
 
-export function formatDuration(start: string | null, end: string | null): string {
-  if (!start) return "\u2014";
+/** Elapsed time of a run. Only a `live` run without an end counts up to now. */
+export function formatDuration(start: string | null, end: string | null, live: boolean): string {
+  if (!start || (!end && !live)) return "\u2014";
   const startMs = parseUTC(start).getTime();
   const endMs = end ? parseUTC(end).getTime() : Date.now();
   const ms = endMs - startMs;

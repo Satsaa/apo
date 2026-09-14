@@ -208,7 +208,7 @@ export function RunsRow({
         <TableCell className="text-right">
           <div className="inline-flex items-center justify-end gap-1.5 font-mono text-[13px] tabular-nums text-foreground">
             <Clock className="h-3 w-3 text-muted-foreground/50" />
-            {formatDuration(batch.started_at, batch.completed_at)}
+            {formatDuration(batch.started_at, batch.completed_at, isRunning)}
           </div>
           {batch.total_cost != null && batch.total_cost > 0 && (
             <div className="mt-1 font-mono text-[11px] tabular-nums text-muted-foreground">

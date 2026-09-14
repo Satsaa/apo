@@ -112,7 +112,7 @@ export function InlineTaskRunRow({
       <TableCell className="text-right">
         <div className="inline-flex items-center justify-end gap-1.5 font-mono text-[12px] tabular-nums text-foreground">
           <Clock className="h-3 w-3 text-muted-foreground/50" />
-          {formatDuration(run.started_at, run.completed_at)}
+          {formatDuration(run.started_at, run.completed_at, status === "running")}
         </div>
         {run.total_cost != null && run.total_cost > 0 && (
           <div className="mt-1 font-mono text-[11px] tabular-nums text-muted-foreground">
