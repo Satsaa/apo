@@ -13,6 +13,7 @@ interface CapturedOptions {
   enabled: boolean;
   onEvent: (event: RunEvent) => void;
   onReconnect?: () => void;
+  closeWhenHidden?: boolean;
 }
 let hookOptions: CapturedOptions;
 vi.mock("@/hooks/use-run-events", () => ({
@@ -66,6 +67,11 @@ describe("RunsListAutoRefresh", () => {
       renderList([batch("b1", "completed")], true);
       expect(hookOptions.enabled).toBe(true);
     });
+
+    it("closes the stream while the tab is hidden", () => {
+      renderList([batch("b1", "completed")], true);
+      expect(hookOptions.closeWhenHidden).toBe(true);
+    });
   });
 
   describe("listed runs", () => {
@@ -77,7 +83,7 @@ describe("RunsListAutoRefresh", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
 
-    it.each(["batch_run.failed", "task_run.started", "task_run.completed", "task_run.error"])(
+    it.each(["batch_run.failed", "task_run.completed", "task_run.error"])(
       "refreshes on %s for a listed run",
       (type) => {
         renderList([batch("b1", "running")], false);
@@ -86,6 +92,41 @@ describe("RunsListAutoRefresh", () => {
         expect(refresh).toHaveBeenCalledTimes(1);
       },
     );
+
+    it("refreshes when a task starts in a queued run, which moves it to running", () => {
+      renderList([batch("b1", "queued")], false);
+      emit(event("task_run.started", "b1"));
+      flush();
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a task starting in a running run (replayed on every connect, changes nothing shown)", () => {
+      renderList([batch("b1", "running")], true);
+      emit(event("task_run.started", "b1"));
+      emit(event("task_run.started", "b1"));
+      flush();
+      expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it("waits out the coalesce window before refreshing", () => {
+      renderList([batch("b1", "running")], false);
+      emit(event("task_run.completed", "b1"));
+      act(() => vi.advanceTimersByTime(900));
+      expect(refresh).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(100));
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps refreshing under a steady stream of events rather than waiting for a lull", () => {
+      renderList([batch("b1", "running")], false);
+      for (let i = 0; i < 8; i++) {
+        emit(event("task_run.completed", "b1"));
+        act(() => vi.advanceTimersByTime(400));
+      }
+      // Leading-edge throttle: fires at ~1.0s and ~2.2s. A trailing debounce
+      // would still be waiting for a quiet second.
+      expect(refresh.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
 
     it("coalesces a burst of events into one refresh", () => {
       renderList([batch("b1", "running")], false);

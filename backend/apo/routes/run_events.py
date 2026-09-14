@@ -29,7 +29,7 @@ def _as_col(value: object) -> ColumnElement[str]:
 async def stream_run_events(
     request: Request,
     project: str = Query(default="default"),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Subscribe to real-time run events for a project.
 

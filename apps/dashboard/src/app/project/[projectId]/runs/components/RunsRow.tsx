@@ -73,7 +73,8 @@ export function RunsRow({
 
   // Only the newest request may write: a live refresh can re-fetch while an
   // earlier load is still in flight, and that older response must not win.
-  // A background re-fetch keeps the current rows on screen (no spinner) and
+  // Bumping the sequence also discards whatever is in flight. A background
+  // re-fetch (rows already shown) keeps them on screen, with no spinner, and
   // leaves them in place if it fails — a live update must not blank them.
   const fetchSeqRef = useRef(0);
   const loadTaskRuns = useCallback(
@@ -85,10 +86,7 @@ export function RunsRow({
       }
       try {
         const detail = await getAgentTaskBatchRun(batch.id);
-        if (seq === fetchSeqRef.current) {
-          setTaskRuns(detail.task_runs ?? []);
-          setError(null);
-        }
+        if (seq === fetchSeqRef.current) setTaskRuns(detail.task_runs ?? []);
       } catch (e: unknown) {
         if (seq === fetchSeqRef.current && !background) {
           setError(e instanceof Error ? e.message : "Failed to load task runs");
@@ -106,25 +104,44 @@ export function RunsRow({
     if (next && taskRuns === null && !loading) void loadTaskRuns(false);
   }, [expanded, taskRuns, loading, loadTaskRuns]);
 
-  // The list re-renders with a fresh summary whenever a live event lands.
+  // A live refresh re-renders every row with a new summary object, so key on
+  // the summary's content: only this batch's own progress should re-fetch.
+  const summaryKey = [
+    batch.status,
+    batch.total_tasks,
+    batch.passed_tasks,
+    batch.failed_tasks,
+    batch.errored_tasks,
+    batch.total_checks,
+    batch.passed_checks,
+    batch.completed_at,
+  ].join("|");
+
   // While the batch is (or just stopped) running, the task runs cached on
-  // first expand are stale: re-fetch them if shown, otherwise drop them so
-  // the next expand loads current ones.
-  const prevBatchRef = useRef(batch);
+  // first expand go stale as it progresses: re-fetch them if shown, otherwise
+  // drop them (and anything in flight) so the next expand loads current ones.
+  const prevSummaryRef = useRef({ key: summaryKey, status: batch.status });
   useEffect(() => {
-    const prev = prevBatchRef.current;
-    if (prev === batch) return;
-    prevBatchRef.current = batch;
+    const prev = prevSummaryRef.current;
+    if (prev.key === summaryKey) return;
+    prevSummaryRef.current = { key: summaryKey, status: batch.status };
     const wasPending = prev.status === "running" || prev.status === "queued";
     if (!wasPending && !isRunning) return;
-    if (expanded) void loadTaskRuns(true);
-    else setTaskRuns(null);
-  }, [batch, isRunning, expanded, loadTaskRuns]);
+    if (expanded) {
+      void loadTaskRuns(taskRuns !== null);
+    } else {
+      fetchSeqRef.current += 1;
+      setLoading(false);
+      setTaskRuns(null);
+    }
+  }, [summaryKey, batch.status, isRunning, expanded, taskRuns, loadTaskRuns]);
 
   // Splice the deleted task run out of the expanded rows; deleting the
   // last one also removes the (now empty) batch, so re-fetch the list.
+  // An in-flight re-fetch predates the delete and would restore the row.
   const handleTaskRunDeleted = useCallback(
     (taskRunId: string) => {
+      fetchSeqRef.current += 1;
       setTaskRuns((prev) => prev?.filter((run) => run.id !== taskRunId) ?? prev);
       if ((taskRuns?.length ?? 0) <= 1) router.refresh();
     },

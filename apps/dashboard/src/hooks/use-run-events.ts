@@ -22,6 +22,13 @@ interface UseRunEventsOptions {
    * as "anything may have happened" and re-fetch (router.refresh()).
    */
   onReconnect?: () => void;
+  /**
+   * Close the stream while the tab is hidden and reopen it (reported as a
+   * reconnect) when the tab is seen again. For list pages that hold a stream
+   * with nothing running: a forgotten tab should not keep a backend stream
+   * open, nor re-render its page on every event nobody is looking at.
+   */
+  closeWhenHidden?: boolean;
 }
 
 const EVENT_TYPES = [
@@ -38,6 +45,7 @@ export function useRunEvents({
   enabled,
   onEvent,
   onReconnect,
+  closeWhenHidden = false,
 }: UseRunEventsOptions) {
   const resolvedProject = project ?? getProjectId();
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -130,10 +138,30 @@ export function useRunEvents({
       return;
     }
 
-    connect();
+    if (closeWhenHidden && document.hidden) {
+      // Opened in a background tab: connect when first seen, and report that
+      // open as a reconnect since the server-rendered page may be stale by then.
+      droppedRef.current = true;
+      reconnectOnVisibleRef.current = true;
+    } else {
+      connect();
+    }
 
     const handleVisibilityChange = () => {
-      if (document.hidden) return;
+      if (document.hidden) {
+        if (!closeWhenHidden) return;
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = null;
+        }
+        if (eventSourceRef.current) {
+          detachAndClose(eventSourceRef.current, handlerRef.current);
+          eventSourceRef.current = null;
+        }
+        droppedRef.current = true;
+        reconnectOnVisibleRef.current = true;
+        return;
+      }
       // Revive a dead stream whenever the tab becomes visible again — both
       // the deferred-reconnect case and the gave-up-after-max-attempts case
       // (a long-hidden or slept tab exhausts the backoff budget; the user
@@ -162,7 +190,7 @@ export function useRunEvents({
         eventSourceRef.current = null;
       }
     };
-  }, [enabled, connect]);
+  }, [enabled, connect, closeWhenHidden]);
 }
 
 /** Base delay (ms) for the first reconnect attempt; doubles each attempt up to the cap. */

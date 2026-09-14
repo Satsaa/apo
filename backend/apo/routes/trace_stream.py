@@ -24,7 +24,7 @@ async def stream_trace_events(
     trace_id: str,
     request: Request,
     project: str = "default",
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session, scope="function"),
 ):
     """Subscribe to real-time events for a trace.
 

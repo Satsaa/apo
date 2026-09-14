@@ -20,7 +20,20 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-vi.mock("@/components/runs/DeleteRunButton", () => ({ DeleteRunButton: () => null }));
+vi.mock("@/components/runs/DeleteRunButton", () => ({
+  DeleteRunButton: ({
+    target,
+    onDeleted,
+  }: {
+    target: { kind: string; taskRunId?: string };
+    onDeleted?: () => void;
+  }) =>
+    target.kind === "task-run" ? (
+      <button type="button" onClick={onDeleted}>
+        delete {target.taskRunId}
+      </button>
+    ) : null,
+}));
 
 import { RunsRow } from "../RunsRow";
 
@@ -168,6 +181,97 @@ describe("RunsRow under live refresh", () => {
     await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
     expect(await screen.findByRole("link", { name: "fresh" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "stale" })).toBeNull();
+  });
+
+  it("does not re-fetch when a refresh re-renders an unchanged running summary", async () => {
+    getAgentTaskBatchRun.mockResolvedValueOnce(detail(taskRun("task-a", "running")));
+    const view = render(<Row batch={summary("running")} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    await screen.findByRole("link", { name: "task-a" });
+
+    for (let i = 0; i < 3; i++) view.rerender(<Row batch={summary("running")} />);
+    await act(async () => {});
+    expect(getAgentTaskBatchRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cache a load that was in flight when a collapsed row was invalidated", async () => {
+    const first = deferred<AgentTaskBatchRunDetail>();
+    getAgentTaskBatchRun.mockReturnValueOnce(first.promise);
+    const view = render(<Row batch={summary("running")} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    await userEvent.click(screen.getByRole("button", { name: "Collapse task runs" }));
+
+    view.rerender(<Row batch={summary("completed", 2)} />);
+    await act(async () => first.resolve(detail(taskRun("stale", "running"))));
+
+    getAgentTaskBatchRun.mockResolvedValueOnce(detail(taskRun("fresh", "passed")));
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    expect(await screen.findByRole("link", { name: "fresh" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "stale" })).toBeNull();
+  });
+
+  it("shows the error when the load that replaced a first load fails", async () => {
+    const first = deferred<AgentTaskBatchRunDetail>();
+    getAgentTaskBatchRun.mockReturnValueOnce(first.promise);
+    const view = render(<Row batch={summary("running")} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+
+    getAgentTaskBatchRun.mockRejectedValueOnce(new Error("backend down"));
+    view.rerender(<Row batch={summary("running", 1)} />);
+    await act(async () => first.resolve(detail(taskRun("older", "running"))));
+
+    expect(await screen.findByText("backend down")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "older" })).toBeNull();
+  });
+
+  it("keeps the spinner until the newest load lands", async () => {
+    const first = deferred<AgentTaskBatchRunDetail>();
+    const second = deferred<AgentTaskBatchRunDetail>();
+    getAgentTaskBatchRun.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const view = render(<Row batch={summary("running")} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    view.rerender(<Row batch={summary("running", 1)} />);
+
+    await act(async () => first.resolve(detail(taskRun("older", "running"))));
+    expect(screen.getByText(/Loading task runs/)).toBeInTheDocument();
+
+    await act(async () => second.resolve(detail(taskRun("newer", "running"))));
+    expect(screen.queryByText(/Loading task runs/)).toBeNull();
+    expect(screen.getByRole("link", { name: "newer" })).toBeInTheDocument();
+  });
+
+  it("ignores an older load's failure once a newer load has landed", async () => {
+    const first = deferred<AgentTaskBatchRunDetail>();
+    getAgentTaskBatchRun.mockReturnValueOnce(first.promise);
+    const view = render(<Row batch={summary("running")} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+
+    getAgentTaskBatchRun.mockResolvedValueOnce(detail(taskRun("newer", "passed")));
+    view.rerender(<Row batch={summary("completed", 2)} />);
+    await screen.findByRole("link", { name: "newer" });
+
+    await act(async () => {
+      first.resolve(Promise.reject(new Error("older failed")) as never);
+    });
+    await act(async () => {});
+    expect(screen.queryByText("older failed")).toBeNull();
+    expect(screen.getByRole("link", { name: "newer" })).toBeInTheDocument();
+  });
+
+  it("does not let a re-fetch that was in flight restore a deleted task run", async () => {
+    getAgentTaskBatchRun.mockResolvedValueOnce(detail(taskRun("task-a", "passed"), taskRun("task-b", "running")));
+    const view = render(<Row batch={summary("running", 1)} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    await screen.findByRole("link", { name: "task-a" });
+
+    const inFlight = deferred<AgentTaskBatchRunDetail>();
+    getAgentTaskBatchRun.mockReturnValueOnce(inFlight.promise);
+    view.rerender(<Row batch={summary("completed", 2)} />);
+    await userEvent.click(screen.getByRole("button", { name: "delete task-a" }));
+
+    await act(async () => inFlight.resolve(detail(taskRun("task-a", "passed"), taskRun("task-b", "passed"))));
+    expect(screen.queryByRole("link", { name: "task-a" })).toBeNull();
+    expect(screen.getByRole("link", { name: "task-b" })).toBeInTheDocument();
   });
 
   it("never lets an older response overwrite a newer one", async () => {

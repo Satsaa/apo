@@ -81,6 +81,46 @@ describe("Runs page live refresh", () => {
     );
   });
 
+  it("hands the listed runs to the live refresh", () => {
+    const listed = [
+      {
+        id: "bch_1",
+        project: "acme",
+        selection_type: "all",
+        selection_query: null,
+        status: "running",
+        total_tasks: 1,
+        passed_tasks: 0,
+        failed_tasks: 0,
+        errored_tasks: 0,
+        total_checks: 0,
+        passed_checks: 0,
+        created_at: "2026-09-14T00:00:00Z",
+        started_at: "2026-09-14T00:00:00Z",
+        completed_at: null,
+        trigger: null,
+        total_cost: null,
+        total_tokens: null,
+        configuration: { state: "unknown", configurations: [], reported_task_runs: 0, total_task_runs: 1 },
+      },
+    ] as never[];
+    searchParams = new URLSearchParams("");
+    render(
+      <RunsClient
+        batchRuns={listed}
+        error={null}
+        taskSource={{ source_type: "published" } as never}
+        totalCount={1}
+        page={0}
+        pageSize={20}
+        totalPages={1}
+        modelFacets={facets}
+        canDeleteRuns={false}
+      />,
+    );
+    expect(autoRefreshProps).toHaveBeenCalledWith(expect.objectContaining({ batchRuns: listed }));
+  });
+
   it("does not watch for new runs on a later page, where they never land", () => {
     searchParams = new URLSearchParams("page=2");
     render(
