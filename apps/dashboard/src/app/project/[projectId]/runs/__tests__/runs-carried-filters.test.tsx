@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { RunsClient } from "@/app/project/[projectId]/runs/runs-client";
@@ -28,6 +28,18 @@ vi.mock("@/lib/project-router", () => ({
   useIsDemo: () => false,
   DEFAULT_PROJECT: "example-service",
   DEMO_PROJECT: "demo",
+}));
+
+const rowProps = vi.fn();
+vi.mock("@/app/project/[projectId]/runs/components/RunsRow", () => ({
+  RunsRow: (props: { batch: { id: string } }) => {
+    rowProps(props);
+    return (
+      <tr>
+        <td>{props.batch.id}</td>
+      </tr>
+    );
+  },
 }));
 
 const autoRefreshProps = vi.fn();
@@ -119,6 +131,16 @@ describe("Runs page live refresh", () => {
       />,
     );
     expect(autoRefreshProps).toHaveBeenCalledWith(expect.objectContaining({ batchRuns: listed }));
+
+    // Task starts reported by the live refresh reach the row as a tick.
+    expect(rowProps).toHaveBeenLastCalledWith(expect.objectContaining({ taskStartTick: 0 }));
+    const { onTasksStarted } = autoRefreshProps.mock.calls.at(-1)![0] as {
+      onTasksStarted: (ids: string[]) => void;
+    };
+    act(() => onTasksStarted(["bch_1"]));
+    expect(rowProps).toHaveBeenLastCalledWith(expect.objectContaining({ taskStartTick: 1 }));
+    act(() => onTasksStarted(["bch_other", "bch_1"]));
+    expect(rowProps).toHaveBeenLastCalledWith(expect.objectContaining({ taskStartTick: 2 }));
   });
 
   it("does not watch for new runs on a later page, where they never land", () => {

@@ -30,15 +30,27 @@ interface RunsListAutoRefreshProps {
    * run started elsewhere (CLI, schedule, another tab) only lands on page 0.
    */
   watchForNewRuns: boolean;
+  /**
+   * Listed running batches that had a task start, once per coalesce window.
+   * That changes nothing the list shows, but an expanded row's task runs.
+   */
+  onTasksStarted?: (batchRunIds: string[]) => void;
 }
 
 export function RunsListAutoRefresh({
   project,
   batchRuns,
   watchForNewRuns,
+  onTasksStarted,
 }: RunsListAutoRefreshProps) {
   const router = useRouter();
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshPendingRef = useRef(false);
+  const startedPendingRef = useRef(new Set<string>());
+  const onTasksStartedRef = useRef(onTasksStarted);
+  useEffect(() => {
+    onTasksStartedRef.current = onTasksStarted;
+  });
   // Unlisted batches already refreshed for once. One that is still unlisted
   // after that refresh is filtered out or on a later page, so its remaining
   // task events must not keep re-fetching a list it will never appear in.
@@ -59,13 +71,26 @@ export function RunsListAutoRefresh({
     };
   }, []);
 
-  const scheduleRefresh = useCallback(() => {
+  const scheduleFlush = useCallback(() => {
     if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
-      router.refresh();
+      if (refreshPendingRef.current) {
+        refreshPendingRef.current = false;
+        router.refresh();
+      }
+      const started = startedPendingRef.current;
+      if (started.size > 0) {
+        startedPendingRef.current = new Set();
+        onTasksStartedRef.current?.([...started]);
+      }
     }, REFRESH_COALESCE_MS);
   }, [router]);
+
+  const scheduleRefresh = useCallback(() => {
+    refreshPendingRef.current = true;
+    scheduleFlush();
+  }, [scheduleFlush]);
 
   const handleEvent = useCallback(
     (event: RunEvent) => {
@@ -78,8 +103,13 @@ export function RunsListAutoRefresh({
       if (listed !== undefined) {
         // A task starting changes nothing a running row shows, and the backend
         // replays one `task_run.started` per running task on every connect.
-        // It only matters for a queued row, which it moves to running.
-        if (event.event_type === "task_run.started" && listed !== "queued") return;
+        // It only re-renders the list for a queued row, which it moves to
+        // running; otherwise it just tells the row its task runs moved on.
+        if (event.event_type === "task_run.started" && listed !== "queued") {
+          startedPendingRef.current.add(batchRunId);
+          scheduleFlush();
+          return;
+        }
         scheduleRefresh();
         return;
       }
@@ -92,7 +122,7 @@ export function RunsListAutoRefresh({
         scheduleRefresh();
       }
     },
-    [listedStatus, watchForNewRuns, scheduleRefresh],
+    [listedStatus, watchForNewRuns, scheduleRefresh, scheduleFlush],
   );
 
   useRunEvents({

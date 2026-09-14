@@ -110,6 +110,27 @@ describe("useRunEvents closeWhenHidden", () => {
     expect(onReconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("gives a stream revived on return a fresh retry budget", () => {
+    render(<Consumer onReconnect={vi.fn()} />);
+    act(() => latest().onopen?.());
+
+    // Exhaust the backoff budget: every retry errors before opening.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      act(() => latest().onerror?.());
+      act(() => vi.advanceTimersByTime(15_000));
+    }
+    const dead = FakeEventSource.instances.length;
+
+    setHidden(true);
+    setHidden(false);
+    expect(FakeEventSource.instances).toHaveLength(dead + 1);
+
+    // The revived stream drops once more: it must still be retried.
+    act(() => latest().onerror?.());
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(FakeEventSource.instances).toHaveLength(dead + 2);
+  });
+
   it("drops a pending reconnect when the tab is hidden", () => {
     render(<Consumer onReconnect={vi.fn()} closeWhenHidden />);
     act(() => latest().onopen?.());

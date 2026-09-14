@@ -30,6 +30,8 @@ interface RunsRowProps {
   modelFilter: Set<string>;
   /** Caller's project role allows run deletion (owner/admin). */
   canDelete: boolean;
+  /** Bumped when a task of this batch starts; re-fetches expanded task runs. */
+  taskStartTick?: number;
 }
 
 /**
@@ -46,6 +48,7 @@ export function RunsRow({
   onToggleCompare,
   modelFilter,
   canDelete,
+  taskStartTick = 0,
 }: RunsRowProps) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
@@ -77,6 +80,8 @@ export function RunsRow({
   // re-fetch (rows already shown) keeps them on screen, with no spinner, and
   // leaves them in place if it fails — a live update must not blank them.
   const fetchSeqRef = useRef(0);
+  // Deleted here, so never shown again — even by a response already in flight.
+  const deletedIdsRef = useRef(new Set<string>());
   const loadTaskRuns = useCallback(
     async (background: boolean) => {
       const seq = ++fetchSeqRef.current;
@@ -86,7 +91,10 @@ export function RunsRow({
       }
       try {
         const detail = await getAgentTaskBatchRun(batch.id);
-        if (seq === fetchSeqRef.current) setTaskRuns(detail.task_runs ?? []);
+        if (seq === fetchSeqRef.current) {
+          const deleted = deletedIdsRef.current;
+          setTaskRuns((detail.task_runs ?? []).filter((run) => !deleted.has(run.id)));
+        }
       } catch (e: unknown) {
         if (seq === fetchSeqRef.current && !background) {
           setError(e instanceof Error ? e.message : "Failed to load task runs");
@@ -106,7 +114,9 @@ export function RunsRow({
 
   // A live refresh re-renders every row with a new summary object, so key on
   // the summary's content: only this batch's own progress should re-fetch.
+  // A task starting changes no summary field, so it arrives as a tick.
   const summaryKey = [
+    taskStartTick,
     batch.status,
     batch.total_tasks,
     batch.passed_tasks,
@@ -138,10 +148,9 @@ export function RunsRow({
 
   // Splice the deleted task run out of the expanded rows; deleting the
   // last one also removes the (now empty) batch, so re-fetch the list.
-  // An in-flight re-fetch predates the delete and would restore the row.
   const handleTaskRunDeleted = useCallback(
     (taskRunId: string) => {
-      fetchSeqRef.current += 1;
+      deletedIdsRef.current.add(taskRunId);
       setTaskRuns((prev) => prev?.filter((run) => run.id !== taskRunId) ?? prev);
       if ((taskRuns?.length ?? 0) <= 1) router.refresh();
     },

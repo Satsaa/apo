@@ -209,6 +209,16 @@ export function RunsClient({
     [updateUrl],
   );
 
+  // Per-batch count of live task starts, which expanded rows re-fetch on.
+  const [taskStartTicks, setTaskStartTicks] = useState<Record<string, number>>({});
+  const bumpTaskStartTicks = useCallback((batchRunIds: string[]) => {
+    setTaskStartTicks((prev) => {
+      const next = { ...prev };
+      for (const id of batchRunIds) next[id] = (next[id] ?? 0) + 1;
+      return next;
+    });
+  }, []);
+
   // Compare selection (max 2 runs, sliding window when a third is picked).
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const compareIdSet = useMemo(() => new Set(compareIds), [compareIds]);
@@ -238,6 +248,7 @@ export function RunsClient({
         project={projectId}
         batchRuns={batchRuns}
         watchForNewRuns={page === 0}
+        onTasksStarted={bumpTaskStartTicks}
       />
       <RunsToolbar
         urlQ={urlQ}
@@ -305,6 +316,7 @@ export function RunsClient({
                   onToggleCompare={() => toggleCompare(b.id)}
                   modelFilter={selectedModels}
                   canDelete={canDeleteRuns}
+                  taskStartTick={taskStartTicks[b.id] ?? 0}
                 />
               ))}
             </TableBody>

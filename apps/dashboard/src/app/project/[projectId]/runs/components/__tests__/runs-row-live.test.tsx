@@ -37,8 +37,13 @@ vi.mock("@/components/runs/DeleteRunButton", () => ({
 
 import { RunsRow } from "../RunsRow";
 
-const summary = (status: string, passed = 0): AgentTaskBatchRunSummary =>
+const summary = (
+  status: string,
+  passed = 0,
+  overrides: Partial<AgentTaskBatchRunSummary> = {},
+): AgentTaskBatchRunSummary =>
   ({
+    ...overrides,
     id: "batch-1",
     project: "acme",
     selection_type: "all",
@@ -62,6 +67,7 @@ const summary = (status: string, passed = 0): AgentTaskBatchRunSummary =>
     total_cost: null,
     total_tokens: null,
     configuration: { state: "unknown", configurations: [], reported_task_runs: 0, total_task_runs: 2 },
+    ...overrides,
   }) as unknown as AgentTaskBatchRunSummary;
 
 const taskRun = (id: string, status: string): AgentTaskRunSummary =>
@@ -76,7 +82,7 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 
-function Row({ batch }: { batch: AgentTaskBatchRunSummary }) {
+function Row({ batch, taskStartTick }: { batch: AgentTaskBatchRunSummary; taskStartTick?: number }) {
   return (
     <table>
       <tbody>
@@ -89,6 +95,7 @@ function Row({ batch }: { batch: AgentTaskBatchRunSummary }) {
           onToggleCompare={() => {}}
           modelFilter={new Set()}
           canDelete={false}
+          taskStartTick={taskStartTick}
         />
       </tbody>
     </table>
@@ -271,7 +278,38 @@ describe("RunsRow under live refresh", () => {
 
     await act(async () => inFlight.resolve(detail(taskRun("task-a", "passed"), taskRun("task-b", "passed"))));
     expect(screen.queryByRole("link", { name: "task-a" })).toBeNull();
-    expect(screen.getByRole("link", { name: "task-b" })).toBeInTheDocument();
+    // The in-flight response is still the batch's final state for the rest.
+    expect(screen.getByRole("link", { name: "task-b" }).closest("tr")).toHaveTextContent(/Passed/);
+  });
+
+  it("re-fetches expanded task runs when a task of the batch starts", async () => {
+    getAgentTaskBatchRun.mockResolvedValueOnce(detail(taskRun("task-a", "running"), taskRun("task-b", "pending")));
+    const view = render(<Row batch={summary("running")} taskStartTick={0} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    await screen.findByRole("link", { name: "task-a" });
+
+    getAgentTaskBatchRun.mockResolvedValueOnce(detail(taskRun("task-a", "running"), taskRun("task-b", "running")));
+    view.rerender(<Row batch={summary("running")} taskStartTick={1} />);
+    await act(async () => {});
+    expect(getAgentTaskBatchRun).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("link", { name: "task-b" }).closest("tr")).toHaveTextContent(/Running/);
+  });
+
+  it.each([
+    ["the status moves on with no count changing", summary("queued"), summary("running")],
+    ["a task fails", summary("running"), summary("running", 0, { failed_tasks: 1 })],
+    ["a task errors", summary("running"), summary("running", 0, { errored_tasks: 1 })],
+    ["a check is recorded", summary("running"), summary("running", 0, { total_checks: 3 })],
+    ["a check passes", summary("running", 0, { total_checks: 3 }), summary("running", 0, { total_checks: 3, passed_checks: 2 })],
+  ])("re-fetches expanded task runs when %s", async (_label, before, after) => {
+    getAgentTaskBatchRun.mockResolvedValue(detail(taskRun("task-a", "running")));
+    const view = render(<Row batch={before} />);
+    await userEvent.click(screen.getByRole("button", { name: "Expand task runs" }));
+    await screen.findByRole("link", { name: "task-a" });
+
+    view.rerender(<Row batch={after} />);
+    await act(async () => {});
+    expect(getAgentTaskBatchRun).toHaveBeenCalledTimes(2);
   });
 
   it("never lets an older response overwrite a newer one", async () => {

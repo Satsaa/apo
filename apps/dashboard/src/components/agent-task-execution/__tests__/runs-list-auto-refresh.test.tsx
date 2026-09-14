@@ -108,6 +108,55 @@ describe("RunsListAutoRefresh", () => {
       expect(refresh).not.toHaveBeenCalled();
     });
 
+    it("reports task starts in running runs once per window, without refreshing the list", () => {
+      const onTasksStarted = vi.fn();
+      render(
+        <RunsListAutoRefresh
+          project="proj-1"
+          batchRuns={[batch("b1", "running"), batch("b2", "running")]}
+          watchForNewRuns
+          onTasksStarted={onTasksStarted}
+        />,
+      );
+      emit(event("task_run.started", "b1"));
+      emit(event("task_run.started", "b1"));
+      emit(event("task_run.started", "b2"));
+      expect(onTasksStarted).not.toHaveBeenCalled();
+      flush();
+      expect(onTasksStarted).toHaveBeenCalledTimes(1);
+      expect(onTasksStarted.mock.calls[0][0].sort()).toEqual(["b1", "b2"]);
+      expect(refresh).not.toHaveBeenCalled();
+
+      flush();
+      expect(onTasksStarted).toHaveBeenCalledTimes(1);
+
+      // The next window reports only what started in it.
+      emit(event("task_run.started", "b2"));
+      flush();
+      expect(onTasksStarted).toHaveBeenCalledTimes(2);
+      expect(onTasksStarted.mock.calls[1][0]).toEqual(["b2"]);
+    });
+
+    it("does not refresh again for task starts in the window after a refresh", () => {
+      const onTasksStarted = vi.fn();
+      render(
+        <RunsListAutoRefresh
+          project="proj-1"
+          batchRuns={[batch("b1", "running")]}
+          watchForNewRuns={false}
+          onTasksStarted={onTasksStarted}
+        />,
+      );
+      emit(event("task_run.completed", "b1"));
+      flush();
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      emit(event("task_run.started", "b1"));
+      flush();
+      expect(onTasksStarted).toHaveBeenCalledTimes(1);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
     it("waits out the coalesce window before refreshing", () => {
       renderList([batch("b1", "running")], false);
       emit(event("task_run.completed", "b1"));
