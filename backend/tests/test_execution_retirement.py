@@ -215,6 +215,12 @@ class TestRetiredBatchGetsAnEnd:
         _seed_installation(session)
         legacy = _pool(session, slug="legacy-pool")
         att = _bundled_attempt(session, pool_id=legacy.id, status="running")
+        # An already-finished Task Run is left alone by the roll-up, so only
+        # the roll-up itself can give the Batch the retirement time.
+        run = session.get(AgentTaskRunDB, att.task_run_id)
+        run.status = "error"
+        run.completed_at = _now() - timedelta(hours=1)
+        session.add(run); session.commit()
         ts = _now()
 
         retire_legacy_execution_rows(session, now=ts)
@@ -223,7 +229,7 @@ class TestRetiredBatchGetsAnEnd:
         assert batch.status == "error"
         assert batch.completed_at.replace(tzinfo=None) == ts.replace(tzinfo=None)
 
-    def test_backfills_terminal_batches_without_end(self, session):
+    def test_backfills_terminal_batches_from_their_last_task_run(self, session):
         from apo.services.execution_retirement import retire_legacy_execution_rows
 
         _seed_installation(session)
@@ -237,12 +243,12 @@ class TestRetiredBatchGetsAnEnd:
         session.commit()
         ts = _now()
 
-        assert retire_legacy_execution_rows(session, now=ts) == 2
+        assert retire_legacy_execution_rows(session, now=ts) == 1
         assert retire_legacy_execution_rows(session, now=_now()) == 0
 
         ended = session.get(AgentTaskBatchRunDB, "bch-ended")
         empty = session.get(AgentTaskBatchRunDB, "bch-empty")
         live = session.get(AgentTaskBatchRunDB, "bch-live")
         assert ended.completed_at.replace(tzinfo=None) == last_end.replace(tzinfo=None)
-        assert empty.completed_at.replace(tzinfo=None) == ts.replace(tzinfo=None)
+        assert empty.completed_at is None
         assert live.completed_at is None

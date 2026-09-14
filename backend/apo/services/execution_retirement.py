@@ -63,7 +63,7 @@ def retire_legacy_execution_rows(session: Session, *, now: datetime | None = Non
 
     changed += _retire_bundled_schedules(session, ts)
     changed += _retire_bundled_attempts(session, ts)
-    changed += _stamp_terminal_batches_without_end(session, ts)
+    changed += _stamp_terminal_batches_without_end(session)
     changed += _retire_legacy_executors(session, ts)
     changed += _retire_legacy_pools(session, ts)
 
@@ -179,12 +179,11 @@ def _roll_up_logical_run(session: Session, attempt: TaskExecutionAttemptDB, ts: 
         session.add(batch)
 
 
-def _stamp_terminal_batches_without_end(session: Session, ts: datetime) -> int:
+def _stamp_terminal_batches_without_end(session: Session) -> int:
     """Give terminal Batches without ``completed_at`` their last Task Run's end.
 
-    Duration displays read a Batch with no end as still running and count up
-    to now. Batches retired before the roll-up stamped an end are repaired
-    here; ``ts`` covers a Batch with no finished Task Run.
+    Repairs Batches retired before the roll-up stamped an end. A Batch with no
+    finished Task Run stays unstamped: inventing an end would invent a duration.
     """
     batches = session.exec(
         select(AgentTaskBatchRunDB).where(
@@ -201,10 +200,15 @@ def _stamp_terminal_batches_without_end(session: Session, ts: datetime) -> int:
             .group_by(AgentTaskRunDB.batch_run_id)
         ).all()
     )
+    stamped = 0
     for batch in batches:
-        batch.completed_at = last_ends.get(batch.id) or ts
+        last_end = last_ends.get(batch.id)
+        if last_end is None:
+            continue
+        batch.completed_at = last_end
         session.add(batch)
-    return len(batches)
+        stamped += 1
+    return stamped
 
 
 def _retire_legacy_executors(session: Session, ts: datetime) -> int:
