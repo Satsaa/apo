@@ -30,6 +30,14 @@ vi.mock("@/lib/project-router", () => ({
   DEMO_PROJECT: "demo",
 }));
 
+const autoRefreshProps = vi.fn();
+vi.mock("@/components/agent-task-execution/runs-list-auto-refresh", () => ({
+  RunsListAutoRefresh: (props: unknown) => {
+    autoRefreshProps(props);
+    return null;
+  },
+}));
+
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
   Toaster: () => null,
@@ -60,6 +68,39 @@ function renderRuns(query: string, modelFacets: ModelFacetOption[] = facets) {
     />,
   );
 }
+
+describe("Runs page live refresh", () => {
+  beforeEach(() => {
+    autoRefreshProps.mockClear();
+  });
+
+  it("watches for newly started runs on the first page", () => {
+    renderRuns("");
+    expect(autoRefreshProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: "acme", batchRuns: [], watchForNewRuns: true }),
+    );
+  });
+
+  it("does not watch for new runs on a later page, where they never land", () => {
+    searchParams = new URLSearchParams("page=2");
+    render(
+      <RunsClient
+        batchRuns={[]}
+        error={null}
+        taskSource={{ source_type: "published" } as never}
+        totalCount={60}
+        page={2}
+        pageSize={20}
+        totalPages={3}
+        modelFacets={facets}
+        canDeleteRuns={false}
+      />,
+    );
+    expect(autoRefreshProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ watchForNewRuns: false }),
+    );
+  });
+});
 
 describe("Runs page with filters carried in", () => {
   beforeEach(() => {

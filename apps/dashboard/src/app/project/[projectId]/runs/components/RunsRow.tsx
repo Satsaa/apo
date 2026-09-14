@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, ChevronDown, Clock, GitBranch, GitCompare, Loader2 } from "lucide-react";
 
 import {
@@ -71,22 +71,55 @@ export function RunsRow({
   const branch = (batch.trigger as Record<string, unknown> | null)?.branch as string | null;
   const commit = (batch.trigger as Record<string, unknown> | null)?.commit_sha as string | null;
 
-  const handleToggle = useCallback(async () => {
-    const next = !expanded;
-    setExpanded(next);
-    if (next && taskRuns === null && !loading) {
-      setLoading(true);
-      setError(null);
+  // Only the newest request may write: a live refresh can re-fetch while an
+  // earlier load is still in flight, and that older response must not win.
+  // A background re-fetch keeps the current rows on screen (no spinner) and
+  // leaves them in place if it fails — a live update must not blank them.
+  const fetchSeqRef = useRef(0);
+  const loadTaskRuns = useCallback(
+    async (background: boolean) => {
+      const seq = ++fetchSeqRef.current;
+      if (!background) {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const detail = await getAgentTaskBatchRun(batch.id);
-        setTaskRuns(detail.task_runs ?? []);
+        if (seq === fetchSeqRef.current) {
+          setTaskRuns(detail.task_runs ?? []);
+          setError(null);
+        }
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Failed to load task runs");
+        if (seq === fetchSeqRef.current && !background) {
+          setError(e instanceof Error ? e.message : "Failed to load task runs");
+        }
       } finally {
-        setLoading(false);
+        if (seq === fetchSeqRef.current) setLoading(false);
       }
-    }
-  }, [expanded, taskRuns, loading, batch.id]);
+    },
+    [batch.id],
+  );
+
+  const handleToggle = useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && taskRuns === null && !loading) void loadTaskRuns(false);
+  }, [expanded, taskRuns, loading, loadTaskRuns]);
+
+  // The list re-renders with a fresh summary whenever a live event lands.
+  // While the batch is (or just stopped) running, the task runs cached on
+  // first expand are stale: re-fetch them if shown, otherwise drop them so
+  // the next expand loads current ones.
+  const prevBatchRef = useRef(batch);
+  useEffect(() => {
+    const prev = prevBatchRef.current;
+    if (prev === batch) return;
+    prevBatchRef.current = batch;
+    const wasPending = prev.status === "running" || prev.status === "queued";
+    if (!wasPending && !isRunning) return;
+    if (expanded) void loadTaskRuns(true);
+    else setTaskRuns(null);
+  }, [batch, isRunning, expanded, loadTaskRuns]);
 
   // Splice the deleted task run out of the expanded rows; deleting the
   // last one also removes the (now empty) batch, so re-fetch the list.

@@ -23,6 +23,7 @@ import { BATCH_RUN_STATUS_FILTERS } from "@/lib/filter-status";
 import { RunsModelFilter, type ModelOption } from "./runs-model-filter";
 import { RunsCompareBar } from "./components/RunsCompareBar";
 import { ListPagination } from "@/components/table";
+import { RunsListAutoRefresh } from "@/components/agent-task-execution/runs-list-auto-refresh";
 import { RunsRow } from "./components/RunsRow";
 import { RunsToolbar } from "./components/RunsToolbar";
 import { COL, computeOverlap } from "./components/runs-utils";
@@ -233,6 +234,11 @@ export function RunsClient({
 
   return (
     <div className="flex h-full w-full flex-col">
+      <RunsListAutoRefresh
+        project={projectId}
+        batchRuns={batchRuns}
+        watchForNewRuns={page === 0}
+      />
       <RunsToolbar
         urlQ={urlQ}
         selectedStatuses={statusMirror}
