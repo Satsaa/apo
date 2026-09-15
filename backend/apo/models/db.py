@@ -963,7 +963,7 @@ class AutomationDB(SQLModel, table=True):
     name: str = Field(max_length=100)
     description: str | None = Field(default=None)
 
-    # One of ALL_EVENT_TYPES from services/run_events.py.
+    # One of ALL_EVENT_TYPES from services/run_event_types.py.
     event_type: str = Field(index=True)
     # AND-combined conditions; [] matches every event of this type.
     conditions: list[dict[str, object]] = Field(

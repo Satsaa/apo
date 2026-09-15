@@ -11,11 +11,12 @@ the two existing facet payloads, so the dropdown needs no extra request.
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, SQLModel
 
+from ..auth.deps import get_user_id
 from ..db import get_session
 from ..models.db import ProjectDB
 from ..services.archived_models import set_model_archived
@@ -37,19 +38,12 @@ class ArchivedModelResponse(SQLModel):
     archived: bool
 
 
-def _get_user_id(request: Request) -> str:
-    user_id = cast(str | None, getattr(request.state, "user_id", None))
-    if user_id:
-        return user_id
-    raise HTTPException(status_code=401, detail="Authentication required")
-
-
 def _authorize(session: Session, project_id: str, request: Request) -> str:
     """404 if the project is missing, 403 if the caller is not a member."""
     project = session.get(ProjectDB, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     _ = require_project_role(session, project_id, user_id, minimum_role="member")
     return user_id
 

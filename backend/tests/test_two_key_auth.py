@@ -424,7 +424,6 @@ class TestRotationUpgradesLegacyKey:
         key_id = bootstrap_resp.json()["id"]
         old_legacy_key = bootstrap_resp.json()["key"]
 
-        # Verify it's a legacy key (hashed_key set, no public_key)
         db_key = session.get(ApiKeyDB, key_id)
         assert db_key is not None
         assert db_key.hashed_key is not None
@@ -437,7 +436,6 @@ class TestRotationUpgradesLegacyKey:
         assert data["public_key"].startswith("pk-apo-")
         assert data["secret_key"].startswith("sk-apo-")
 
-        # Verify DB record is upgraded
         session.refresh(db_key)
         assert db_key.public_key == data["public_key"]
         assert db_key.hashed_secret_key is not None

@@ -39,14 +39,12 @@ class Run(SQLModel):
     version: str | None = None
     user_id: str | None = None
 
-    # === NEW: Langfuse-style observability fields ===
+    # Observability fields
     session_id: str | None = None
     environment: str = "default"
     external_id: str | None = None
     tags: list[str] = []
-    run_metadata: JsonValue | None = (
-        None  # Renamed from 'metadata' to avoid reserved word conflicts
-    )
+    run_metadata: JsonValue | None = None  # avoid reserved word conflicts
     primary_model: str | None = None
 
     input: JsonValue | None = None
@@ -128,7 +126,7 @@ class RunSummary(SQLModel):
     task_id: str | None = None
     version: str | None = None
 
-    # === NEW: Langfuse-style observability fields ===
+    # Observability fields
     session_id: str | None = None
     environment: str = "default"
     tags: list[str] = []
@@ -167,13 +165,13 @@ class CreateRunRequest(SQLModel):
     version: str | None = None
     user_id: str | None = None
 
-    # === NEW: Langfuse-style observability fields ===
+    # Observability fields
     session_id: str | None = None
     environment: str = "default"
     external_id: str | None = None
     tags: list[str] = []
     run_metadata: JsonMap | None = None
-    primary_model: str | None = None  # TASK-015: Primary model used
+    primary_model: str | None = None
 
 
 class UpdateRunRequest(SQLModel):
@@ -203,7 +201,7 @@ class LoggedCallBase(SQLModel):
     latency_ms: float | None = Field(default=None, index=True)
     cost: int | None = Field(default=None, index=True)  # micro-USD int
 
-    # === Langfuse-style observability fields ===
+    # Observability fields
     parent_call_id: str | None = Field(
         default=None, index=True
     )  # For hierarchical spans
@@ -219,14 +217,12 @@ class LoggedCallBase(SQLModel):
     prompt_tokens: int | None = Field(default=None)  # Input token count
     completion_tokens: int | None = Field(default=None)  # Output token count
 
-    # === NEW: Session and context fields ===
+    # Session and context fields
     session_id: str | None = Field(default=None, index=True)  # Link to session
     environment: str = Field(default="default")  # Environment name
     tags: list[str] = Field(
         default_factory=list, sa_column=Column("tags", JSON)
     )  # Tags for categorization
-
-    # === NEW: Langfuse-inspired enhancements ===
 
     # Computed token total (prompt_tokens + completion_tokens)
     total_tokens: int | None = Field(default=None)

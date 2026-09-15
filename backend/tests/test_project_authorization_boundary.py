@@ -5,9 +5,8 @@ intersects request Credential Authority (session / API key / capability token)
 with current Project membership and role. Every later route closure builds on
 this seam.
 
-Unit tests (1–5) exercise the policy directly through a mock request; HTTP
-scene tests (11+) exercise registered routes through TestClient and live in
-later commits as each route group is closed.
+Unit tests exercise the policy directly through a mock request; HTTP tests
+exercise registered routes through TestClient.
 """
 
 # pyright: reportAny=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnusedImport=false, reportUnusedCallResult=false, reportAttributeAccessIssue=false, reportExplicitAny=false, reportUnannotatedClassAttribute=false, reportUnusedParameter=false, reportUnusedVariable=false, reportUnknownLambdaType=false
@@ -175,11 +174,6 @@ def authed_world_fixture(session: Session) -> None:
     _mint_api_key(session, _PROJECT_A, creator_id=_USER_CAROL, key_id="key-a")
 
 
-# ---------------------------------------------------------------------------
-# Unit test 1: Session authority is membership-scoped
-# ---------------------------------------------------------------------------
-
-
 def test_session_authority_is_membership_scoped(authed_world: None, session: Session) -> None:
     """Alice belongs to A, not B. She can authorize A but not B."""
     a_membership = authorize_project_request(
@@ -193,11 +187,6 @@ def test_session_authority_is_membership_scoped(authed_world: None, session: Ses
             _session_request(_USER_ALICE), session, _PROJECT_B
         )
     assert exc_info.value.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# Unit test 2: API-key authority is the intersection, not creator identity
-# ---------------------------------------------------------------------------
 
 
 def test_api_key_authority_is_intersection_not_creator(authed_world: None, session: Session) -> None:
@@ -216,11 +205,6 @@ def test_api_key_authority_is_intersection_not_creator(authed_world: None, sessi
     with pytest.raises(HTTPException) as exc_info:
         authorize_project_request(b_request, session, _PROJECT_B)
     assert exc_info.value.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# Unit test 3: Membership removal revokes user-derived key authority
-# ---------------------------------------------------------------------------
 
 
 def test_membership_removal_revokes_api_key_authority(
@@ -257,11 +241,6 @@ def test_membership_removal_revokes_api_key_authority(
     assert exc_info.value.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# Unit test 4: Release profile rejects synthetic legacy owner
-# ---------------------------------------------------------------------------
-
-
 def test_release_profile_rejects_synthetic_legacy_owner(
     authed_world: None, session: Session, monkeypatch: Any
 ) -> None:
@@ -285,11 +264,6 @@ def test_release_profile_rejects_synthetic_legacy_owner(
     assert exc_info.value.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Unit test 5: Development profile preserves open local workflow
-# ---------------------------------------------------------------------------
-
-
 def test_development_profile_preserves_legacy_owner_for_real_project(
     authed_world: None, session: Session, monkeypatch: Any
 ) -> None:
@@ -297,7 +271,8 @@ def test_development_profile_preserves_legacy_owner_for_real_project(
     nonexistent project strings — preserving local workflow where SDK
     ingestion may reference projects before they have a ProjectDB row.
 
-    The same setup under a release profile is denied (unit test 4).
+    The same setup under a release profile is denied (see
+    ``test_release_profile_rejects_synthetic_legacy_owner``).
     """
     # Development profile + open-dev mode (AUTH_SECRET unset): legacy
     # owner fallback fires for a nonexistent project string.
@@ -310,11 +285,6 @@ def test_development_profile_preserves_legacy_owner_for_real_project(
     )
     assert membership.role == "owner"
     assert membership.project_id == nonexistent
-
-
-# ---------------------------------------------------------------------------
-# Unit test 8 (hoisted from scene tests): Readable Project set
-# ---------------------------------------------------------------------------
 
 
 def test_readable_project_set_depends_on_credential_kind(
@@ -340,7 +310,7 @@ def test_readable_project_set_depends_on_credential_kind(
 
 
 # ---------------------------------------------------------------------------
-# HTTP scene tests 11-14: cross-Project denial on registered routes
+# Cross-Project denial on registered routes
 # ---------------------------------------------------------------------------
 
 _BATCH_A = "batch-http-a"
@@ -382,11 +352,6 @@ def _seed_http_world(session: Session) -> dict[str, str]:
     return {"run_a": _RUN_A, "run_b": _RUN_B, "batch_a": _BATCH_A, "batch_b": _BATCH_B}
 
 
-# ---------------------------------------------------------------------------
-# Test 11: Task Run list does not cross Projects
-# ---------------------------------------------------------------------------
-
-
 def test_task_run_list_does_not_cross_projects(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -399,11 +364,6 @@ def test_task_run_list_does_not_cross_projects(
     run_ids = {r["id"] for r in resp.json()}
     assert _RUN_B in run_ids
     assert _RUN_A not in run_ids  # Project A's run must not appear
-
-
-# ---------------------------------------------------------------------------
-# Test 12: Task Run detail is opaque cross-Project
-# ---------------------------------------------------------------------------
 
 
 def test_task_run_detail_is_opaque_cross_project(
@@ -447,11 +407,6 @@ def test_run_judgments_are_opaque_cross_project(
     assert create.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Test 13: Batch Run list/detail do not cross Projects
-# ---------------------------------------------------------------------------
-
-
 def test_batch_run_list_does_not_cross_projects(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -475,11 +430,6 @@ def test_batch_run_detail_is_opaque_cross_project(
     assert resp.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Test 14: Deliverable manifest requires Project access
-# ---------------------------------------------------------------------------
-
-
 def test_deliverable_list_requires_project_access(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -492,7 +442,7 @@ def test_deliverable_list_requires_project_access(
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 HTTP scene tests: Schedules, Executor bootstrap, Run-event SSE
+# Schedules, executor bootstrap, and run-event SSE authorization
 # ---------------------------------------------------------------------------
 
 _SCHEDULE_A = "schedule-http-a"
@@ -521,11 +471,6 @@ def _seed_schedule_world(session: Session) -> None:
     session.commit()
 
 
-# ---------------------------------------------------------------------------
-# Test 17: Schedule reads do not cross Projects
-# ---------------------------------------------------------------------------
-
-
 def test_schedule_list_does_not_cross_projects(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -549,11 +494,6 @@ def test_schedule_detail_is_opaque_cross_project(
     assert resp.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Test 18: Connected Executor bootstrap requires membership
-# ---------------------------------------------------------------------------
-
-
 def test_connected_executor_bootstrap_requires_membership(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -567,11 +507,6 @@ def test_connected_executor_bootstrap_requires_membership(
     assert resp.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# Test 20: Run-event SSE denies before subscription
-# ---------------------------------------------------------------------------
-
-
 def test_run_event_sse_denies_cross_project(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -582,11 +517,6 @@ def test_run_event_sse_denies_cross_project(
     # Bob subscribes to Project A's events — should be denied.
     resp = bob_client.get(f"/v1/events?project={_PROJECT_A}")
     assert resp.status_code in (403, 404)
-
-
-# ---------------------------------------------------------------------------
-# Test 21: Trace SSE is denied cross-Project before streaming
-# ---------------------------------------------------------------------------
 
 
 def test_trace_sse_denies_cross_project(
@@ -602,7 +532,7 @@ def test_trace_sse_denies_cross_project(
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: Trace mutation cross-Project denial
+# Trace mutation cross-Project denial
 # ---------------------------------------------------------------------------
 
 
@@ -640,7 +570,7 @@ def test_trace_bookmark_denies_cross_project(
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: Project deletion covers every dependent model
+# Project deletion covers every dependent model
 # ---------------------------------------------------------------------------
 
 
@@ -750,11 +680,6 @@ def test_project_deletion_removes_all_dependent_models(session: Session) -> None
     ).first() is None
 
 
-# ---------------------------------------------------------------------------
-# Unit test 9: Trace channel identity is Project-qualified
-# ---------------------------------------------------------------------------
-
-
 def test_trace_channel_identity_is_project_qualified() -> None:
     """Two Projects sharing one public OTel Trace ID stream only their own.
 
@@ -800,10 +725,6 @@ def test_trace_channel_identity_is_project_qualified() -> None:
     assert "sentinel-a" in a_events[0]
     assert b_events == []  # B subscriber never receives A's event
 
-
-# ---------------------------------------------------------------------------
-# Test 15: Task Catalog is role- and credential-scoped
-# ---------------------------------------------------------------------------
 
 _USER_DAVE = "user-dave"  # plain member of A
 
@@ -891,11 +812,6 @@ def test_task_catalog_denies_cross_project_api_key(
     assert publish.status_code in (403, 404)
 
 
-# ---------------------------------------------------------------------------
-# Test 26: Annotation/member/API-key management respects key binding
-# ---------------------------------------------------------------------------
-
-
 def _seed_carol_world(session: Session) -> None:
     """Carol administers A and B; a key is minted for each Project."""
     _make_user(session, _USER_CAROL)
@@ -970,11 +886,6 @@ def test_api_key_cannot_manage_other_projects_keys(
     assert session.get(ApiKeyDB, "key-b") is not None
 
 
-# ---------------------------------------------------------------------------
-# Test 26b: run PATCH is a member-level write, not a viewer-level one
-# ---------------------------------------------------------------------------
-
-
 def test_run_patch_denies_viewer_role(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -1002,10 +913,6 @@ def test_run_patch_denies_viewer_role(
         "viewer-role callers must not be able to patch run completion state"
     )
 
-
-# ---------------------------------------------------------------------------
-# Test 27: Model-pricing overrides cannot be moved across Projects
-# ---------------------------------------------------------------------------
 
 _MODEL_DOC_A = {
     "project": _PROJECT_A,
@@ -1044,11 +951,6 @@ def test_model_replace_cannot_move_row_to_other_project(
     row = session.get(ModelRowDB, model_id)
     assert row is not None
     assert row.project == _PROJECT_A  # row was not moved into B
-
-
-# ---------------------------------------------------------------------------
-# Test 25: Comments derive Project from their target
-# ---------------------------------------------------------------------------
 
 
 _TRACE_A_SENTINEL = "trace-comment-a"
@@ -1139,11 +1041,6 @@ def test_comment_delete_is_author_or_admin(
     assert session.get(CommentDB, comment_id) is None
 
 
-# ---------------------------------------------------------------------------
-# Test 24: Score configs are Project-scoped on unfiltered lists
-# ---------------------------------------------------------------------------
-
-
 def test_score_config_list_excludes_other_projects(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
@@ -1178,7 +1075,7 @@ def test_score_config_list_excludes_other_projects(
 
 
 # ---------------------------------------------------------------------------
-# Scene: Project task inventory files and definition source stay isolated
+# Project task inventory files and definition source stay isolated
 # ---------------------------------------------------------------------------
 
 
@@ -1206,10 +1103,6 @@ def test_task_definition_source_denies_cross_project(
     )
     assert resp.status_code in (403, 404)
 
-
-# ---------------------------------------------------------------------------
-# Test 31: Registered-route audit has no unclassified Project surface
-# ---------------------------------------------------------------------------
 
 # Every apo.routes.* module that registers routes on the real FastAPI app,
 # classified by authorization category:
@@ -1459,17 +1352,17 @@ def test_project_owned_modules_have_cross_project_scene_tests() -> None:
         )
         for file_name, test_name in scene_tests:
             test_file = backend_root / file_name
-            assert test_file.exists(), f"Scene test file missing: {file_name}"
+            assert test_file.exists(), f"Cross-Project test file missing: {file_name}"
             source = test_file.read_text()
             assert f"def {test_name}(" in source, (
-                f"Scene test {test_name} not found in {file_name} — "
+                f"Cross-Project test {test_name} not found in {file_name} — "
                 "update the route audit inventory."
             )
 
 
 # ---------------------------------------------------------------------------
-# Scenes 28-30: Project deletion removes rows AND bytes, is retry-safe on
-# ArtifactStore failure, and outsiders cannot trigger it
+# Project deletion removes rows AND bytes, is retry-safe on ArtifactStore
+# failure, and outsiders cannot trigger it
 # ---------------------------------------------------------------------------
 
 _DELIV_KEY = "deliverables/run-del-bytes/report.json"
@@ -1576,7 +1469,7 @@ def test_project_deletion_removes_rows_and_bytes(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Scene 28: deletion removes the Project's rows AND stored objects;
+    """Deletion removes the Project's rows AND stored objects;
     Project B and its data remain."""
     from apo.models.db import ProjectDB, TaskRevisionDB
 
@@ -1610,7 +1503,7 @@ def test_project_deletion_is_retry_safe_on_deliverable_store_failure(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Scene 29: a store failure on one object returns a retryable 503 with
+    """A store failure on one object returns a retryable 503 with
     relational ownership retained; after the store recovers, retry succeeds."""
     from apo.models.db import ProjectDB
 
@@ -1645,7 +1538,7 @@ def test_project_deletion_is_retry_safe_on_bundle_store_failure(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Scene 29 (bundle variant): a failing Task Revision bundle store must
+    """Bundle-store variant: a failing Task Revision bundle store must
     NOT be swallowed — rows are retained instead of orphaning the bytes."""
     from apo.models.db import ProjectDB, TaskRevisionDB
 
@@ -1679,7 +1572,7 @@ def test_outsider_cannot_delete_or_reset_project(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Scene 30: a non-member is denied before any object or row cleanup."""
+    """A non-member is denied before any object or row cleanup."""
     from apo.models.db import ProjectDB
 
     store = _seed_project_with_bytes(session, tmp_path)
@@ -1699,7 +1592,7 @@ def test_outsider_cannot_delete_or_reset_project(
 
 
 # ---------------------------------------------------------------------------
-# Scene 22 (full): every runs/* mutation denies cross-Project access
+# Every runs/* mutation denies cross-Project access
 # ---------------------------------------------------------------------------
 
 _CALL_A = "call-correction-a"
@@ -1842,7 +1735,7 @@ def test_run_reproject_denies_cross_project(
 
 
 # ---------------------------------------------------------------------------
-# Scene 6: a misleading caller Project value cannot redirect ownership
+# A misleading caller Project value cannot redirect ownership
 # ---------------------------------------------------------------------------
 
 
@@ -1859,7 +1752,7 @@ def test_task_run_detail_ignores_caller_project_value(
 
 
 # ---------------------------------------------------------------------------
-# Scene 20/21 (spy): SSE denial happens BEFORE any broadcaster access
+# SSE denial happens BEFORE any broadcaster access
 # ---------------------------------------------------------------------------
 
 

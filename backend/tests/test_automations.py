@@ -2,11 +2,9 @@
 
 """Acceptance tests for automations (event triggers → typed actions).
 
-Covers the condition engine, template rendering, action config validation,
-token encryption, the CRUD surface (including the RBAC split and the API-key
-scope gate), event fan-out matching, both action deliveries, auto-disable +
-re-enable reset, the inline test route, startup recovery, pruning, and
-non-blocking dispatch.
+Exercises the condition and template engines, the CRUD/RBAC surface, and
+the delivery lifecycle end to end, including failure handling and startup
+recovery.
 """
 
 import asyncio
