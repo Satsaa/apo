@@ -1226,6 +1226,19 @@ def test_task_definition_source_denies_cross_project(
 # test before landing the new surface.
 _ROUTE_MODULE_AUDIT: dict[str, tuple[str, list[tuple[str, str]]]] = {
     "admin": ("operator", []),
+    "automations": (
+        "project",
+        [
+            (
+                "tests/test_automations.py",
+                "test_member_reads_but_cannot_write",
+            ),
+            (
+                "tests/test_automations.py",
+                "test_cross_project_get_is_opaque",
+            ),
+        ],
+    ),
     "agent_task_deliverables": (
         "project",
         [("tests/test_project_authorization_boundary.py", "test_deliverable_list_requires_project_access")],

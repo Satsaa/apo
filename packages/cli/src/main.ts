@@ -435,6 +435,39 @@ const commands: Record<string, CommandEntry> = {
     note:
       "Operator-only history rewrite. Requires --admin-key (ADMIN_API_KEY on the backend). Provided-cost and pre-migration calls are skipped.",
   },
+  "automations list": {
+    handler: loadCommand("automations-list"),
+    help: "List a project's automations (event triggers → actions)",
+    options: [
+      ["--project <id>", "Project to list (defaults to the saved project)"],
+    ],
+    examples: [
+      "apo automations list",
+      "apo automations list --project my-proj",
+    ],
+    note: "Requires backend auth. Supports --json.",
+  },
+  "automations create": {
+    handler: loadCommand("automations-create"),
+    help: "Create an automation (event trigger → webhook or GitHub issue)",
+    options: [
+      ["--name <n>", "Automation name (required)"],
+      ["--event <type>", "Event type: batch_run.failed, batch_run.completed, task_run.completed, task_run.error, task_run.started, task_run.trace_claimed (required)"],
+      ["--action <type>", "webhook | github_issue (default: webhook)"],
+      ["--condition <json>", '{"field","operator","value"} — repeatable, AND-combined'],
+      ["--url <url>", "Webhook action: destination URL (required for webhook)"],
+      ["--owner <o>", "GitHub action: repository owner (required for github_issue)"],
+      ["--repo <r>", "GitHub action: repository name (required for github_issue)"],
+      ["--github-token <tok>", "GitHub action: PAT with issues:write (required for github_issue)"],
+      ["--labels <a,b>", "GitHub action: comma-separated issue labels"],
+      ["--project <id>", "Project to create in (defaults to the saved project)"],
+    ],
+    examples: [
+      'apo automations create --name "Nightly failures" --event batch_run.failed --action webhook --url https://example.com/hook',
+      'apo automations create --name "Regression issue" --event batch_run.failed --condition \'{"field":"trigger.source","operator":"eq","value":"schedule"}\' --action github_issue --owner acme --repo agent-harness --github-token ghp_...',
+    ],
+    note: "Requires backend auth. Supports --json. Webhook actions: the signing secret is printed once. GitHub actions: the server needs AUTOMATION_TOKEN_ENCRYPTION_KEY configured.",
+  },
 };
 
 function loadCommand(name: string): CommandHandler {

@@ -47,6 +47,7 @@ from .routes import (
     executor_protocol_v2,
     executor_pools,
     executor_result_evidence,
+    automations,
     hosted_access,
 )
 
@@ -84,6 +85,13 @@ async def lifespan(app: FastAPI):
             load_demo_fixture(demo_session)
     with Session(engine) as session:
         bootstrap_initial_user(session)
+    # Orphaned automation deliveries are marked error, never retried:
+    # deliveries only start once startup completes, so any pending row here
+    # was interrupted by a restart, and re-firing could double side effects.
+    from .services.automations import recover_stale_automations
+
+    with Session(engine) as session:
+        recover_stale_automations(session)
     from .services.agent_task_scheduler import start_schedule_dispatcher, stop_schedule_dispatcher
     from .services.retention import start_retention_loop, stop_retention_loop
     from .services.trace_ingestion_queue import (
@@ -100,6 +108,9 @@ async def lifespan(app: FastAPI):
     await stop_trace_ingestion_worker()
     stop_retention_loop()
     stop_schedule_dispatcher()
+    from .services.automations import stop_automation_deliveries
+
+    await stop_automation_deliveries()
     if "sqlite" in str(engine.url):
         with engine.connect() as conn:
             _ = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -225,6 +236,7 @@ def create_app() -> FastAPI:
     app.include_router(executor_protocol_v2.router)
     app.include_router(executor_result_evidence.router)
     app.include_router(executor_pools.router)
+    app.include_router(automations.router)
     app.include_router(hosted_access.router)
 
     from fastapi import Request

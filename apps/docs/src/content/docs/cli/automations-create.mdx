@@ -1,0 +1,85 @@
+---
+title: "apo automations create"
+description: "Create an automation: event trigger, conditions, webhook or GitHub-issue action."
+---
+
+import TerminalDemo from '../../../components/demos/TerminalDemo.astro';
+
+Create an automation from the terminal. Same rule you'd build in the dashboard's Automations page: one event type, AND-combined conditions, one typed action.
+
+For webhook actions the signing secret is generated server-side and printed exactly once:
+
+<TerminalDemo
+  command="apo automations create --name batch-failures-hook --event batch_run.failed --action webhook --url https://example.com/hook"
+  lines={[
+    { text: "Created automation Batch failures → webhook (235b70b768874103bce8)", tone: "success" },
+    { text: "" },
+    { text: "Signing secret (shown once):", tone: "default" },
+    { text: "whsec_d33a56f66cd1a5a819fb56df21d40f87fb02ad24abe58eaf", tone: "default" },
+  ]}
+/>
+
+## Synopsis
+
+```bash
+apo automations create --name <n> --event <type> [--action webhook|github_issue]
+  [--condition '<json>' …]
+  [--url <url>]
+  [--owner <o> --repo <r> --github-token <tok> --labels <a,b>]
+  [--project <id>]
+```
+
+## Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--name <n>` | — | Automation name. **Required.** |
+| `--event <type>` | — | One of `batch_run.failed`, `batch_run.completed`, `task_run.completed`, `task_run.error`, `task_run.started`, `task_run.trace_claimed`. **Required.** |
+| `--action <type>` | `webhook` | `webhook` or `github_issue`. Immutable after creation. |
+| `--condition <json>` | none | `{"field","operator","value"}` — repeatable, AND-combined. |
+| `--url <url>` | — | Webhook action: destination URL. Required for `webhook`. |
+| `--owner <o>` / `--repo <r>` | — | GitHub action: target repository. Required for `github_issue`. |
+| `--github-token <tok>` | — | GitHub action: PAT with `issues:write`. Encrypted at rest; never printed. |
+| `--labels <a,b>` | none | GitHub action: comma-separated issue labels. |
+| `--project <id>` | saved project | Project to create the automation in. |
+
+## Conditions
+
+Conditions filter the event's payload. Batch events additionally expose the run's trigger, so scheduled runs can be routed separately from manual ones:
+
+```bash
+# Only failures caused by schedules (nightly regression watch):
+--condition '{"field":"trigger.source","operator":"eq","value":"schedule"}'
+
+# Only multi-failure batches:
+--condition '{"field":"failed_tasks","operator":"gte","value":2}'
+
+# One task you're actively stabilizing:
+--condition '{"field":"task_id","operator":"eq","value":"data-extraction"}'
+```
+
+Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `contains`. Unknown fields are rejected at creation — a rule can never go quietly stale.
+
+## Example: nightly regression → GitHub issue
+
+```bash
+apo automations create \
+  --name "Nightly regression → issue" \
+  --event batch_run.failed \
+  --condition '{"field":"trigger.source","operator":"eq","value":"schedule"}' \
+  --action github_issue \
+  --owner acme --repo agent-harness \
+  --github-token ghp_… \
+  --labels apo,harness-failure
+```
+
+Each failing scheduled batch then opens one issue whose body carries the pass/fail counts, the failing task-run ids, and deep links into the trace.
+
+:::caution[Server key required for GitHub actions]
+`github_issue` automations need `AUTOMATION_TOKEN_ENCRYPTION_KEY` set on the backend — creation returns `503` until it is. The key is a Fernet key; see [self-hosting configuration](/self-hosting/configuration/).
+:::
+
+## Notes
+
+- Test the rule from the dashboard's Automations page (Test button) — it fires a synthetic event through the full pipeline. On a `github_issue` automation a test opens a real issue.
+- List what you've built with [`apo automations list`](/cli/automations-list/). Delete and edit live in the dashboard or via `DELETE`/`PATCH /v1/automations/{id}`.

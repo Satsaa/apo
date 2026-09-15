@@ -1,0 +1,40 @@
+---
+title: "apo automations list"
+description: "List a project's automations — events, actions, and last delivery state."
+---
+
+import TerminalDemo from '../../../components/demos/TerminalDemo.astro';
+
+List the automations configured for a project: what each watches, what it delivers, and whether the last delivery succeeded.
+
+<TerminalDemo
+  command="apo automations list"
+  lines={[
+    { text: "Name                          Event             Action                                  State     Last Delivery" },
+    { text: "────────────────────────────  ─────────────────  ──────────────────────────────────────  ────────  ─────────────" },
+    { text: "Nightly failures → issue      batch_run.failed  github_issue acme/agent-harness         enabled   success" },
+    { text: "Batch failures → webhook      batch_run.failed  webhook https://hooks.slack.com/…       enabled   success" },
+    { text: "Extract task watch            task_run.completed webhook https://example.com/hook      disabled  failure" },
+    { text: "" },
+    { text: "3 automations", tone: "default" },
+  ]}
+/>
+
+## Synopsis
+
+```bash
+apo automations list [--project <id>] [--json]
+```
+
+## Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--project <id>` | saved project | Project whose automations to list. |
+| `--json` | off | Emit the raw API response instead of a table. |
+
+## Notes
+
+- Requires backend auth (run [`apo login`](/cli/auth/) first, or pass `--api-key`).
+- A `disabled` state with a failing last delivery means the automation hit ten consecutive delivery failures and switched itself off. Re-enable it from the dashboard after fixing the endpoint — re-enabling resets the counter.
+- Creating automations is [`apo automations create`](/cli/automations-create/); deleting and testing live in the dashboard (or `DELETE`/`POST /test` on `/v1/automations/{id}`).

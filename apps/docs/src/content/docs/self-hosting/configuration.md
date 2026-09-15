@@ -78,6 +78,32 @@ Alpha assumes **one backend process owns the scheduler**. The in-process dispatc
 Never run two backend processes with `SCHEDULER_ENABLED=true` against the same database. The scheduler is in-process and single-owner, so two instances will both dispatch every due schedule, producing duplicate batch runs.
 :::
 
+## GitHub-issue automations (optional)
+
+Automations that open GitHub issues store a personal access token for the
+API call. The backend refuses to store one until `AUTOMATION_TOKEN_ENCRYPTION_KEY`
+is set — creating such an automation returns `503` until it is. Webhook
+automations need nothing.
+
+Generate a Fernet key, put it in `.env`, restart the backend:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+```bash
+# .env
+AUTOMATION_TOKEN_ENCRYPTION_KEY=<the generated key>
+```
+
+```bash
+docker compose up -d backend
+```
+
+The token is encrypted at rest and never appears in any API response. If you
+rotate the key later, stored tokens become undecryptable; each affected
+automation's execution log says so, and re-saving its token fixes it.
+
 ## Upgrades and migrations
 
 The backend applies database migrations itself on startup, there is no separate migration command to run. On upgrade, pull the new images and restart; the backend boots once migrations finish.

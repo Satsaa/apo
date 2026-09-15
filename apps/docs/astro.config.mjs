@@ -38,6 +38,7 @@ export default defineConfig({
 						{ label: 'Tests', slug: 'concepts/tests' },
 						{ label: 'Traces', slug: 'concepts/traces' },
 						{ label: 'Schedules', slug: 'concepts/schedules' },
+						{ label: 'Automations', slug: 'concepts/automations' },
 					],
 				},
 				{
@@ -124,6 +125,14 @@ export default defineConfig({
 							{ label: 'runs export', slug: 'cli/runs-export' },
 						],
 					},
+				{
+					label: 'automations',
+					collapsed: false,
+					items: [
+						{ label: 'automations list', slug: 'cli/automations-list' },
+						{ label: 'automations create', slug: 'cli/automations-create' },
+					],
+				},
 				{
 					label: 'traces',
 					collapsed: false,

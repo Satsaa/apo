@@ -16,23 +16,27 @@ from ..models.db import AgentTaskBatchRunDB, AgentTaskRunDB
 from .broadcaster import Broadcaster
 from .sse import format_sse_event
 
-logger = logging.getLogger(__name__)
-
-EVENT_BATCH_RUN_COMPLETED = "batch_run.completed"
-EVENT_BATCH_RUN_FAILED = "batch_run.failed"
-EVENT_TASK_RUN_STARTED = "task_run.started"
-EVENT_TASK_RUN_COMPLETED = "task_run.completed"
-EVENT_TASK_RUN_ERROR = "task_run.error"
-EVENT_TASK_RUN_TRACE_CLAIMED = "task_run.trace_claimed"
-
-ALL_EVENT_TYPES = [
+from .run_event_types import (
+    ALL_EVENT_TYPES,
     EVENT_BATCH_RUN_COMPLETED,
     EVENT_BATCH_RUN_FAILED,
-    EVENT_TASK_RUN_STARTED,
     EVENT_TASK_RUN_COMPLETED,
     EVENT_TASK_RUN_ERROR,
+    EVENT_TASK_RUN_STARTED,
     EVENT_TASK_RUN_TRACE_CLAIMED,
+)
+
+__all__ = [
+    "ALL_EVENT_TYPES",
+    "EVENT_BATCH_RUN_COMPLETED",
+    "EVENT_BATCH_RUN_FAILED",
+    "EVENT_TASK_RUN_STARTED",
+    "EVENT_TASK_RUN_COMPLETED",
+    "EVENT_TASK_RUN_ERROR",
+    "EVENT_TASK_RUN_TRACE_CLAIMED",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class RunEvent:
@@ -259,6 +263,17 @@ async def _publish_event(project: str, event: RunEvent) -> None:
         await broadcaster.publish(project, event)
     except Exception:
         logger.exception("Failed to publish run event")
+
+    # Automations run before the inline-awaited webhook fan-out: a slow
+    # webhook endpoint (up to ~30s per delivery) must not delay automation
+    # dispatch. Automations only load rules, insert executions, and spawn
+    # delivery tasks, so this stays fast.
+    try:
+        from .automations import fire_automations_for_event
+
+        await fire_automations_for_event(project, event)
+    except Exception:
+        logger.exception("Failed to fire automations for event")
 
     try:
         from .webhook_delivery import fire_webhooks_for_event
