@@ -28,7 +28,12 @@ from sqlmodel import Session, col, select
 
 from ..db import engine
 from ..db_helpers import as_column
-from ..models.db import AutomationDB, AutomationExecutionDB
+from ..models.db import (
+    AgentTaskBatchRunDB,
+    AgentTaskRunDB,
+    AutomationDB,
+    AutomationExecutionDB,
+)
 from .run_event_types import ALL_EVENT_TYPES
 from .webhook_delivery import (
     DELIVERY_TIMEOUT_SECONDS,
@@ -454,61 +459,199 @@ def default_title() -> str:
     return "apo: {{task_hint}} — {{status}}"
 
 
-def render_default_body(
-    data: dict[str, object], *, project_id: str, event_type: str
-) -> str:
-    lines: list[str] = [
-        "apo automation fired",
-        "",
-        f"Project: {project_id}",
-        f"Event: {event_type}",
-    ]
-    status = data.get("status")
-    if status is not None:
-        lines.append(f"Status: {status}")
-    if all(k in data for k in ("total_tasks", "passed_tasks", "failed_tasks")):
-        errored = data.get("errored_tasks", 0)
-        lines.append(
-            "Tasks: {passed}/{total} passed, {failed} failed, {errored} errored".format(
-                passed=data["passed_tasks"],
-                total=data["total_tasks"],
-                failed=data["failed_tasks"],
-                errored=errored,
-            )
-        )
-    if all(k in data for k in ("total_checks", "passed_checks", "failed_checks")):
-        lines.append(
-            "Checks: {passed}/{total} passed ({failed} failed)".format(
-                passed=data["passed_checks"],
-                total=data["total_checks"],
-                failed=data["failed_checks"],
-            )
-        )
-    task_run_ids = data.get("task_run_ids")
-    if isinstance(task_run_ids, list) and task_run_ids:
-        ids = cast("list[object]", task_run_ids)
-        lines.append("Task runs: " + ", ".join(str(item) for item in ids))
-    if data.get("task_run_id"):
-        lines.append(f"Task run: {data['task_run_id']}")
-    if data.get("trace_run_id"):
-        lines.append(f"Trace: {data['trace_run_id']}")
+def _format_duration(ms: object) -> str:
+    if not isinstance(ms, (int, float)) or isinstance(ms, bool):
+        return "—"
+    seconds = float(ms) / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, sec = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {sec:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
 
+
+def _link(base_url: str, text: str, url: str) -> str:
+    return f"[{text}]({url})" if base_url else f"{text}: {url}"
+
+
+def _batch_title_text(data: dict[str, object]) -> str | None:
+    failed = data.get("failed_tasks")
+    total = data.get("total_tasks")
+    if isinstance(failed, (int, float)) and isinstance(total, (int, float)):
+        return f"{int(failed)} of {int(total)} tasks failed"
+    return None
+
+
+def render_default_title(data: dict[str, object], *, project_id: str) -> str:
+    """Status-forward default title: the failure count beats the raw status."""
+    batch_text = _batch_title_text(data)
+    hint = _value_text(data.get("task_id") or data.get("batch_run_id") or "")
+    if batch_text:
+        return f"apo: {hint} — {batch_text}"
+    return render_template(default_title(), data, project_id=project_id, title=True)
+
+
+def render_default_body(
+    data: dict[str, object],
+    *,
+    project_id: str,
+    event_type: str,
+    failing_runs: list[dict[str, object]] | None = None,
+    automation_name: str | None = None,
+) -> str:
+    """Markdown issue body in the shape of real bot-filed issues.
+
+    Verdict header, a summary table, a failing-tasks table (when the
+    delivery path enriched it from the database), deep links, and an
+    attribution footer. ``failing_runs`` entries carry task_id,
+    passed_checks, total_checks, and trace_run_id.
+    """
     base_url = os.environ.get("APO_PUBLIC_URL", "").strip()
-    if base_url:
+    is_batch = all(k in data for k in ("total_tasks", "failed_tasks"))
+
+    def abs_url(path: str) -> str:
+        return f"{base_url}{path}" if base_url else path
+
+    status = _value_text(data.get("status")) or _value_text(event_type)
+    lines: list[str] = []
+    if is_batch:
+        batch_text = _batch_title_text(data) or status
+        lines.append(f"**Batch {status}** — {batch_text}.")
+    elif data.get("task_id"):
+        checks = ""
+        if all(k in data for k in ("passed_checks", "total_checks")):
+            checks = f" ({data['passed_checks']}/{data['total_checks']} checks passed)"
+        lines.append(f"**Task {status}** — `{data['task_id']}`{checks}.")
+
+    # Summary table: two-column key/value rows read like bot issue metadata.
+    rows: list[tuple[str, str]] = []
+    if data.get("batch_run_id"):
+        rows.append(("Batch", f"`{data['batch_run_id']}`"))
+    if data.get("task_run_id"):
+        rows.append(("Task run", f"`{data['task_run_id']}`"))
+    run_metadata = data.get("run_metadata")
+    if isinstance(run_metadata, dict):
+        meta = cast("dict[str, object]", run_metadata)
+        raw_trigger = meta.get("trigger")
+        if isinstance(raw_trigger, dict):
+            trigger = cast("dict[str, object]", raw_trigger)
+        else:
+            trigger = {}
+        if trigger.get("source"):
+            source = _value_text(trigger["source"])
+            raw_schedule = meta.get("schedule")
+            name = (
+                cast("dict[str, object]", raw_schedule).get("name")
+                if isinstance(raw_schedule, dict)
+                else None
+            )
+            rows.append(
+                ("Trigger", f"{source}" + (f" · {name}" if name else ""))
+            )
+    if is_batch:
+        rows.append(
+            (
+                "Result",
+                "{passed} passed · {failed} failed · {errored} errored".format(
+                    passed=data.get("passed_tasks", "—"),
+                    failed=data.get("failed_tasks", "—"),
+                    errored=data.get("errored_tasks", 0),
+                ),
+            )
+        )
+    if all(k in data for k in ("passed_checks", "total_checks")):
+        rows.append(
+            (
+                "Checks",
+                f"{data['passed_checks']}/{data['total_checks']} passed",
+            )
+        )
+    if "duration_ms" in data:
+        rows.append(("Duration", _format_duration(data.get("duration_ms"))))
+    rows.append(("Project", f"`{project_id}`"))
+    if rows:
         lines.append("")
-        if data.get("task_run_id"):
-            lines.append(
-                f"Task run: {base_url}/project/{project_id}/runs/task/{data['task_run_id']}"
+        lines.append("| | |")
+        lines.append("| --- | --- |")
+        lines.extend(f"| {key} | {value} |" for key, value in rows)
+
+    # Failing-tasks table — the section a responder actually wants. Only
+    # possible when the delivery path enriched from the run database;
+    # otherwise fall back to raw run ids from the payload.
+    enriched = failing_runs or []
+    if enriched:
+        lines.append("")
+        lines.append("### Failing tasks")
+        lines.append("")
+        lines.append("| Task | Checks | Trace |")
+        lines.append("| --- | --- | --- |")
+        for run in enriched:
+            task = f"`{_value_text(run.get('task_id'))}`"
+            checks = f"{run.get('passed_checks', '—')}/{run.get('total_checks', '—')}"
+            trace_id = run.get("trace_run_id")
+            trace = (
+                _link(
+                    base_url,
+                    "open ↗",
+                    abs_url(f"/project/{project_id}/traces/{trace_id}"),
+                )
+                if trace_id
+                else "—"
             )
-        if data.get("trace_run_id"):
+            lines.append(f"| {task} | {checks} | {trace} |")
+    else:
+        task_run_ids = data.get("task_run_ids")
+        if isinstance(task_run_ids, list) and task_run_ids:
+            ids = cast("list[object]", task_run_ids)
+            lines.append("")
             lines.append(
-                f"Trace: {base_url}/project/{project_id}/traces/{data['trace_run_id']}"
+                "Task runs: " + ", ".join(f"`{item}`" for item in ids)
             )
-        if data.get("batch_run_id"):
-            lines.append(
-                f"Batch run: {base_url}/project/{project_id}/runs/{data['batch_run_id']}"
+
+    # Deep links (or raw paths when the public URL is unset).
+    lines.append("")
+    links: list[str] = []
+    if data.get("task_run_id"):
+        links.append(
+            _link(
+                base_url,
+                "View task run",
+                abs_url(f"/project/{project_id}/runs/task/{data['task_run_id']}"),
             )
+        )
+    if data.get("trace_run_id"):
+        links.append(
+            _link(
+                base_url,
+                "View trace",
+                abs_url(f"/project/{project_id}/traces/{data['trace_run_id']}"),
+            )
+        )
+    if data.get("batch_run_id"):
+        links.append(
+            _link(
+                base_url,
+                "View batch run",
+                abs_url(f"/project/{project_id}/runs/{data['batch_run_id']}"),
+            )
+        )
+    if links:
+        lines.append(" · ".join(links))
+
+    # Attribution footer names the rule that fired — accountability in the
+    # artifact itself.
+    lines.append("")
+    lines.append("---")
+    who = f"apo automation “{automation_name}”" if automation_name else "an apo automation"
+    posted_by = (
+        f"[{who}]({base_url}/project/{project_id}/automations)" if base_url else who
+    )
+    lines.append(f"Filed automatically by {posted_by}.")
     return "\n".join(lines)
+
+
 
 
 # --- Sample events (for the test route) ---------------------------------------
@@ -831,18 +974,35 @@ async def _deliver_github_issue_action(
         return False, None, str(exc)
 
     title_template = config.get("title")
-    title = render_template(
-        title_template if isinstance(title_template, str) else default_title(),
-        data,
-        project_id=project,
-        title=True,
+    title = (
+        render_template(title_template, data, project_id=project, title=True)
+        if isinstance(title_template, str)
+        else render_default_title(data, project_id=project)
     )
     body_template = config.get("body")
-    body = (
-        render_template(body_template, data, project_id=project)
-        if isinstance(body_template, str)
-        else render_default_body(data, project_id=project, event_type=event_type)
-    )
+    if isinstance(body_template, str):
+        body = render_template(body_template, data, project_id=project)
+    else:
+        # Enrich from the run database so the issue lists the actual failing
+        # tasks with trace links; enrichment failure must never fail the
+        # delivery — the payload fallback still renders a complete issue.
+        failing_runs: list[dict[str, object]] = []
+        batch_run_id = data.get("batch_run_id")
+        automation_id = str(snapshot["id"])
+        if isinstance(batch_run_id, str) and batch_run_id:
+            try:
+                failing_runs = _failing_task_runs(project, batch_run_id)
+            except Exception:
+                logger.warning(
+                    "Automation %s: failing-run enrichment failed", automation_id
+                )
+        body = render_default_body(
+            data,
+            project_id=project,
+            event_type=event_type,
+            failing_runs=failing_runs,
+            automation_name=_automation_name(automation_id),
+        )
     issue: dict[str, object] = {"title": title, "body": body}
     labels = config.get("labels")
     if isinstance(labels, list) and labels:
@@ -868,6 +1028,43 @@ async def _deliver_github_issue_action(
         None,
         f"GitHub API returned {resp.status_code}: {resp.text[:ERROR_MESSAGE_MAX_CHARS]}",
     )
+
+
+def _failing_task_runs(
+    project: str, batch_run_id: str, limit: int = 10
+) -> list[dict[str, object]]:
+    """Failed task runs of a batch, for the issue's failing-tasks table.
+
+    Scoped through the batch row's project — task runs carry no project
+    column of their own, and an id from another project's event must never
+    enrich this issue.
+    """
+    with Session(engine) as session:
+        batch = session.exec(
+            select(AgentTaskBatchRunDB.id).where(
+                col(AgentTaskBatchRunDB.id) == batch_run_id,
+                col(AgentTaskBatchRunDB.project) == project,
+            )
+        ).first()
+        if batch is None:
+            return []
+        runs = session.exec(
+            select(AgentTaskRunDB)
+            .where(
+                col(AgentTaskRunDB.batch_run_id) == batch_run_id,
+                col(AgentTaskRunDB.pass_result) == False,  # noqa: E712
+            )
+            .limit(limit)
+        ).all()
+        return [
+            {
+                "task_id": run.task_id,
+                "passed_checks": run.passed_checks,
+                "total_checks": run.total_checks,
+                "trace_run_id": run.trace_run_id,
+            }
+            for run in runs
+        ]
 
 
 def _automation_name(automation_id: str) -> str:
