@@ -1,0 +1,236 @@
+{
+  "run_under_judgment": "run_4179efedd2b601a1a8a6672d",
+  "model": "z-ai/glm-5.3-flash",
+  "finish_reason": "tool-calls",
+  "steps": 12,
+  "latency_ms": 125877,
+  "cost_usd": 0.004128,
+  "verdict": null,
+  "outcome": "FAIL-CLOSED: no finish_verdict within budget",
+  "transcript": [
+    {
+      "toolCalls": [
+        {
+          "name": "get_task_definition",
+          "input": {}
+        },
+        {
+          "name": "list_evidence",
+          "input": {}
+        },
+        {
+          "name": "list_runs",
+          "input": {}
+        }
+      ],
+      "usage": {
+        "in": 1000,
+        "out": 33,
+        "cost": 0.0001665
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "answer",
+            "offset": 0,
+            "limit": 3000
+          }
+        },
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 0,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 1608,
+        "out": 27,
+        "cost": 0.0002547
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 3000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 2678,
+        "out": 29,
+        "cost": 0.0002242
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 6000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 3659,
+        "out": 29,
+        "cost": 0.00024847
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 9000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 4669,
+        "out": 22,
+        "cost": 0.00027359
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 12000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 5631,
+        "out": 29,
+        "cost": 0.00030619
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 15000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 6596,
+        "out": 22,
+        "cost": 0.00032456
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 18000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 7601,
+        "out": 22,
+        "cost": 0.00036011
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 21000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 8597,
+        "out": 29,
+        "cost": 0.00039781
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "tool_log",
+            "offset": 24000,
+            "limit": 3000
+          }
+        }
+      ],
+      "usage": {
+        "in": 9617,
+        "out": 22,
+        "cost": 0.00042443
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "read_deliverable",
+          "input": {
+            "name": "stats",
+            "offset": 0,
+            "limit": 3000
+          }
+        },
+        {
+          "name": "get_run_checks",
+          "input": {
+            "run_id": "run_4179efedd2b601a1a8a6672d"
+          }
+        },
+        {
+          "name": "get_corrections",
+          "input": {}
+        }
+      ],
+      "usage": {
+        "in": 10105,
+        "out": 184,
+        "cost": 0.00045575
+      }
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "trace",
+          "input": {
+            "query": "final agent message and how the answer \"All:39.17\" was derived"
+          }
+        }
+      ],
+      "usage": {
+        "in": 10603,
+        "out": 660,
+        "cost": 0.00069165
+      }
+    }
+  ]
+}

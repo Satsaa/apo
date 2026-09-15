@@ -1,0 +1,15 @@
+{
+  "name": "PROTOTYPE-agent-judge",
+  "private": true,
+  "type": "module",
+  "description": "THROWAWAY prototype for t.agent (wayfinder #261). Not production code. Delete or absorb when the question is answered.",
+  "scripts": {
+    "agent": "node run.mjs",
+    "single": "node single-shot.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.48",
+    "ai": "^7.0.101",
+    "zod": "^3.25.0"
+  }
+}
