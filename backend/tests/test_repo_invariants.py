@@ -315,6 +315,9 @@ _TEST_FILE_EXEMPTIONS: dict[str, str] = {
     "apps/dashboard/e2e/alpha-schedule-lifecycle.spec.ts": (
         "manual alpha gate: pnpm test:alpha:ui (root package.json)"
     ),
+    "apps/dashboard/e2e/alpha-automation-lifecycle.spec.ts": (
+        "manual alpha gate: pnpm test:alpha:ui (root package.json)"
+    ),
     "apps/dashboard/e2e/alpha-trace-drilldown.spec.ts": (
         "manual alpha gate: pnpm test:alpha:ui (root package.json)"
     ),

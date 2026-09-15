@@ -220,6 +220,20 @@ Under Source-Owned Execution, Tasks run from your own checkout via
 `apo task run` or `apo connect`, so dependency installation happens in your
 local environment — the server never clones sources or installs packages.
 
+### Optional: GitHub-token encryption for automations
+
+`AUTOMATION_TOKEN_ENCRYPTION_KEY` enables `github_issue` automations (rules
+that open an issue when runs fail). Generate a Fernet key and set it in the
+backend environment:
+
+```
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Without it, webhook automations work fine; creating a `github_issue`
+automation that supplies a token returns 503 instead of storing a
+plaintext PAT.
+
 ### Operator notes
 
 - Install dependencies in your Task repository before running (`pnpm install`,

@@ -165,3 +165,18 @@ def validate_installation_secrets(config: InstallationConfig) -> None:
                 "GITHUB_TOKEN_ENCRYPTION_KEY is not a valid Fernet key",
                 variable="GITHUB_TOKEN_ENCRYPTION_KEY",
             ) from None
+
+    # Automation GitHub-token encryption — optional; when set it must be a
+    # valid Fernet key. Without it, github_issue automations that supply a
+    # token are rejected with a 503 rather than storing a plaintext PAT.
+    automation_key = os.environ.get("AUTOMATION_TOKEN_ENCRYPTION_KEY", "").strip()
+    if automation_key:
+        try:
+            from cryptography.fernet import Fernet
+
+            Fernet(automation_key.encode())
+        except Exception:
+            raise InstallationConfigError(
+                "AUTOMATION_TOKEN_ENCRYPTION_KEY is not a valid Fernet key",
+                variable="AUTOMATION_TOKEN_ENCRYPTION_KEY",
+            ) from None

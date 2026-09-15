@@ -953,6 +953,80 @@ class WebhookDB(SQLModel, table=True):
     )
 
 
+class AutomationDB(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "automations"
+
+    id: str = Field(primary_key=True, default_factory=lambda: uuid4().hex[:20])
+    # FK + project_id naming follow the newer tables (e.g. CommentDB), not
+    # the older WebhookDB.project plain-column style.
+    project_id: str = Field(foreign_key="projects.id", index=True)
+    name: str = Field(max_length=100)
+    description: str | None = Field(default=None)
+
+    # One of ALL_EVENT_TYPES from services/run_events.py.
+    event_type: str = Field(index=True)
+    # AND-combined conditions; [] matches every event of this type.
+    conditions: list[dict[str, object]] = Field(
+        default_factory=list, sa_column=Column(JSON)
+    )
+
+    # "webhook" | "github_issue"; immutable after create.
+    action_type: str
+    # Per-type config, validated at create. Never contains secrets.
+    action_config: dict[str, object] = Field(sa_column=Column(JSON))
+
+    # Webhook-action signing secret. Server-generated on create and rotate;
+    # shown exactly once in the create/rotate response; never accepted from
+    # clients; never returned by any other endpoint.
+    secret: str | None = Field(default=None)
+    # GitHub PAT for github_issue actions, Fernet-encrypted at rest with
+    # AUTOMATION_TOKEN_ENCRYPTION_KEY. Client-supplied on create, replace-only
+    # on update (no clear; delete the automation instead).
+    github_token_encrypted: str | None = Field(default=None)
+
+    enabled: bool = Field(default=True, index=True)
+    # Delivery health, mirroring WebhookDB's columns so auto-disable works
+    # the same way (AUTOMATION_MAX_CONSECUTIVE_FAILURES in services/automations).
+    last_delivery_at: datetime | None = Field(default=None)
+    last_delivery_status: str | None = Field(default=None)
+    consecutive_failures: int = Field(default=0)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(UTCDateTime, server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            UTCDateTime, server_default=func.now(), onupdate=func.now()
+        ),
+    )
+
+
+class AutomationExecutionDB(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "automation_executions"
+
+    id: str = Field(primary_key=True, default_factory=lambda: uuid4().hex[:20])
+    automation_id: str = Field(foreign_key="automations.id", index=True)
+    project_id: str = Field(index=True)
+    event_type: str
+    # The event payload that matched (the ``data`` dict from RunEvent). For
+    # batch events this includes member-supplied run_metadata verbatim.
+    input: dict[str, object] = Field(sa_column=Column(JSON))
+    status: str = Field(default="pending", index=True)  # pending|completed|error
+    # Action-specific result, e.g. {"http_status": 200} or
+    # {"issue_url": "https://github.com/owner/repo/issues/42"}.
+    output: dict[str, object] | None = Field(default=None, sa_column=Column(JSON))
+    error: str | None = Field(default=None)
+    started_at: datetime | None = Field(default=None)
+    finished_at: datetime | None = Field(default=None)
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(UTCDateTime, server_default=func.now()),
+    )
+
+
 class CommentDB(SQLModel, table=True):
     __tablename__: ClassVar[str] = "comments"
 

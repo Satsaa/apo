@@ -1,0 +1,974 @@
+"""Automations service: event conditions, typed actions, delivery, recovery.
+
+Automations are project-scoped rules that watch run events (the same events
+webhooks see), match them against declarative conditions, and deliver a
+typed action — a signed webhook POST or a GitHub issue. The execution log
+(``AutomationExecutionDB``) records every firing with its input, output, and
+error; deliveries are at-most-once across restarts (orphaned pending rows
+are marked error at startup, never retried — a duplicate GitHub issue is
+worse than a missed notification).
+"""
+
+# pyright: reportAny=false, reportArgumentType=false, reportImplicitStringConcatenation=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnusedCallResult=false, reportUnusedImport=false
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+from datetime import datetime, timezone
+from typing import cast
+from uuid import uuid4
+
+import httpx
+from cryptography.fernet import Fernet
+from sqlalchemy import delete as sa_delete
+from sqlmodel import Session, col, select
+
+from ..db import engine
+from ..db_helpers import as_column
+from ..models.db import AutomationDB, AutomationExecutionDB
+from .run_event_types import ALL_EVENT_TYPES
+from .webhook_delivery import generate_secret, sign_payload
+from .webhook_targets import (
+    WebhookDestinationError,
+    assert_public_destination,
+    validate_webhook_url,
+)
+
+logger = logging.getLogger(__name__)
+
+MAX_AUTOMATIONS_PER_PROJECT = 25
+AUTOMATION_MAX_CONSECUTIVE_FAILURES = 10
+DELIVERY_CONCURRENCY = 8
+PRUNE_KEEP = 100
+DELIVERY_TIMEOUT_SECONDS = 10
+MAX_RETRIES = 2
+ERROR_MESSAGE_MAX_CHARS = 1000
+
+ACTION_WEBHOOK = "webhook"
+ACTION_GITHUB_ISSUE = "github_issue"
+ACTION_TYPES = (ACTION_WEBHOOK, ACTION_GITHUB_ISSUE)
+
+GITHUB_API_BASE = "https://api.github.com"
+# GitHub login/repo name rules: alphanumerics, hyphens, underscores, dots;
+# the all-dot and ``.git``-suffix exclusions are GitHub's own restrictions
+# and also block path-segment normalization tricks.
+_GITHUB_NAME_RE = re.compile(r"^[A-Za-z0-9-_.]+$")
+_TEMPLATE_RE = re.compile(r"\{\{(\w+)\}\}")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class AutomationRequestError(Exception):
+    """Invalid automation configuration; ``status_code`` maps to the HTTP response."""
+
+    message: str
+    status_code: int
+
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+class AutomationSecretsUnavailable(Exception):
+    """The server lacks AUTOMATION_TOKEN_ENCRYPTION_KEY, so no token can be stored."""
+
+
+class AutomationTokenError(Exception):
+    """A stored GitHub token cannot be decrypted (key rotation); re-save it."""
+
+
+# --- Condition vocabulary ---------------------------------------------------
+
+TASK_RUN_EVENT_FIELDS = frozenset(
+    {
+        "task_run_id",
+        "batch_run_id",
+        "task_id",
+        "status",
+        "pass_result",
+        "total_checks",
+        "passed_checks",
+        "failed_checks",
+        "duration_ms",
+        "total_cost",
+        "trace_run_id",
+        "started_at",
+        "completed_at",
+    }
+)
+BATCH_RUN_EVENT_FIELDS = frozenset(
+    {
+        "batch_run_id",
+        "status",
+        "total_tasks",
+        "passed_tasks",
+        "failed_tasks",
+        "errored_tasks",
+        "duration_ms",
+        "started_at",
+        "completed_at",
+        "trigger.source",
+        "schedule.name",
+    }
+)
+TRACE_CLAIMED_EVENT_FIELDS = frozenset(
+    {"task_run_id", "trace_run_id", "batch_run_id", "status"}
+)
+
+# Only batch-run payloads carry run_metadata; trigger/schedule conditions are
+# therefore batch-event-only (enforced at create/update time).
+EVENT_FIELDS: dict[str, frozenset[str]] = {
+    "task_run.started": TASK_RUN_EVENT_FIELDS,
+    "task_run.completed": TASK_RUN_EVENT_FIELDS,
+    "task_run.error": TASK_RUN_EVENT_FIELDS,
+    "batch_run.completed": BATCH_RUN_EVENT_FIELDS,
+    "batch_run.failed": BATCH_RUN_EVENT_FIELDS,
+    "task_run.trace_claimed": TRACE_CLAIMED_EVENT_FIELDS,
+}
+
+CONDITION_OPERATORS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte", "in", "contains"})
+
+# Dotted fields resolve by walking run_metadata — the exact shape scheduled
+# runs write (a trigger.schedule_name key does not exist anywhere).
+_DOTTED_FIELD_RESOLVERS: dict[str, tuple[str, ...]] = {
+    "trigger.source": ("run_metadata", "trigger", "source"),
+    "schedule.name": ("run_metadata", "schedule", "name"),
+}
+
+
+def validate_event_type(event_type: str) -> None:
+    if event_type not in ALL_EVENT_TYPES:
+        raise AutomationRequestError(
+            f"Unknown event type: {event_type!r}. "
+            f"Valid: {', '.join(ALL_EVENT_TYPES)}"
+        )
+
+
+def validate_conditions(
+    event_type: str, conditions: list[dict[str, object]]
+) -> None:
+    """Reject unknown fields/operators/values up front, naming the index."""
+    allowlist = EVENT_FIELDS.get(event_type)
+    if allowlist is None:
+        raise AutomationRequestError(f"Unknown event type: {event_type!r}")
+    for index, condition in enumerate(conditions):
+        field = condition.get("field")
+        operator = condition.get("operator")
+        value = condition.get("value")
+        if not isinstance(field, str) or field not in allowlist:
+            raise AutomationRequestError(
+                f"conditions[{index}]: unknown field {field!r} for event "
+                f"{event_type!r}"
+            )
+        if not isinstance(operator, str) or operator not in CONDITION_OPERATORS:
+            raise AutomationRequestError(
+                f"conditions[{index}]: unknown operator {operator!r}. "
+                f"Valid: {', '.join(sorted(CONDITION_OPERATORS))}"
+            )
+        if operator == "in":
+            if not isinstance(value, list) or not value:
+                raise AutomationRequestError(
+                    f"conditions[{index}]: 'in' requires a non-empty list value"
+                )
+        elif operator == "contains":
+            if not isinstance(value, str):
+                raise AutomationRequestError(
+                    f"conditions[{index}]: 'contains' requires a string value"
+                )
+        elif operator in ("gt", "gte", "lt", "lte"):
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise AutomationRequestError(
+                    f"conditions[{index}]: {operator!r} requires a number or "
+                    "string value"
+                )
+
+
+def _resolve_field(data: dict[str, object], field: str) -> tuple[bool, object]:
+    """Return (present, value); a missing field counts as null."""
+    path = _DOTTED_FIELD_RESOLVERS.get(field)
+    if path is not None:
+        current: object = data
+        for segment in path:
+            if not isinstance(current, dict) or segment not in current:
+                return False, None
+            current = current[segment]
+        return True, current
+    if field in data:
+        return True, data[field]
+    return False, None
+
+
+def _json_type(value: object) -> str:
+    # bool must be tested before number: Python's True == 1 would otherwise
+    # let a boolean condition match a numeric payload.
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "other"
+
+
+def _strict_eq(condition_value: object, payload_value: object) -> bool:
+    condition_type = _json_type(condition_value)
+    payload_type = _json_type(payload_value)
+    if condition_type != payload_type:
+        return False
+    if condition_type not in ("null", "bool", "number", "string"):
+        return False
+    if condition_type == "null":
+        return True
+    return bool(condition_value == payload_value)
+
+
+def conditions_match(
+    conditions: list[dict[str, object]], data: dict[str, object]
+) -> bool:
+    """AND-combine conditions; fail closed on anything unrecognized."""
+    for condition in conditions:
+        field = condition.get("field")
+        operator = condition.get("operator")
+        value = condition.get("value")
+        if not isinstance(field, str) or not isinstance(operator, str):
+            logger.warning("Automation condition malformed: %r", condition)
+            return False
+        _, payload_value = _resolve_field(data, field)
+        payload_type = _json_type(payload_value)
+        if operator == "eq":
+            matched = _strict_eq(value, payload_value)
+        elif operator == "ne":
+            matched = not _strict_eq(value, payload_value)
+        elif operator in ("gt", "gte", "lt", "lte"):
+            value_type = _json_type(value)
+            if payload_type not in ("number", "string") or value_type != payload_type:
+                matched = False
+            elif payload_type == "number":
+                left = cast("float", payload_value)
+                right = cast("float", value)
+                if operator == "gt":
+                    matched = left > right
+                elif operator == "gte":
+                    matched = left >= right
+                elif operator == "lt":
+                    matched = left < right
+                else:
+                    matched = left <= right
+            else:
+                left = cast("str", payload_value)
+                right = cast("str", value)
+                if operator == "gt":
+                    matched = left > right
+                elif operator == "gte":
+                    matched = left >= right
+                elif operator == "lt":
+                    matched = left < right
+                else:
+                    matched = left <= right
+        elif operator == "in":
+            if not isinstance(value, list):
+                matched = False
+            else:
+                matched = any(_strict_eq(item, payload_value) for item in value)
+        elif operator == "contains":
+            matched = isinstance(payload_value, str) and isinstance(value, str) and (
+                value in payload_value
+            )
+        else:
+            logger.warning(
+                "Automation condition operator %r unrecognized; not matching",
+                operator,
+            )
+            return False
+        if not matched:
+            return False
+    return True
+
+
+# --- Action configuration ---------------------------------------------------
+
+
+def validate_action_config(
+    action_type: str, action_config: dict[str, object]
+) -> dict[str, object]:
+    """Validate and normalize per-type config; raises AutomationRequestError."""
+    if action_type == ACTION_WEBHOOK:
+        url = action_config.get("url")
+        if not isinstance(url, str) or not url:
+            raise AutomationRequestError(
+                "action_config.url is required for webhook actions", 422
+            )
+        try:
+            validate_webhook_url(url)
+        except WebhookDestinationError as exc:
+            raise AutomationRequestError(str(exc), 422) from exc
+        return {"url": url}
+    if action_type == ACTION_GITHUB_ISSUE:
+        owner = action_config.get("owner")
+        repo = action_config.get("repo")
+        for label, value in (("owner", owner), ("repo", repo)):
+            if not isinstance(value, str) or not _GITHUB_NAME_RE.match(value):
+                raise AutomationRequestError(
+                    f"action_config.{label} is invalid: {value!r}", 422
+                )
+            if set(value) == {"."} or value.endswith(".git"):
+                raise AutomationRequestError(
+                    f"action_config.{label} is invalid: {value!r} "
+                    "(all-dot names and .git suffixes are not valid GitHub names)",
+                    422,
+                )
+        labels = action_config.get("labels")
+        if labels is not None and (
+            not isinstance(labels, list)
+            or not all(isinstance(label, str) for label in labels)
+        ):
+            raise AutomationRequestError(
+                "action_config.labels must be a list of strings or null", 422
+            )
+        for key in ("title", "body"):
+            template = action_config.get(key)
+            if template is not None and not isinstance(template, str):
+                raise AutomationRequestError(
+                    f"action_config.{key} must be a string or null", 422
+                )
+        return {
+            "owner": owner,
+            "repo": repo,
+            "labels": labels,
+            "title": action_config.get("title"),
+            "body": action_config.get("body"),
+        }
+    raise AutomationRequestError(
+        f"Unknown action type: {action_type!r}. Valid: {', '.join(ACTION_TYPES)}"
+    )
+
+
+# --- GitHub token encryption ------------------------------------------------
+
+
+def _fernet() -> Fernet:
+    # Read at call time (not import time) so operators can set the key and
+    # tests can monkeypatch it without reloading the module.
+    key = os.environ.get("AUTOMATION_TOKEN_ENCRYPTION_KEY", "").strip()
+    if not key:
+        raise AutomationSecretsUnavailable(
+            "AUTOMATION_TOKEN_ENCRYPTION_KEY is not configured on this server; "
+            "GitHub tokens cannot be stored. Set it to a Fernet key generated "
+            "with Fernet.generate_key()."
+        )
+    try:
+        return Fernet(key.encode())
+    except Exception as exc:
+        raise AutomationSecretsUnavailable(
+            "AUTOMATION_TOKEN_ENCRYPTION_KEY is not a valid Fernet key"
+        ) from exc
+
+
+def encrypt_github_token(token: str) -> str:
+    return str(_fernet().encrypt(token.encode()).decode())
+
+
+def decrypt_github_token(stored: str) -> str:
+    try:
+        return str(_fernet().decrypt(stored.encode()).decode())
+    except Exception as exc:
+        raise AutomationTokenError(
+            "stored GitHub token is undecryptable (encryption key changed?); "
+            "re-save the token on the automation"
+        ) from exc
+
+
+# --- Templates ----------------------------------------------------------------
+
+
+def _placeholder_values(
+    data: dict[str, object], project_id: str
+) -> dict[str, str]:
+    def field(name: str) -> object:
+        return data.get(name)
+
+    task_hint = field("task_id") or field("batch_run_id") or ""
+    task_run_ids = field("task_run_ids")
+    return {
+        "task_id": _value_text(field("task_id")),
+        "task_hint": _value_text(task_hint),
+        "task_run_id": _value_text(field("task_run_id")),
+        "batch_run_id": _value_text(field("batch_run_id")),
+        "trace_run_id": _value_text(field("trace_run_id")),
+        "status": _value_text(field("status")),
+        "pass_result": _value_text(field("pass_result")),
+        "passed_checks": _value_text(field("passed_checks")),
+        "failed_checks": _value_text(field("failed_checks")),
+        "total_checks": _value_text(field("total_checks")),
+        "passed_tasks": _value_text(field("passed_tasks")),
+        "failed_tasks": _value_text(field("failed_tasks")),
+        "errored_tasks": _value_text(field("errored_tasks")),
+        "total_tasks": _value_text(field("total_tasks")),
+        "task_run_ids": (
+            ", ".join(str(item) for item in cast("list[object]", task_run_ids))
+            if isinstance(task_run_ids, list)
+            else ""
+        ),
+        "duration_ms": _value_text(field("duration_ms")),
+        "project": project_id,
+    }
+
+
+def _value_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def render_template(
+    template: str, data: dict[str, object], *, project_id: str, title: bool = False
+) -> str:
+    """Single left-to-right pass; substituted values are never rescanned."""
+    values = _placeholder_values(data, project_id)
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        text = values.get(name)
+        if text is None:
+            return match.group(0)
+        return _CONTROL_CHARS_RE.sub("", text) if title else text
+
+    return _TEMPLATE_RE.sub(replace, template)
+
+
+def default_title() -> str:
+    return "apo: {{task_hint}} — {{status}}"
+
+
+def render_default_body(
+    data: dict[str, object], *, project_id: str, event_type: str
+) -> str:
+    lines: list[str] = [
+        "apo automation fired",
+        "",
+        f"Project: {project_id}",
+        f"Event: {event_type}",
+    ]
+    status = data.get("status")
+    if status is not None:
+        lines.append(f"Status: {status}")
+    if all(k in data for k in ("total_tasks", "passed_tasks", "failed_tasks")):
+        errored = data.get("errored_tasks", 0)
+        lines.append(
+            "Tasks: {passed}/{total} passed, {failed} failed, {errored} errored".format(
+                passed=data["passed_tasks"],
+                total=data["total_tasks"],
+                failed=data["failed_tasks"],
+                errored=errored,
+            )
+        )
+    if all(k in data for k in ("total_checks", "passed_checks", "failed_checks")):
+        lines.append(
+            "Checks: {passed}/{total} passed ({failed} failed)".format(
+                passed=data["passed_checks"],
+                total=data["total_checks"],
+                failed=data["failed_checks"],
+            )
+        )
+    task_run_ids = data.get("task_run_ids")
+    if isinstance(task_run_ids, list) and task_run_ids:
+        ids = cast("list[object]", task_run_ids)
+        lines.append("Task runs: " + ", ".join(str(item) for item in ids))
+    if data.get("task_run_id"):
+        lines.append(f"Task run: {data['task_run_id']}")
+    if data.get("trace_run_id"):
+        lines.append(f"Trace: {data['trace_run_id']}")
+
+    base_url = os.environ.get("APO_PUBLIC_URL", "").strip()
+    if base_url:
+        lines.append("")
+        if data.get("task_run_id"):
+            lines.append(
+                f"Task run: {base_url}/project/{project_id}/runs/task/{data['task_run_id']}"
+            )
+        if data.get("trace_run_id"):
+            lines.append(
+                f"Trace: {base_url}/project/{project_id}/traces/{data['trace_run_id']}"
+            )
+        if data.get("batch_run_id"):
+            lines.append(
+                f"Batch run: {base_url}/project/{project_id}/runs/{data['batch_run_id']}"
+            )
+    return "\n".join(lines)
+
+
+# --- Sample events (for the test route) ---------------------------------------
+
+
+def build_sample_event_data(event_type: str) -> dict[str, object]:
+    now = datetime.now(timezone.utc).isoformat()
+    if event_type in ("batch_run.completed", "batch_run.failed"):
+        return {
+            "batch_run_id": "test-batch-run",
+            "status": "failed" if event_type == "batch_run.failed" else "completed",
+            "total_tasks": 3,
+            "passed_tasks": 1,
+            "failed_tasks": 2,
+            "errored_tasks": 0,
+            "duration_ms": 5000.0,
+            "started_at": now,
+            "completed_at": now,
+            "run_metadata": {
+                "trigger": {"source": "test"},
+                "schedule": {"id": "test-schedule", "name": "test-schedule"},
+            },
+        }
+    if event_type == "task_run.trace_claimed":
+        return {
+            "task_run_id": "test-task-run",
+            "trace_run_id": "test-trace-run",
+            "batch_run_id": "test-batch-run",
+            "status": "running",
+        }
+    status = {
+        "task_run.started": "running",
+        "task_run.completed": "failed",
+        "task_run.error": "error",
+    }.get(event_type, "failed")
+    return {
+        "task_run_id": "test-task-run",
+        "batch_run_id": "test-batch-run",
+        "task_id": "test-task",
+        "status": status,
+        "pass_result": False if status == "failed" else None,
+        "total_checks": 3,
+        "passed_checks": 1,
+        "failed_checks": 2,
+        "duration_ms": 1234.5,
+        "total_cost": 0.01,
+        "trace_run_id": "test-trace-run",
+        "started_at": now,
+        "completed_at": now,
+    }
+
+
+# --- Dispatch -----------------------------------------------------------------
+
+
+async def fire_automations_for_event(project: str, event: object) -> None:
+    """Match a run event against the project's automations and dispatch."""
+    event_type = getattr(event, "event_type", "")
+    data: dict[str, object] = dict(getattr(event, "data", {}) or {})
+
+    planned: list[tuple[str, str]] = []
+    with Session(engine) as session:
+        automations = session.exec(
+            select(AutomationDB).where(
+                col(AutomationDB.project_id) == project,
+                col(AutomationDB.enabled) == True,  # noqa: E712
+                col(AutomationDB.event_type) == event_type,
+            )
+        ).all()
+        for automation in automations:
+            # One failing automation must not abort the rest for this event.
+            try:
+                if not conditions_match(automation.conditions, data):
+                    continue
+                execution = AutomationExecutionDB(
+                    automation_id=automation.id,
+                    project_id=project,
+                    event_type=event_type,
+                    input=data,
+                )
+                session.add(execution)
+                session.commit()
+                session.refresh(execution)
+                # Prune at insert time so a saturated delivery semaphore
+                # (queued, never-started deliveries) cannot grow the log.
+                _prune_executions(session, automation.id)
+                assert execution.id is not None and automation.id is not None
+                planned.append((automation.id, execution.id))
+            except Exception:
+                logger.exception(
+                    "Automation %s failed during match/dispatch", automation.id
+                )
+
+    for automation_id, execution_id in planned:
+        task = asyncio.create_task(
+            _deliver(automation_id, execution_id, project, event_type, data)
+        )
+        _delivery_tasks.add(task)
+        task.add_done_callback(_delivery_tasks.discard)
+
+
+_delivery_tasks: set[asyncio.Task[None]] = set()
+_semaphore: asyncio.Semaphore | None = None
+_client: httpx.AsyncClient | None = None
+
+
+def _prune_executions(session: Session, automation_id: str) -> None:
+    keep_ids = session.exec(
+        select(AutomationExecutionDB.id)
+        .where(col(AutomationExecutionDB.automation_id) == automation_id)
+        .order_by(
+            as_column(cast(object, AutomationExecutionDB.created_at)).desc(),
+            as_column(cast(object, AutomationExecutionDB.id)).desc(),
+        )
+        .limit(PRUNE_KEEP)
+    ).all()
+    if len(keep_ids) < PRUNE_KEEP:
+        return
+    session.exec(
+        sa_delete(AutomationExecutionDB).where(
+            col(AutomationExecutionDB.automation_id) == automation_id,
+            col(AutomationExecutionDB.id).not_in(keep_ids),
+        )
+    )
+    session.commit()
+
+
+async def _deliver(
+    automation_id: str,
+    execution_id: str,
+    project: str,
+    event_type: str,
+    data: dict[str, object],
+    *,
+    is_test: bool = False,
+) -> None:
+    global _semaphore, _client
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(DELIVERY_CONCURRENCY)
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS)
+    assert _semaphore is not None and _client is not None
+    semaphore, client = _semaphore, _client
+    async with semaphore:
+        with Session(engine) as session:
+            automation = session.get(AutomationDB, automation_id)
+            if automation is None:
+                return
+            snapshot = _automation_snapshot(automation)
+        await _execute_delivery(
+            client, snapshot, execution_id, project, event_type, data, is_test=is_test
+        )
+
+
+def _automation_snapshot(automation: AutomationDB) -> dict[str, object]:
+    return {
+        "id": automation.id,
+        "action_type": automation.action_type,
+        "action_config": dict(automation.action_config or {}),
+        "secret": automation.secret,
+        "github_token_encrypted": automation.github_token_encrypted,
+    }
+
+
+async def deliver_test_event(
+    automation: AutomationDB, session: Session
+) -> tuple[bool, str | None]:
+    """Deliver a synthetic event inline (the /test route); skip health updates."""
+    data = build_sample_event_data(automation.event_type)
+    data["__test"] = True
+    if not conditions_match(automation.conditions, data):
+        return False, "sample event does not match automation conditions"
+    assert automation.id is not None
+    execution = AutomationExecutionDB(
+        automation_id=automation.id,
+        project_id=automation.project_id,
+        event_type=automation.event_type,
+        input=data,
+    )
+    session.add(execution)
+    session.commit()
+    session.refresh(execution)
+    _prune_executions(session, automation.id)
+    assert execution.id is not None
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS)
+    assert _client is not None
+    success, _, error = await _execute_delivery(
+        _client,
+        _automation_snapshot(automation),
+        execution.id,
+        automation.project_id,
+        automation.event_type,
+        data,
+        is_test=True,
+    )
+    return success, error
+
+
+async def _execute_delivery(
+    client: httpx.AsyncClient,
+    snapshot: dict[str, object],
+    execution_id: str,
+    project: str,
+    event_type: str,
+    data: dict[str, object],
+    *,
+    is_test: bool,
+) -> tuple[bool, dict[str, object] | None, str | None]:
+    _mark_execution_started(execution_id)
+    automation_id = str(snapshot["id"])
+    try:
+        if snapshot["action_type"] == ACTION_WEBHOOK:
+            success, output, error = await _deliver_webhook_action(
+                client, snapshot, automation_id, execution_id, project, event_type, data
+            )
+        else:
+            success, output, error = await _deliver_github_issue_action(
+                client, snapshot, project, event_type, data
+            )
+    except Exception as exc:
+        logger.exception("Automation %s delivery crashed", automation_id)
+        success, output, error = False, None, str(exc)
+    _record_delivery_outcome(
+        automation_id, execution_id, success, output, error, is_test=is_test
+    )
+    return success, output, error
+
+
+async def _deliver_webhook_action(
+    client: httpx.AsyncClient,
+    snapshot: dict[str, object],
+    automation_id: str,
+    execution_id: str,
+    project: str,
+    event_type: str,
+    data: dict[str, object],
+) -> tuple[bool, dict[str, object] | None, str | None]:
+    config = cast("dict[str, object]", snapshot["action_config"])
+    url = str(config.get("url", ""))
+    secret = snapshot["secret"]
+    if not isinstance(secret, str) or not secret:
+        return False, None, "automation has no signing secret"
+
+    # Delivery-time SSRF guard: re-resolve so a URL whose DNS changed to an
+    # internal address after configuration cannot be reached.
+    try:
+        assert_public_destination(url)
+    except WebhookDestinationError as exc:
+        return False, None, str(exc)
+
+    envelope = {
+        "event_type": event_type,
+        "project": project,
+        "data": data,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "automation": {
+            "automation_id": automation_id,
+            "automation_name": _automation_name(automation_id),
+            "execution_id": execution_id,
+        },
+    }
+    payload_bytes = json.dumps(envelope, default=str).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Automation-Signature": sign_payload(payload_bytes, secret),
+        "X-Automation-Event": event_type,
+        "X-Automation-Delivery-ID": f"{automation_id}-{execution_id}",
+    }
+    last_error: str | None = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = await client.post(url, content=payload_bytes, headers=headers)
+            if 200 <= resp.status_code < 300:
+                return True, {"http_status": resp.status_code}, None
+            last_error = f"HTTP {resp.status_code}"
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+        if attempt < MAX_RETRIES:
+            await _retry_delay()
+    return False, None, last_error
+
+
+async def _retry_delay() -> None:
+    await asyncio.sleep(1)
+
+
+async def await_pending_deliveries() -> None:
+    """Wait for in-flight delivery tasks without cancelling them.
+
+    Used by tests to make fan-out assertions deterministic; shutdown uses
+    :func:`stop_automation_deliveries` instead (cancel + drain).
+    """
+    tasks = list(_delivery_tasks)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _deliver_github_issue_action(
+    client: httpx.AsyncClient,
+    snapshot: dict[str, object],
+    project: str,
+    event_type: str,
+    data: dict[str, object],
+) -> tuple[bool, dict[str, object] | None, str | None]:
+    config = cast("dict[str, object]", snapshot["action_config"])
+    owner = str(config.get("owner", ""))
+    repo = str(config.get("repo", ""))
+    stored = snapshot["github_token_encrypted"]
+    if not isinstance(stored, str) or not stored:
+        return False, None, "automation has no stored GitHub token"
+    try:
+        token = decrypt_github_token(stored)
+    except AutomationTokenError as exc:
+        return False, None, str(exc)
+
+    title_template = config.get("title")
+    title = render_template(
+        title_template if isinstance(title_template, str) else default_title(),
+        data,
+        project_id=project,
+        title=True,
+    )
+    body_template = config.get("body")
+    body = (
+        render_template(body_template, data, project_id=project)
+        if isinstance(body_template, str)
+        else render_default_body(data, project_id=project, event_type=event_type)
+    )
+    issue: dict[str, object] = {"title": title, "body": body}
+    labels = config.get("labels")
+    if isinstance(labels, list) and labels:
+        issue["labels"] = labels
+
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues"
+    try:
+        resp = await client.post(
+            url,
+            json=issue,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+    except httpx.HTTPError as exc:
+        return False, None, str(exc)
+    if 200 <= resp.status_code < 300:
+        issue_url = str(resp.json().get("html_url") or "")
+        return True, {"issue_url": issue_url}, None
+    return (
+        False,
+        None,
+        f"GitHub API returned {resp.status_code}: {resp.text[:ERROR_MESSAGE_MAX_CHARS]}",
+    )
+
+
+def _automation_name(automation_id: str) -> str:
+    with Session(engine) as session:
+        automation = session.get(AutomationDB, automation_id)
+        return automation.name if automation else automation_id
+
+
+def _mark_execution_started(execution_id: str) -> None:
+    with Session(engine) as session:
+        execution = session.get(AutomationExecutionDB, execution_id)
+        if execution is None:
+            return
+        execution.started_at = datetime.now(timezone.utc)
+        session.add(execution)
+        session.commit()
+
+
+def _record_delivery_outcome(
+    automation_id: str,
+    execution_id: str,
+    success: bool,
+    output: dict[str, object] | None,
+    error: str | None,
+    *,
+    is_test: bool,
+) -> None:
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        execution = session.get(AutomationExecutionDB, execution_id)
+        if execution is not None:
+            execution.status = "completed" if success else "error"
+            execution.output = output
+            execution.error = (
+                error[:ERROR_MESSAGE_MAX_CHARS] if error is not None else None
+            )
+            execution.finished_at = now
+            session.add(execution)
+        if not is_test:
+            automation = session.get(AutomationDB, automation_id)
+            if automation is not None:
+                automation.last_delivery_at = now
+                automation.last_delivery_status = (
+                    "success" if success else "failure"
+                )
+                if success:
+                    automation.consecutive_failures = 0
+                else:
+                    automation.consecutive_failures += 1
+                    if automation.consecutive_failures >= (
+                        AUTOMATION_MAX_CONSECUTIVE_FAILURES
+                    ):
+                        automation.enabled = False
+                        logger.warning(
+                            "Automation %s disabled after %d consecutive failures",
+                            automation_id,
+                            automation.consecutive_failures,
+                        )
+                session.add(automation)
+        session.commit()
+
+
+# --- Lifecycle -----------------------------------------------------------------
+
+
+def recover_stale_automations(session: Session) -> None:
+    """Mark orphaned pending executions as error; never retry a delivery.
+
+    Deliveries only start after app startup completes, so any pending row at
+    startup was interrupted by a restart. Retrying could double-fire side
+    effects (duplicate GitHub issues are worse than a missed notification).
+    """
+    pending = session.exec(
+        select(AutomationExecutionDB).where(
+            AutomationExecutionDB.status == "pending"
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for execution in pending:
+        execution.status = "error"
+        execution.error = "delivery interrupted by restart"
+        execution.finished_at = now
+        session.add(execution)
+    if pending:
+        session.commit()
+        logger.info("Marked %d interrupted automation executions as error", len(pending))
+
+
+async def stop_automation_deliveries() -> None:
+    """Cancel and drain in-flight deliveries; close the shared client."""
+    global _client, _semaphore
+    tasks = list(_delivery_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=5
+            )
+        except TimeoutError:
+            logger.warning("Automation delivery drain timed out")
+    if _client is not None:
+        await _client.aclose()
+    _delivery_tasks.clear()
+    _client = None
+    _semaphore = None
+
+
+def new_automation_id() -> str:
+    return uuid4().hex[:20]
+
+
+def new_automation_secret() -> str:
+    return generate_secret()

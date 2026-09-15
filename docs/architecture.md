@@ -647,6 +647,46 @@ graph LR
 
 For multi-instance deployments, replace the in-memory broadcaster with Redis pub/sub for cross-instance event distribution while keeping the same SSE frontend interface.
 
+## Automations
+
+Automations are project-scoped rules that watch the same run events webhooks
+see, match them against declarative conditions, and deliver a typed action.
+They are the policy layer above webhooks: filtering, formatting, and
+accountability move into the product, and the verdict is bridged to where
+repair happens (a GitHub issue next to the harness code) without moving
+execution or repair into apo.
+
+- **Trigger surface**: the six run event types (`services/run_event_types.py`).
+  Batch events additionally expose `run_metadata`-derived conditions
+  (`trigger.source`, `schedule.name`) so scheduled runs can be routed
+  separately from manual ones.
+- **Conditions**: AND-combined `{field, operator, value}` rows validated
+  against a per-event-type allowlist at create/update time and re-validated
+  fail-closed at evaluation time (unknown field, operator, or type mismatch
+  never matches).
+- **Actions**: `webhook` (HMAC-signed POST with the same signing scheme and
+  SSRF guards as webhooks, `X-Automation-*` headers) and `github_issue`
+  (fixed `api.github.com` host, single-pass `{{placeholder}}` templates,
+  PAT Fernet-encrypted at rest with `AUTOMATION_TOKEN_ENCRYPTION_KEY`).
+- **Execution log**: one row per firing (`automation_executions`) with the
+  matching input, the action output, and errors; pruned to the newest 100
+  per automation at insert time.
+- **Delivery semantics**: dispatch is `asyncio.create_task` behind a
+  semaphore (8 concurrent) in the `_publish_event` fan-out, before the
+  inline webhook fan-out, so slow webhook endpoints cannot starve
+  automations. Emission is at-least-once in degenerate recovery races (same
+  as webhooks); delivery is at-most-once across restarts — startup marks
+  orphaned pending executions error and never retries (a duplicate GitHub
+  issue is worse than a missed notification).
+- **Auto-disable**: ten consecutive delivery failures disable the
+  automation; re-enabling (a deliberate human action) resets the counter.
+- **Auth**: viewer-readable list/detail/executions; admin + full-scope API
+  key for mutations, rotate, and test (an ingest-scoped key must never mint
+  rules that stream run data off-site).
+
+Routes live in `backend/apo/routes/automations.py`; the engine, actions,
+recovery, and pruning in `backend/apo/services/automations.py`.
+
 ## Self-Hosted Alpha Topology
 
 The supported self-hosted shape for internal alpha is **single-node**: one host
