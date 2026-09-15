@@ -251,8 +251,10 @@ class TestTemplates:
             project_id="proj",
             event_type="batch_run.failed",
         )
-        assert "r1, r2" in body
-        assert "1/3 passed, 2 failed" in body
+        assert "**Batch failed** — 2 of 3 tasks failed." in body
+        assert "| Result | 1 passed · 2 failed · 0 errored |" in body
+        assert "`r1`, `r2`" in body
+        assert "Filed automatically by an apo automation." in body
         assert "http" not in body
 
     def test_default_body_links_with_public_url(self, monkeypatch: MonkeyPatch):
@@ -727,9 +729,10 @@ class TestGitHubDelivery:
         assert call["url"] == "https://api.github.com/repos/acme/agent-harness/issues"
         assert call["headers"]["Authorization"] == "Bearer ghp_tok"
         issue = call["json"]
-        assert issue["title"] == "apo: b-7 — failed"
-        assert "r1, r2" in issue["body"]
-        assert "1/3 passed, 2 failed" in issue["body"]
+        assert issue["title"] == "apo: b-7 — 2 of 3 tasks failed"
+        assert "**Batch failed**" in issue["body"]
+        assert "`r1`, `r2`" in issue["body"]
+        assert "| Result | 1 passed · 2 failed · 0 errored |" in issue["body"]
         assert "http" not in issue["body"]
         execution = session.exec(
             select(AutomationExecutionDB).where(

@@ -68,6 +68,9 @@ services:
       - FRONTEND_URL=${APO_PUBLIC_URL:-${NEXTAUTH_URL:-http://localhost:3000}}
       # Alpha topology: scheduler runs in the single backend process.
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
+      # Fernet key for GitHub-issue automations (PATs are encrypted at rest;
+      # github_issue automations that store a token return 503 without it).
+      - AUTOMATION_TOKEN_ENCRYPTION_KEY=${AUTOMATION_TOKEN_ENCRYPTION_KEY:-}
       - APO_ATTEMPT_LEASE_SECONDS=${APO_ATTEMPT_LEASE_SECONDS:-600}
       # Optional first-user bootstrap (idempotent — only runs when no users
       # exist). Normal onboarding is account creation + project invite.
