@@ -170,7 +170,7 @@ export function TraceTaskSelect({
 }
 
 /**
- * Model multi-select component (TASK-015: Phase 2).
+ * Model multi-select component.
  * Similar to TagInput but fetches available models from the backend.
  */
 interface ModelMultiSelectProps {
@@ -286,7 +286,7 @@ export function TraceModelMultiSelect({
 }
 
 /**
- * Metric filter component (TASK-015: Phase 3).
+ * Metric filter component.
  * Filters by metric name and score range.
  */
 interface MetricFilterProps {

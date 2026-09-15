@@ -103,3 +103,14 @@ export function formatRelativeTime(dateStr: string | null): string {
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
 }
+
+/**
+ * Render an ISO timestamp as a fixed `YYYY-MM-DD HH:MM:SS UTC` label with
+ * seconds preserved. Pure string surgery — no Date round-trip, so the
+ * naive-SQLite-read-back local-time trap {@link parseUTC} guards against
+ * cannot bite and the stored precision is shown as-is.
+ */
+export function formatUtcTimestamp(iso: string | null): string {
+  if (!iso) return "\u2014";
+  return iso.replace("T", " ").replace(/\.\d+.*$/, " UTC");
+}

@@ -150,6 +150,8 @@ export function useCheckSource({
     return () => {
       controller.abort();
     };
+    // sourceState is read only as a freshness guard; as a dependency it would
+    // re-run the fetch on every result and loop forever after an error.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     checkIds,

@@ -25,9 +25,13 @@ export default async function AutomationsPage({
 
   // Automation management is admin-tier; viewers see the list and the
   // execution log but never the mutation controls.
-  const canManage = await getProject(projectId)
-    .then((project) => project.permissions?.can_manage_project === true)
-    .catch(() => false);
+  let canManage = false;
+  try {
+    const project = await getProject(projectId);
+    canManage = project.permissions?.can_manage_project === true;
+  } catch {
+    canManage = false;
+  }
 
   return (
     <AutomationsClient

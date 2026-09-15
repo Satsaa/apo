@@ -9,6 +9,7 @@ import {
   listAutomationExecutions,
   testAutomation,
 } from "@/lib/automations-api";
+import { formatUtcTimestamp } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -38,11 +39,6 @@ function describeConditions(automation: AutomationSummary): string {
         `${condition.field} ${condition.operator} ${JSON.stringify(condition.value)}`,
     )
     .join(" and ");
-}
-
-function formatTimestamp(iso: string | null): string {
-  if (!iso) return "—";
-  return iso.replace("T", " ").replace(/\.\d+.*$/, " UTC");
 }
 
 export default function AutomationCard({
@@ -139,7 +135,7 @@ export default function AutomationCard({
             <div className="flex gap-2">
               <dt className="shrink-0">Last delivery</dt>
               <dd>
-                {formatTimestamp(automation.last_delivery_at)}
+                {formatUtcTimestamp(automation.last_delivery_at)}
                 {automation.last_delivery_status
                   ? ` (${automation.last_delivery_status})`
                   : ""}
@@ -242,7 +238,7 @@ export default function AutomationCard({
                       {execution.status}
                     </Badge>
                     <span className="text-muted-foreground">
-                      {formatTimestamp(execution.created_at)}
+                      {formatUtcTimestamp(execution.created_at)}
                     </span>
                     <span className="text-muted-foreground">
                       {execution.event_type}

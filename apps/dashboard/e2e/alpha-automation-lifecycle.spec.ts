@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
  *
  * Validates the automations surface renders a clean operator view: the page
  * mounts, the empty state (or the automation list) is visible, and the
- * create affordance is gated by the manager role exactly like schedules.
+ * create affordance stays hidden from visitors without the manager role.
  * End-to-end firing (event → condition match → delivery) is covered by
  * `backend/tests/test_automations.py`; this file covers the operator-visible
  * UI contract only.
@@ -31,15 +31,18 @@ test.describe("Alpha: automation lifecycle @alpha", () => {
     await expect(page.getByRole("heading", { name: "Automations" })).toBeVisible();
 
     // Either the empty state or at least one automation card must render —
-    // never a blank page.
+    // never a blank page. Cards are the only <article> on the page and each
+    // carries `aria-label="Automation <name>"`.
     const emptyState = page.getByText("No automations yet");
-    const firstCard = page.locator("article", {
-      hasText: "Automation",
-    }).first();
+    const firstCard = page
+      .locator('article[aria-label^="Automation "]')
+      .first();
     await expect(emptyState.or(firstCard)).toBeVisible();
   });
 
-  test("create affordance is gated by manager role", async ({ page }) => {
+  test("create affordance is hidden from visitors without the manager role", async ({
+    page,
+  }) => {
     await page.goto("/project/example-service/automations");
     await page.waitForLoadState("networkidle");
 
@@ -48,19 +51,15 @@ test.describe("Alpha: automation lifecycle @alpha", () => {
       return;
     }
 
-    // When the New Automation button is visible, clicking it must open the
-    // create dialog (manager view). When it is absent (viewer), the page
-    // still renders the list — the button is simply not offered.
-    const createButton = page.getByRole("button", { name: "New Automation" });
-    if (await createButton.count()) {
-      await createButton.first().click();
-      await expect(
-        page.getByRole("dialog").getByText("New Automation"),
-      ).toBeVisible();
-    } else {
-      await expect(
-        page.getByRole("heading", { name: "Automations" }),
-      ).toBeVisible();
-    }
+    // The suite browses anonymously: the project permissions lookup yields
+    // no manager role, so the create affordance must stay hidden. Asserting
+    // the manager side (button + dialog) would need a manager session this
+    // harness does not provision.
+    await expect(
+      page.getByRole("heading", { name: "Automations" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "New Automation" }),
+    ).toHaveCount(0);
   });
 });
