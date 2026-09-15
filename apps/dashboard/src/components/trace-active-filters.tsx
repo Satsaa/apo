@@ -239,7 +239,7 @@ export function TraceActiveFilters({
     );
   });
 
-  // Models (TASK-015: Phase 2)
+  // Models
   filters.models.forEach((model) => {
     chips.push(
       <FilterChip
@@ -256,7 +256,7 @@ export function TraceActiveFilters({
     );
   });
 
-  // Metrics (TASK-015: Phase 3)
+  // Metrics
   if (filters.metric_name) {
     const label =
       filters.min_score !== undefined || filters.max_score !== undefined

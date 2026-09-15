@@ -3,12 +3,12 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import {
-  type AutomationCreateRequest,
   type AutomationSummary,
   rotateAutomationSecret,
   updateAutomation,
 } from "@/lib/automations-api";
 import { Button } from "@/components/ui/button";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import AutomationCard from "./AutomationCard";
 import CreateAutomationDialog from "./CreateAutomationDialog";
 
@@ -97,22 +97,8 @@ export default function AutomationsClient({
         ) : null}
       </header>
 
-      {error ? (
-        <div
-          role="alert"
-          className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-        >
-          {error}
-        </div>
-      ) : null}
-      {actionError ? (
-        <div
-          role="alert"
-          className="border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-        >
-          {actionError}
-        </div>
-      ) : null}
+      {error ? <ErrorBanner>{error}</ErrorBanner> : null}
+      {actionError ? <ErrorBanner>{actionError}</ErrorBanner> : null}
       {oneTimeSecret ? (
         <div className="border border-border bg-muted/40 px-3 py-2 text-xs">
           <p className="font-medium">Signing secret (shown once)</p>
@@ -161,5 +147,3 @@ export default function AutomationsClient({
     </div>
   );
 }
-
-export type { AutomationCreateRequest };

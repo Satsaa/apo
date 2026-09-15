@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Loader2 } from "lucide-react"
 import AuthShell from "@/components/auth/auth-shell"
 import { Button } from "@/components/ui/button"
+import { ErrorBanner } from "@/components/ui/error-banner"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PasswordRules } from "@/components/auth/password-rules"
@@ -117,9 +118,7 @@ function ResetPasswordForm() {
         </div>
 
         {error && (
-          <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {error}
-          </p>
+          <ErrorBanner>{error}</ErrorBanner>
         )}
 
         <Button

@@ -13,28 +13,9 @@ interface TableSelectionManagerProps {
 }
 
 /**
- * Creates a select action column for TanStack tables with checkboxes
- *
- * Features:
- * - Fixed left column (always visible on scroll)
- * - "Select all" checkbox in header with indeterminate state
- * - Individual row checkboxes
- * - **Shift+click**: Select all rows between last selected and current row
- * - **Ctrl/Cmd+click**: Toggle individual row selection
- * - Stops event propagation to prevent row clicks
- * - Manages "select all" state in session storage
- *
- * @example
- * const { selectActionColumn } = useTableSelectionManager<RunSummary>({
- *   projectId: "default",
- *   tableName: "runs",
- *   setSelectedRows: setRowSelection,
- * });
- *
- * const columns = [
- *   selectActionColumn,
- *   // ... other columns
- * ];
+ * TanStack column with per-row checkboxes, a header select-all (with
+ * indeterminate state), and Shift+click range selection anchored to the
+ * last clicked row.
  */
 export function useTableSelectionManager<TData>({
   projectId,
@@ -47,7 +28,6 @@ export function useTableSelectionManager<TData>({
   // Track the last selected row ID for Shift+click range selection
   const lastSelectedRowId = useRef<string | null>(null);
 
-  // Handle checkbox click with Shift/Ctrl key support
   const handleCheckboxChange = (
     row: Row<TData>,
     checked: boolean | string,
@@ -58,13 +38,12 @@ export function useTableSelectionManager<TData>({
     const rows = table.getRowModel().rows;
     const currentIndex = rows.findIndex((r) => r.id === currentRowId);
 
-    // Get the native event to check for keyboard modifiers
+    // Radix's onCheckedChange passes no event object, so the shift key has
+    // to be read from the global native event.
     const event = window.event as MouseEvent | undefined;
     const isShiftClick = event?.shiftKey;
-    const _isCtrlClick = event?.ctrlKey || event?.metaKey;
 
     if (isShiftClick && lastSelectedRowId.current) {
-      // Shift+click: Select range between last selected and current row
       const lastIndex = rows.findIndex((r) => r.id === lastSelectedRowId.current);
 
       if (lastIndex !== -1) {
@@ -75,7 +54,6 @@ export function useTableSelectionManager<TData>({
 
         const newSelection: RowSelectionState = { ...table.getState().rowSelection };
 
-        // Select or deselect all rows in the range
         for (let i = start; i <= end; i++) {
           const targetRow = rows[i];
           if (isChecked) {
@@ -91,10 +69,8 @@ export function useTableSelectionManager<TData>({
       }
     }
 
-    // Normal click or Ctrl+click: toggle just this row
     row.toggleSelected(isChecked);
 
-    // Update last selected row ID for future Shift+click operations
     if (isChecked) {
       lastSelectedRowId.current = currentRowId;
     } else {

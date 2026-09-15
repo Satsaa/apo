@@ -8,6 +8,7 @@ import { ArrowRight, Loader2, MailWarning } from "lucide-react"
 import AuthShell from "@/components/auth/auth-shell"
 import { HOSTED_ALPHA_POLICY_URL } from "@/lib/first-run"
 import { Button } from "@/components/ui/button"
+import { ErrorBanner } from "@/components/ui/error-banner"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { backendFetch } from "@/lib/backend-fetch"
@@ -68,9 +69,7 @@ function VerifyPrompt({
         )}
 
         {error && (
-          <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {error}
-          </p>
+          <ErrorBanner>{error}</ErrorBanner>
         )}
 
         <Link href={`/verify-email?email=${encodeURIComponent(email)}`}>
@@ -189,14 +188,14 @@ function LoginCredentialsForm({
         </div>
 
         {error && (
-          <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <ErrorBanner>
             {error}
             {retryAfter > 0 && (
               <span className="ml-1 tabular-nums">
                 ({Math.floor(retryAfter / 60)}:{String(retryAfter % 60).padStart(2, "0")} remaining)
               </span>
             )}
-          </p>
+          </ErrorBanner>
         )}
 
         {successMessage && (

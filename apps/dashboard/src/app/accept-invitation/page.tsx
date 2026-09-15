@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import AuthShell from "@/components/auth/auth-shell"
 import { Button } from "@/components/ui/button"
+import { ErrorBanner } from "@/components/ui/error-banner"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -232,9 +233,7 @@ function AcceptInvitationForm() {
   if (view.kind === "error") {
     return (
       <AuthShell>
-        <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {view.message}
-        </p>
+        <ErrorBanner>{view.message}</ErrorBanner>
       </AuthShell>
     )
   }
@@ -356,9 +355,7 @@ function ExistingAccountView({
             Sign in to accept this invitation.
           </p>
           {formError && (
-            <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {formError}
-            </p>
+            <ErrorBanner>{formError}</ErrorBanner>
           )}
           <Link
             href={`/login?callbackUrl=${encodeURIComponent(
@@ -373,11 +370,11 @@ function ExistingAccountView({
         </div>
       ) : !emailMatches ? (
         <div className="space-y-3">
-          <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <ErrorBanner>
             You&rsquo;re signed in as <strong>{sessionEmail}</strong>, but
             this invitation is for <strong>{preview.email}</strong>. Sign out and
             back in with the invited email to accept it.
-          </p>
+          </ErrorBanner>
         </div>
       ) : (
         <div className="space-y-3">
@@ -387,9 +384,7 @@ function ExistingAccountView({
             Accept to join the project as <strong>{preview.role}</strong>.
           </p>
           {formError && (
-            <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {formError}
-            </p>
+            <ErrorBanner>{formError}</ErrorBanner>
           )}
           <Button
             type="button"
@@ -512,9 +507,7 @@ function CreateAccountForm({
         </div>
 
         {formError && (
-          <p className="border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {formError}
-          </p>
+          <ErrorBanner>{formError}</ErrorBanner>
         )}
 
         <Button

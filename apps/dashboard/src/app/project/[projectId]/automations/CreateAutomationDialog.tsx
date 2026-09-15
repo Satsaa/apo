@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   type AutomationActionType,
   type AutomationCondition,
@@ -56,6 +56,8 @@ const BATCH_RUN_FIELDS = [
 
 const OPERATORS = ["eq", "ne", "gt", "gte", "lt", "lte", "in", "contains"] as const;
 
+const SELECT_CLASS = "h-8 border border-input bg-background px-2 text-xs";
+
 function fieldsForEvent(eventType: AutomationEventType): readonly string[] {
   if (eventType === "batch_run.completed" || eventType === "batch_run.failed") {
     return BATCH_RUN_FIELDS;
@@ -99,7 +101,7 @@ export default function CreateAutomationDialog({
   const [githubToken, setGithubToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const fields = useMemo(() => fieldsForEvent(eventType), [eventType]);
+  const fields = fieldsForEvent(eventType);
 
   const addCondition = useCallback(() => {
     setConditions((prev) => [
@@ -213,7 +215,7 @@ export default function CreateAutomationDialog({
             <Label htmlFor="automation-event">Event</Label>
             <select
               id="automation-event"
-              className="h-8 border border-input bg-background px-2 text-xs"
+              className={SELECT_CLASS}
               value={eventType}
               onChange={(e) => {
                 setEventType(e.target.value as AutomationEventType);
@@ -250,7 +252,7 @@ export default function CreateAutomationDialog({
                 <div key={index} className="flex items-center gap-2">
                   <select
                     aria-label={`Condition ${index + 1} field`}
-                    className="h-8 border border-input bg-background px-2 text-xs"
+                    className={SELECT_CLASS}
                     value={condition.field}
                     onChange={(e) =>
                       updateCondition(index, { field: e.target.value })
@@ -264,7 +266,7 @@ export default function CreateAutomationDialog({
                   </select>
                   <select
                     aria-label={`Condition ${index + 1} operator`}
-                    className="h-8 border border-input bg-background px-2 text-xs"
+                    className={SELECT_CLASS}
                     value={condition.operator}
                     onChange={(e) =>
                       updateCondition(index, { operator: e.target.value })
@@ -303,7 +305,7 @@ export default function CreateAutomationDialog({
             <Label htmlFor="automation-action">Action</Label>
             <select
               id="automation-action"
-              className="h-8 border border-input bg-background px-2 text-xs"
+              className={SELECT_CLASS}
               value={actionType}
               onChange={(e) =>
                 setActionType(e.target.value as AutomationActionType)

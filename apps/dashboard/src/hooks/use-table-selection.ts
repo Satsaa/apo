@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 interface UseTableSelectionProps {
   projectId: string;
@@ -9,25 +8,14 @@ interface UseTableSelectionProps {
 }
 
 /**
- * Hook for managing "select all" state in table selections
- *
- * Features:
- * - Persists "select all" state in sessionStorage
- * - Auto-clears selection on route changes
- * - Project and table-specific storage keys
- *
- * @example
- * const { selectAll, setSelectAll } = useTableSelection({
- *   projectId: "default",
- *   tableName: "runs"
- * });
+ * Manages a table's "select all" flag: persisted in sessionStorage under a
+ * per-project/table key and cleared on browser back/forward navigation
+ * (popstate). Client-side route changes within the app do not clear it.
  */
 export function useTableSelection({
   projectId,
   tableName,
 }: UseTableSelectionProps) {
-  const _router = useRouter();
-
   // Generate storage key unique to project and table
   const storageKey = `selectAll-${projectId}-${tableName}`;
 
@@ -46,7 +34,6 @@ export function useTableSelection({
     }
   }, [selectAll, storageKey]);
 
-  // Clear selection on navigation (similar to Langfuse)
   useEffect(() => {
     const handleRouteChange = () => {
       setSelectAll(false);

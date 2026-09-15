@@ -4,6 +4,7 @@ import { useCallback, useEffect, useReducer, useState } from "react"
 import { Check, Copy, Loader2, MailPlus, RefreshCw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { ErrorBanner } from "@/components/ui/error-banner"
 import { Input } from "@/components/ui/input"
 import {
   createHostedAccessInvitation,
@@ -284,9 +285,7 @@ export function HostedAccessAdmin({
             Loading invitations…
           </div>
         ) : state.error ? (
-          <p className="mt-2 border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {state.error}
-          </p>
+          <ErrorBanner className="mt-2">{state.error}</ErrorBanner>
         ) : state.invitations.length === 0 ? (
           <p className="py-6 text-xs text-muted-foreground">
             No invitations yet. Invite someone above to grant them access to
