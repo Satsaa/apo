@@ -245,7 +245,7 @@ def init_db():
     _run_migrations()
     _migrate_task_catalog_columns()
     # the bundled JSON is the sole source of truth for
-    # __global__ pricing. Replaces the old seed_default_models call.
+    # __global__ pricing.
     from .services.pricing.loader import load_default_prices
 
     with Session(engine) as session:

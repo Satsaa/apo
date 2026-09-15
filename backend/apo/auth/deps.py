@@ -31,12 +31,21 @@ __all__ = [
     "DEMO_PROJECT_ID",
     "get_current_user",
     "get_project_membership",
+    "get_user_id",
     "require_admin",
     "require_api_key_scope",
     "require_project_member",
     "require_project_role",
     "compute_permissions",
 ]
+
+
+def get_user_id(request: Request) -> str:
+    """Return the authenticated user's id from request state, or raise 401."""
+    user_id = cast(str | None, getattr(request.state, "user_id", None))
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user_id
 
 
 def get_current_user(

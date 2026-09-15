@@ -12,11 +12,12 @@ from __future__ import annotations
 from typing import Any
 
 from datetime import datetime, timezone
-from typing import Annotated, cast
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
+from ..auth.deps import get_user_id
 from ..db import get_session
 from ..models.db import ProjectDB, TaskViewDB
 from ..models.schemas import (
@@ -34,13 +35,6 @@ from ..services.task_view_comparison import create_comparison, get_comparison, t
 
 router = APIRouter(prefix="/v1/projects/{project_id}", tags=["task-views"])
 SessionDependency = Annotated[Session, Depends(get_session)]
-
-
-def _get_user_id(request: Request) -> str:
-    user_id = cast(str | None, getattr(request.state, "user_id", None))
-    if user_id:
-        return user_id
-    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 def _authorize(session: Session, project_id: str, request: Request) -> None:
@@ -87,7 +81,7 @@ async def create_task_view_comparison(
             task_ids=body.task_ids,
             view_a=body.view_a,
             view_b=body.view_b,
-            created_by=_get_user_id(request),
+            created_by=get_user_id(request),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -261,7 +255,7 @@ async def list_task_views(
 ) -> list[TaskViewResponse]:
     """List the caller's saved evidence-view tabs for the project."""
     _authorize(session, project_id, request)
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     rows = session.exec(
         select(TaskViewDB)
         .where(TaskViewDB.project_id == project_id, TaskViewDB.user_id == user_id)
@@ -279,7 +273,7 @@ async def create_task_view(
 ) -> TaskViewResponse:
     """Create a saved evidence-view tab."""
     _authorize(session, project_id, request)
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     row = TaskViewDB(
         project_id=project_id,
         user_id=user_id,
@@ -304,7 +298,7 @@ async def update_task_view(
 ) -> TaskViewResponse:
     """Update a saved evidence-view tab (label / model / effort / since)."""
     _authorize(session, project_id, request)
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     row = session.get(TaskViewDB, view_id)
     if row is None or row.project_id != project_id or row.user_id != user_id:
         raise HTTPException(status_code=404, detail="View not found")
@@ -332,7 +326,7 @@ async def delete_task_view(
 ) -> None:
     """Delete a saved evidence-view tab."""
     _authorize(session, project_id, request)
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     row = session.get(TaskViewDB, view_id)
     if row is None or row.project_id != project_id or row.user_id != user_id:
         raise HTTPException(status_code=404, detail="View not found")

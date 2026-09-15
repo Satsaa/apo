@@ -15,6 +15,7 @@ can go.
 
 # pyright: reportAny=false, reportExplicitAny=false, reportPrivateUsage=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnnecessaryComparison=false, reportUnusedCallResult=false, reportUnusedParameter=false
 
+import logging
 from datetime import datetime, timezone
 from typing import cast
 
@@ -38,6 +39,8 @@ from ..services.scoring import (
     create_trace_score,
 )
 from ..services.trace_broadcaster import get_trace_broadcaster
+
+logger = logging.getLogger(__name__)
 
 
 def parse_optional_iso(dt: object) -> datetime | None:
@@ -235,7 +238,14 @@ async def process_call_create(body: dict[str, object], session: Session) -> None
             broadcaster = await get_trace_broadcaster()
             await broadcaster.broadcast_span_created(call.project, run_id, body)
         except Exception:
-            pass
+            # The span is already committed; this broadcast only feeds live
+            # SSE subscribers, so a failure (e.g. a vanished client) must
+            # not fail the ingestion request.
+            logger.debug(
+                "span:created broadcast for run %s failed (best-effort)",
+                run_id,
+                exc_info=True,
+            )
 
 
 async def process_call_update(body: dict[str, object], session: Session) -> None:
@@ -340,7 +350,14 @@ async def process_call_update(body: dict[str, object], session: Session) -> None
                 call.project, call.run_id, {"id": call_id, **body}
             )
         except Exception:
-            pass
+            # The update is already committed; this broadcast only feeds
+            # live SSE subscribers, so a failure (e.g. a vanished client)
+            # must not fail the ingestion request.
+            logger.debug(
+                "span:updated broadcast for run %s failed (best-effort)",
+                call.run_id,
+                exc_info=True,
+            )
 
 
 async def process_score_create(

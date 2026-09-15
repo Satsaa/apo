@@ -734,7 +734,6 @@ class TestProjectInvitationsApi:
         project = _make_project(session, owner)
         authed = _authed_client_for(make_authed_client, owner, session)
 
-        # Create
         create = authed.post(
             f"/v1/projects/{project.id}/invitations",
             json={"email": "list@example.com", "role": "member"},
@@ -742,21 +741,18 @@ class TestProjectInvitationsApi:
         assert create.status_code == 201
         invitation_id = create.json()["invitation"]["id"]
 
-        # List
         listing = authed.get(f"/v1/projects/{project.id}/invitations")
         assert listing.status_code == 200
         rows = listing.json()
         assert len(rows) == 1
         assert rows[0]["id"] == invitation_id
 
-        # Resend
         resend = authed.post(
             f"/v1/projects/{project.id}/invitations/{invitation_id}/resend"
         )
         assert resend.status_code == 200
         assert resend.json()["delivery_status"] == "link_only"
 
-        # Revoke
         revoke = authed.delete(
             f"/v1/projects/{project.id}/invitations/{invitation_id}"
         )

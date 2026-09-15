@@ -39,13 +39,13 @@ class TestObservationTypeClassification:
     """Classification follows the documented priority order."""
 
     def test_apo_observation_type_override(self):
-        """1. apo.observation.type takes top priority."""
+        """apo.observation.type takes top priority."""
         span = _make_span(attributes={"apo.observation.type": "AGENT"})
         result = normalize_span(span)
         assert result.observation_type == "AGENT"
 
     def test_openinference_span_kind(self):
-        """2. openinference.span.kind is respected."""
+        """openinference.span.kind is respected."""
         span = _make_span(attributes={"openinference.span.kind": "LLM"})
         result = normalize_span(span)
         assert result.observation_type == "GENERATION"
@@ -56,13 +56,13 @@ class TestObservationTypeClassification:
         assert result.observation_type == "RETRIEVER"
 
     def test_gen_ai_tool_name(self):
-        """3. gen_ai.tool.name presence → TOOL."""
+        """gen_ai.tool.name presence → TOOL."""
         span = _make_span(attributes={"gen_ai.tool.name": "search"})
         result = normalize_span(span)
         assert result.observation_type == "TOOL"
 
     def test_gen_ai_operation_chat(self):
-        """3. gen_ai.operation.name=chat + model → GENERATION."""
+        """gen_ai.operation.name=chat + model → GENERATION."""
         span = _make_span(
             attributes={"gen_ai.operation.name": "chat", "gen_ai.request.model": "gpt-4o"}
         )
@@ -82,7 +82,7 @@ class TestObservationTypeClassification:
         assert result.observation_type == "GENERATION"
 
     def test_default_fallback_is_span(self):
-        """5. Unknown span → SPAN, never dropped."""
+        """Unknown span → SPAN, never dropped."""
         span = _make_span(span_name="unknown-operation")
         result = normalize_span(span)
         assert result.observation_type == "SPAN"

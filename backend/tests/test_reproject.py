@@ -93,7 +93,6 @@ class TestReprojectTrace:
             session.execute(text("DELETE FROM runs"))
             session.commit()
 
-        # Verify projection is gone
         with Session(engine) as session:
             assert session.exec(select(RunDB).where(RunDB.id == trace_id)).first() is None
 
@@ -101,7 +100,6 @@ class TestReprojectTrace:
         count = reproject_trace(trace_id, project_id="reproject-test")
         assert count == 2  # 2 spans projected
 
-        # Verify projection exists again
         with Session(engine) as session:
             run = session.exec(select(RunDB).where(RunDB.id == trace_id, RunDB.project == "reproject-test")).first()
             assert run is not None
@@ -157,7 +155,6 @@ class TestReprojectTrace:
         # Reproject
         reproject_trace(trace_id, project_id="reproject-test")
 
-        # Verify the projection has the updated model
         with Session(engine) as session:
             call = session.exec(  # pyright: ignore[reportCallIssue]
                 text("SELECT model FROM logged_calls WHERE id = 'b2c3d4e5f6a7b2c3'")  # pyright: ignore[reportArgumentType]

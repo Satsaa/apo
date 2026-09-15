@@ -16,7 +16,7 @@ account. Invitations are project-scoped and never consult
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
-from ..auth.deps import DEMO_PROJECT_ID
+from ..auth.deps import DEMO_PROJECT_ID, get_user_id
 from ..db import get_session
 from ..models.db import ProjectDB
 from ..models.schemas import (
@@ -42,13 +42,6 @@ from ..services.project_memberships import (
 )
 
 router = APIRouter(prefix="/v1/projects", tags=["project-members"])
-
-
-def _get_user_id(request: Request) -> str:
-    user_id: object = getattr(request.state, "user_id", None)
-    if user_id:
-        return str(user_id)
-    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 def _ensure_project_exists(session: Session, project_id: str) -> ProjectDB:
@@ -127,7 +120,7 @@ async def update_project_member(
     Promotions to ``owner`` are owner-only. Last-owner protection is
     enforced by the service layer.
     """
-    actor_id = _get_user_id(request)
+    actor_id = get_user_id(request)
     _ = _ensure_project_exists(session, project_id)
     actor = enforce_project_role_from_request(
         request, session, project_id, minimum_role="admin"
@@ -155,7 +148,7 @@ async def remove_project_member(
 
     Last-owner protection prevents orphaning a project.
     """
-    actor_id = _get_user_id(request)
+    actor_id = get_user_id(request)
     _ = _ensure_project_exists(session, project_id)
     actor = enforce_project_role_from_request(
         request, session, project_id, minimum_role="admin"
@@ -211,7 +204,7 @@ async def create_project_invitation(
     ``admin``. Email delivery is best-effort: when SMTP is unavailable
     the response still succeeds and returns a copyable ``invite_url``.
     """
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     _ = _ensure_project_exists(session, project_id)
     actor = enforce_project_role_from_request(
         request, session, project_id, minimum_role="admin"

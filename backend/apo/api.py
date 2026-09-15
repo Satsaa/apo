@@ -85,9 +85,7 @@ async def lifespan(app: FastAPI):
             load_demo_fixture(demo_session)
     with Session(engine) as session:
         bootstrap_initial_user(session)
-    # Orphaned automation deliveries are marked error, never retried:
-    # deliveries only start once startup completes, so any pending row here
-    # was interrupted by a restart, and re-firing could double side effects.
+    # Orphaned pending automation deliveries are marked error, never retried.
     from .services.automations import recover_stale_automations
 
     with Session(engine) as session:

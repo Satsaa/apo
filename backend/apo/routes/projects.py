@@ -22,6 +22,7 @@ from sqlalchemy import ColumnElement, desc, func
 from sqlmodel import Session, select
 
 from ..auth import _dummy_hash, verify_password
+from ..auth.deps import get_user_id
 from ..auth.rate_limit import LoginRateLimiter
 from ..db import get_session
 from ..models.db import (
@@ -81,13 +82,6 @@ router = APIRouter(prefix="/v1/projects", tags=["projects"])
 # Separate from the api-keys bootstrap limiter so tests reset them independently
 # and one path's traffic doesn't consume the other's budget.
 _projects_bootstrap_rate_limiter = LoginRateLimiter(max_attempts=5, window_seconds=60)
-
-
-def _get_user_id(request: Request) -> str:
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        return str(user_id)
-    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 def create_project_for_owner(
@@ -227,7 +221,7 @@ async def list_projects(
     # set is exactly ["demo"], so the per-membership lookup below never
     # runs for them.
     user_id = (
-        _get_user_id(request)
+        get_user_id(request)
         if getattr(request.state, "user_id", None)
         else None
     )
@@ -249,7 +243,7 @@ async def create_project(
     session: Session = Depends(get_session),
 ):
     """Create a new project. The creator becomes the initial owner."""
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     name = body.get("name")
     if not isinstance(name, str) or not name.strip():
         raise HTTPException(status_code=400, detail="name is required")

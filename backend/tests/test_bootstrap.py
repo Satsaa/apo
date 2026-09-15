@@ -189,7 +189,8 @@ class TestBootstrapWeakPassword:
         ) as mock_error:
             bootstrap_initial_user(session)
 
-        assert mock_error.called
+        log_calls = [str(call) for call in mock_error.call_args_list]
+        assert any("Bootstrap skipped — weak password" in c for c in log_calls)
 
 
 class TestBootstrapErrorHandling:

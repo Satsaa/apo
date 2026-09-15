@@ -23,7 +23,7 @@ from ..auth.api_key_cache import (
     cache_key_for_legacy,
 )
 from ..auth.client_ip import get_client_ip
-from ..auth.deps import require_api_key_scope
+from ..auth.deps import get_user_id, require_api_key_scope
 from ..auth.rate_limit import LoginRateLimiter
 from ..db import get_session
 from ..models.db import ApiKeyDB, ProjectDB, UserDB
@@ -93,15 +93,6 @@ def mint_legacy_key(
     return api_key, full_key
 
 
-def _get_user_id(request: Request) -> str:
-    user_id: object = (
-        getattr(request.state, "user_id", None) if hasattr(request, "state") else None
-    )
-    if user_id:
-        return str(user_id)
-    raise HTTPException(status_code=401, detail="Authentication required")
-
-
 def _parse_expires_at(expires_at_str: str | None) -> datetime | None:
     """Parse an ISO datetime string and validate it's in the future.
 
@@ -160,7 +151,7 @@ def create_api_key(
     The secret key is shown once in the response; only its hash is stored.
     The public key is always visible in the key list.
     """
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     scope = _validate_scope(body.scope)
     expires_at = _parse_expires_at(body.expires_at)
 
@@ -233,7 +224,7 @@ def list_api_keys(
     Optionally filtered by project.
     Returns the public key and masked secret, never the full secret key.
     """
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
 
     # API key inventory is admin-scoped per the spec ("API
     # keys are managed by project admins/owners"). Ordinary members
@@ -312,7 +303,7 @@ def revoke_api_key(
     Revoke (delete) an API key.
     Only the creator or admin can revoke a key.
     """
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     api_key = session.get(ApiKeyDB, key_id)
 
     if not api_key:
@@ -361,7 +352,7 @@ def rotate_api_key(
     The key ID, name, project, scope, and created_by all stay the same.
     Only the creator or admin can rotate a key.
     """
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     api_key = session.get(ApiKeyDB, key_id)
 
     if not api_key:
@@ -494,7 +485,7 @@ def patch_api_key(
     Pause blocks INGEST ONLY — the key keeps reading; rotate is the
     compromised-key answer.
     """
-    user_id = _get_user_id(request)
+    user_id = get_user_id(request)
     api_key = session.get(ApiKeyDB, key_id)
     if not api_key:
         raise HTTPException(status_code=404, detail="API key not found")

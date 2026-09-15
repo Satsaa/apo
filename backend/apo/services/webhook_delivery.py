@@ -41,6 +41,19 @@ def generate_secret() -> str:
     return f"whsec_{secrets.token_hex(24)}"
 
 
+def next_delivery_health(success: bool, consecutive_failures: int) -> tuple[int, bool]:
+    """Delivery-health policy shared by webhooks and automations.
+
+    Returns the next consecutive-failure count and whether the receiver hits
+    the auto-disable threshold, so a persistently failing endpoint is cut off
+    instead of retrying forever. A success resets the streak.
+    """
+    if success:
+        return 0, False
+    failures = consecutive_failures + 1
+    return failures, failures >= MAX_CONSECUTIVE_FAILURES
+
+
 async def deliver_webhook(webhook: WebhookDB, event_data: Mapping[str, object]) -> bool:
     assert webhook.id is not None
 
@@ -102,17 +115,15 @@ def _update_webhook_status(webhook_id: int, success: bool) -> None:
             return
         wh.last_delivery_at = datetime.now(timezone.utc)
         wh.last_delivery_status = "success" if success else "failure"
-        if success:
-            wh.consecutive_failures = 0
-        else:
-            wh.consecutive_failures += 1
-            if wh.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                wh.enabled = False
-                logger.warning(
-                    "Webhook %s disabled after %d consecutive failures",
-                    wh.id,
-                    wh.consecutive_failures,
-                )
+        failures, disable = next_delivery_health(success, wh.consecutive_failures)
+        wh.consecutive_failures = failures
+        if disable:
+            wh.enabled = False
+            logger.warning(
+                "Webhook %s disabled after %d consecutive failures",
+                wh.id,
+                failures,
+            )
         session.add(wh)
         session.commit()
 

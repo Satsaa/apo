@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,7 +15,7 @@ from sqlmodel import Session, col, select
 
 from ..db_helpers import as_column
 
-from ..auth.deps import require_api_key_scope
+from ..auth.deps import get_user_id, require_api_key_scope
 from ..db import get_session
 from ..models.db import AutomationDB, AutomationExecutionDB
 from ..services.automations import (
@@ -27,8 +26,6 @@ from ..services.automations import (
     AutomationSecretsUnavailable,
     deliver_test_event,
     encrypt_github_token,
-    new_automation_id,
-    new_automation_secret,
     validate_action_config,
     validate_conditions,
     validate_event_type,
@@ -38,8 +35,7 @@ from ..services.project_memberships import (
     enforce_project_role_from_request,
     require_project_role_strict,
 )
-
-logger = logging.getLogger(__name__)
+from ..services.webhook_delivery import generate_secret
 
 router = APIRouter(prefix="/v1/automations", tags=["automations"])
 
@@ -141,21 +137,12 @@ def _get_automation_or_404(automation_id: str, session: Session) -> AutomationDB
     return automation
 
 
-def _get_user_id(request: Request) -> str:
-    user_id: object = (
-        getattr(request.state, "user_id", None) if hasattr(request, "state") else None
-    )
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return str(user_id)
-
-
-def _map_automation_error(exc: Exception) -> HTTPException:
+def _map_automation_error(
+    exc: AutomationRequestError | AutomationSecretsUnavailable,
+) -> HTTPException:
     if isinstance(exc, AutomationRequestError):
         return HTTPException(status_code=exc.status_code, detail=exc.message)
-    if isinstance(exc, AutomationSecretsUnavailable):
-        return HTTPException(status_code=503, detail=str(exc))
-    return HTTPException(status_code=500, detail=str(exc))
+    return HTTPException(status_code=503, detail=str(exc))
 
 
 @router.post("", response_model=AutomationCreateResponse, status_code=201)
@@ -175,7 +162,7 @@ def create_automation(
     _ = require_project_role_strict(
         session,
         body.project_id,
-        _get_user_id(request),
+        get_user_id(request),
         minimum_role="admin",
     )
     try:
@@ -200,7 +187,7 @@ def create_automation(
     secret: str | None = None
     github_token_encrypted: str | None = None
     if body.action_type == ACTION_WEBHOOK:
-        secret = new_automation_secret()
+        secret = generate_secret()
     elif body.action_type == ACTION_GITHUB_ISSUE:
         if not body.github_token:
             raise HTTPException(
@@ -213,7 +200,6 @@ def create_automation(
             raise _map_automation_error(exc) from exc
 
     automation = AutomationDB(
-        id=new_automation_id(),
         project_id=body.project_id,
         name=body.name,
         description=body.description,
@@ -382,7 +368,7 @@ def rotate_secret(
             status_code=400,
             detail="Only webhook automations have a signing secret to rotate",
         )
-    automation.secret = new_automation_secret()
+    automation.secret = generate_secret()
     session.add(automation)
     session.commit()
     session.refresh(automation)

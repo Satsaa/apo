@@ -31,7 +31,6 @@ _PROJECT_ID = "test-claim-project"
 @pytest.fixture(autouse=True)
 def setup_database():
     init_db()
-    # Create a batch run + task run for the claim test
     with Session(engine) as session:
         batch = AgentTaskBatchRunDB(
             id=_BATCH_RUN_ID,

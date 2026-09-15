@@ -20,7 +20,6 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import cast
-from uuid import uuid4
 
 import httpx
 from cryptography.fernet import Fernet
@@ -31,7 +30,13 @@ from ..db import engine
 from ..db_helpers import as_column
 from ..models.db import AutomationDB, AutomationExecutionDB
 from .run_event_types import ALL_EVENT_TYPES
-from .webhook_delivery import generate_secret, sign_payload
+from .webhook_delivery import (
+    DELIVERY_TIMEOUT_SECONDS,
+    MAX_CONSECUTIVE_FAILURES,
+    MAX_RETRIES,
+    next_delivery_health,
+    sign_payload,
+)
 from .webhook_targets import (
     WebhookDestinationError,
     assert_public_destination,
@@ -41,11 +46,12 @@ from .webhook_targets import (
 logger = logging.getLogger(__name__)
 
 MAX_AUTOMATIONS_PER_PROJECT = 25
-AUTOMATION_MAX_CONSECUTIVE_FAILURES = 10
+# Delivery-health policy (threshold, timeouts, retries) is shared with
+# webhook deliveries so both surfaces fail and auto-disable identically;
+# the alias keeps the automation-specific name used by tests and model docs.
+AUTOMATION_MAX_CONSECUTIVE_FAILURES = MAX_CONSECUTIVE_FAILURES
 DELIVERY_CONCURRENCY = 8
 PRUNE_KEEP = 100
-DELIVERY_TIMEOUT_SECONDS = 10
-MAX_RETRIES = 2
 ERROR_MESSAGE_MAX_CHARS = 1000
 
 ACTION_WEBHOOK = "webhook"
@@ -609,6 +615,15 @@ _semaphore: asyncio.Semaphore | None = None
 _client: httpx.AsyncClient | None = None
 
 
+def _shared_client() -> httpx.AsyncClient:
+    # Created lazily and nulled by stop_automation_deliveries (and tests) so
+    # each event loop gets a fresh client instead of one bound to a closed loop.
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS)
+    return _client
+
+
 def _prune_executions(session: Session, automation_id: str) -> None:
     keep_ids = session.exec(
         select(AutomationExecutionDB.id)
@@ -639,13 +654,12 @@ async def _deliver(
     *,
     is_test: bool = False,
 ) -> None:
-    global _semaphore, _client
+    global _semaphore
     if _semaphore is None:
         _semaphore = asyncio.Semaphore(DELIVERY_CONCURRENCY)
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS)
-    assert _semaphore is not None and _client is not None
-    semaphore, client = _semaphore, _client
+    assert _semaphore is not None
+    semaphore = _semaphore
+    client = _shared_client()
     async with semaphore:
         with Session(engine) as session:
             automation = session.get(AutomationDB, automation_id)
@@ -687,12 +701,8 @@ async def deliver_test_event(
     session.refresh(execution)
     _prune_executions(session, automation.id)
     assert execution.id is not None
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=DELIVERY_TIMEOUT_SECONDS)
-    assert _client is not None
     success, _, error = await _execute_delivery(
-        _client,
+        _shared_client(),
         _automation_snapshot(automation),
         execution.id,
         automation.project_id,
@@ -903,19 +913,17 @@ def _record_delivery_outcome(
                 automation.last_delivery_status = (
                     "success" if success else "failure"
                 )
-                if success:
-                    automation.consecutive_failures = 0
-                else:
-                    automation.consecutive_failures += 1
-                    if automation.consecutive_failures >= (
-                        AUTOMATION_MAX_CONSECUTIVE_FAILURES
-                    ):
-                        automation.enabled = False
-                        logger.warning(
-                            "Automation %s disabled after %d consecutive failures",
-                            automation_id,
-                            automation.consecutive_failures,
-                        )
+                failures, disable = next_delivery_health(
+                    success, automation.consecutive_failures
+                )
+                automation.consecutive_failures = failures
+                if disable:
+                    automation.enabled = False
+                    logger.warning(
+                        "Automation %s disabled after %d consecutive failures",
+                        automation_id,
+                        failures,
+                    )
                 session.add(automation)
         session.commit()
 
@@ -964,11 +972,3 @@ async def stop_automation_deliveries() -> None:
     _delivery_tasks.clear()
     _client = None
     _semaphore = None
-
-
-def new_automation_id() -> str:
-    return uuid4().hex[:20]
-
-
-def new_automation_secret() -> str:
-    return generate_secret()
