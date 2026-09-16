@@ -60,6 +60,7 @@ import { useTableSelectionManager, DataTablePagination, ColumnResizeHandle, getP
 import { TableToolbar, TableActionDialog } from "@/components/table";
 import type { TableAction } from "@/components/table";
 import { usePersistentTablePreferences } from "@/hooks/use-persistent-table-preferences";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { useIsDemo } from "@/lib/project-router";
 import Link from "next/link";
@@ -101,6 +102,23 @@ const TABLE_PREFERENCES_STORAGE_KEY = "trace-table-preferences";
 
 const DEFAULT_COLUMN_PINNING = {
   left: ["select", "bookmark", "status", "name"],
+};
+
+// On a phone the desktop pinning (select + bookmark + status + name = 305px)
+// swallows nearly the whole viewport, leaving no room to read any data
+// column. Pin the minimum identity columns instead and shrink Name.
+// These are fallbacks only — a stored user preference always wins.
+const MOBILE_COLUMN_PINNING = {
+  left: ["status", "name"],
+};
+const MOBILE_NAME_COLUMN_SIZE = 120;
+
+// Module-level so its identity is stable: the preferences hook shallow-merges
+// defaults into its result, which lets the panel detect "the user never
+// pinned anything" by reference equality.
+const DEFAULT_TABLE_PREFERENCES = {
+  columnVisibility: { ...DEFAULT_HIDDEN },
+  columnPinning: DEFAULT_COLUMN_PINNING,
 };
 
 // Bulk-action dialog: which action is pending and whether its confirm
@@ -492,11 +510,29 @@ export function TracesTablePanel({
     resetPreferences,
   } = usePersistentTablePreferences({
     storageKey: TABLE_PREFERENCES_STORAGE_KEY,
-    defaults: {
-      columnVisibility: { ...DEFAULT_HIDDEN },
-      columnPinning: DEFAULT_COLUMN_PINNING,
-    },
+    defaults: DEFAULT_TABLE_PREFERENCES,
   });
+
+  const isMobileViewport = useIsMobile();
+
+  // Viewport-aware fallbacks layered on the merged preferences: when the
+  // user has no stored sizing/pinning of their own, small screens get the
+  // mobile layout instead of the desktop defaults.
+  const columnSizing = useMemo(() => {
+    const stored = preferences.columnSizing ?? {};
+    return isMobileViewport && stored.name === undefined
+      ? { ...stored, name: MOBILE_NAME_COLUMN_SIZE }
+      : stored;
+  }, [preferences.columnSizing, isMobileViewport]);
+
+  const columnPinning = useMemo(
+    () =>
+      isMobileViewport &&
+      preferences.columnPinning === DEFAULT_TABLE_PREFERENCES.columnPinning
+        ? MOBILE_COLUMN_PINNING
+        : (preferences.columnPinning ?? {}),
+    [preferences.columnPinning, isMobileViewport],
+  );
 
   const handleResetAll = useCallback(() => {
     resetPreferences();
@@ -647,8 +683,8 @@ export function TracesTablePanel({
         if (!hasUsage && stored.usage === undefined) autoHide.usage = false;
         return { ...stored, ...autoHide };
       })(),
-      columnSizing: (preferences.columnSizing ?? {}) as ColumnSizingState,
-      columnPinning: preferences.columnPinning ?? {},
+      columnSizing: columnSizing as ColumnSizingState,
+      columnPinning,
       sorting: sortingState,
       pagination: { pageIndex: currentPage, pageSize },
     },
