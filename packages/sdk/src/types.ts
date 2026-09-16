@@ -26,6 +26,8 @@ export interface CreateSpanParams {
   step_index?: number;
   version?: string;
   model?: string;
+  /** Tool name for TOOL observations; emitted as `gen_ai.tool.name`. */
+  tool_name?: string;
   input?: Record<string, unknown>;
   messages?: Record<string, unknown>[];
   output?: Record<string, unknown>;

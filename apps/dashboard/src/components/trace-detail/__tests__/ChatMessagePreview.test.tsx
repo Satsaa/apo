@@ -89,6 +89,53 @@ describe("ChatMessagePreview message content", () => {
   });
 });
 
+describe("ChatMessagePreview payload bodies (tool I/O recorded as message content)", () => {
+  // How the DABstep-style harnesses log code execution: a message whose
+  // content is the JSON-stringified tool envelope.
+  const codeMessage = JSON.stringify({
+    code: "import json\nwith open('fees.json') as f:\n    fees = json.load(f)",
+  });
+  const resultMessage = JSON.stringify({
+    stdout: "total gc: 257\nCounter({False: 257})",
+    stderr: "",
+    exit_code: 0,
+    timed_out: false,
+  });
+
+  it("renders a {code} payload as a code body with real newlines", () => {
+    render(
+      <ChatMessagePreview
+        data={{ messages: [{ role: "system", content: codeMessage }] }}
+      />,
+    );
+
+    // The body shows the code itself, not JSON with escaped \n sequences.
+    expect(screen.getByText(/import json/).textContent).toBe(
+      "import json\nwith open('fees.json') as f:\n    fees = json.load(f)",
+    );
+    expect(screen.getByText(/import json/).tagName).toBe("PRE");
+    expect(screen.getByText("code")).toBeInTheDocument();
+  });
+
+  it("shows a tool result body with its scalar siblings as context", () => {
+    render(
+      <ChatMessagePreview
+        data={{ messages: [{ role: "assistant", content: resultMessage }] }}
+      />,
+    );
+
+    expect(screen.getByText(/total gc/).textContent).toBe(
+      "total gc: 257\nCounter({False: 257})",
+    );
+    // Scalar siblings render as context chips, not inside the body block.
+    const chips = screen.getByText("exit_code").closest("div")!;
+    expect(chips.textContent).toContain("exit_code 0");
+    expect(chips.textContent).toContain("timed_out false");
+    // Empty stderr contributes nothing.
+    expect(chips.textContent).not.toContain("stderr");
+  });
+});
+
 describe("ChatMessagePreview tool-call arguments", () => {
   const withToolCall = (args: string) => ({
     messages: [

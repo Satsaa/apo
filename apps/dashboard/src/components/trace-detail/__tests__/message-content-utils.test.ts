@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatJsonMessageText,
   parseJsonPayload,
+  extractPayloadBody,
 } from "../message-content-utils";
 
 describe("parseJsonPayload", () => {
@@ -75,5 +76,61 @@ describe("formatJsonMessageText", () => {
   it("passes non-payloads through as null", () => {
     expect(formatJsonMessageText("I reviewed the agreement.")).toBeNull();
     expect(formatJsonMessageText("42")).toBeNull();
+  });
+});
+
+describe("extractPayloadBody", () => {
+  it("extracts the multi-line field and keeps scalar siblings as meta", () => {
+    expect(
+      extractPayloadBody({
+        stdout: "total gc: 257\nCounter({False: 257})",
+        stderr: "",
+        exit_code: 0,
+        timed_out: false,
+      }),
+    ).toEqual({
+      body: { label: "stdout", text: "total gc: 257\nCounter({False: 257})" },
+      meta: [
+        { key: "exit_code", value: "0" },
+        { key: "timed_out", value: "false" },
+      ],
+    });
+  });
+
+  it("picks the longest field when several carry multi-line text", () => {
+    expect(
+      extractPayloadBody({ code: "a\nb", stdout: "x\ny\nz" }),
+    ).toEqual({
+      body: { label: "stdout", text: "x\ny\nz" },
+      meta: [],
+    });
+  });
+
+  it("keeps non-empty single-line strings as meta, truncated", () => {
+    const view = extractPayloadBody({
+      code: "a\nb",
+      path: "context/fees.json",
+      note: "n".repeat(100),
+    });
+    expect(view?.meta).toEqual([
+      { key: "path", value: "context/fees.json" },
+      { key: "note", value: `${"n".repeat(80)}…` },
+    ]);
+  });
+
+  it("returns null when no field is multi-line — structured answers keep pretty JSON", () => {
+    expect(extractPayloadBody({ gist: "Termination", notes: [] })).toBeNull();
+    expect(extractPayloadBody({ ok: true, rows: 2 })).toBeNull();
+  });
+
+  it("returns null for arrays and empty objects", () => {
+    expect(extractPayloadBody([{"code": "a\nb"}])).toBeNull();
+    expect(extractPayloadBody({})).toBeNull();
+  });
+
+  it("returns null past 8 keys — a wide object is data, not one body plus context", () => {
+    const wide: Record<string, unknown> = { code: "a\nb" };
+    for (let i = 0; i < 8; i++) wide[`k${i}`] = i;
+    expect(extractPayloadBody(wide)).toBeNull();
   });
 });

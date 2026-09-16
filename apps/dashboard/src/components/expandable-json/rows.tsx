@@ -148,13 +148,15 @@ export interface JsonRowDisplayOptions {
 /**
  * How a value wraps, per string mode. `truncate` shows at most a 120-char
  * slice — as likely an id or a path as prose, so breaking anywhere is right.
- * `wrap` shows the value whole, and a payload's long strings are prose, so it
- * breaks on words: mid-word breaks start the next line at column 0 and merge
- * visually with the structural lines.
+ * `wrap` shows the value whole, and a payload's long strings are prose or
+ * multi-line output (code, stdout), so it breaks on words AND keeps the
+ * value's own newlines — collapsing them would render code as one paragraph.
+ * Mid-word breaks start the next line at column 0 and merge visually with the
+ * structural lines, hence `break-words` on top of `whitespace-pre-wrap`.
  */
 const WRAP_CLASS: Record<StringMode, string> = {
   truncate: "break-all",
-  wrap: "break-words",
+  wrap: "whitespace-pre-wrap break-words",
   nowrap: "whitespace-nowrap",
 };
 

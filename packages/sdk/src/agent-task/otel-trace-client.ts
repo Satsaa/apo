@@ -53,6 +53,7 @@ interface ActiveSpan {
   span: Span;
   startedAt: number;
   model: string;
+  observationType?: string;
 }
 
 /**
@@ -107,10 +108,21 @@ export function createOtelAgentTaskTraceClient(
     if (params.model) {
       span.setAttribute("gen_ai.request.model", params.model);
     }
+    const isTool = params.observation_type === "TOOL";
     if (params.input) {
-      // Use gen_ai.input.messages so the normalizer routes it to the call's
-      // structured input field (rendered as chat bubbles in the dashboard).
-      if (params.input.messages) {
+      if (isTool) {
+        // A tool call is not a chat turn: args must reach the backend as
+        // gen_ai.tool.call.arguments so they land in tool_parameters. Sending
+        // them as gen_ai.input.messages instead stores a fake system message
+        // whose content is a JSON string, which the dashboard renders as one
+        // escaped wall of text.
+        if (params.tool_name) {
+          span.setAttribute("gen_ai.tool.name", params.tool_name);
+        }
+        span.setAttribute("gen_ai.tool.call.arguments", JSON.stringify(params.input));
+      } else if (params.input.messages) {
+        // Use gen_ai.input.messages so the normalizer routes it to the call's
+        // structured input field (rendered as chat bubbles in the dashboard).
         span.setAttribute("gen_ai.input.messages", JSON.stringify(params.input.messages));
       } else {
         span.setAttribute("gen_ai.input.messages", JSON.stringify([{
@@ -128,6 +140,7 @@ export function createOtelAgentTaskTraceClient(
       span,
       startedAt: monotonicNowMs(),
       model: params.model || "unknown",
+      observationType: params.observation_type,
     });
     return spanId;
   }
@@ -142,9 +155,17 @@ export function createOtelAgentTaskTraceClient(
     active.span.setAttribute("latency_ms", latency);
 
     if (params.output !== undefined) {
-      // Use gen_ai.output.messages so the normalizer routes it to the call's
-      // structured output field (rendered as chat bubbles + "Correct" button).
-      if (params.output.text) {
+      if (active.observationType === "TOOL") {
+        // Mirror the input side: tool results belong in
+        // gen_ai.tool.call.result (→ tool_result), not as a fake assistant
+        // message — same rendering concern as tool arguments.
+        const payload = params.output && typeof params.output === "object"
+          ? params.output
+          : { value: params.output };
+        active.span.setAttribute("gen_ai.tool.call.result", JSON.stringify(payload));
+      } else if (params.output.text) {
+        // Use gen_ai.output.messages so the normalizer routes it to the call's
+        // structured output field (rendered as chat bubbles + "Correct" button).
         active.span.setAttribute("gen_ai.output.messages", JSON.stringify([{
           role: "assistant",
           parts: [{ type: "text", content: String(params.output.text) }],
@@ -313,6 +334,7 @@ export function createOtelAgentTaskTraceClient(
             project, task_id: taskId, run_id: runId, parent_call_id: rootSpanId,
             flow_name: flowName, step_name: `tool ${name}`,
             observation_type: "TOOL", model: "unknown",
+            tool_name: name,
             input: params,
           });
           try {

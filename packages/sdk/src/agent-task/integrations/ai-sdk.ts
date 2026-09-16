@@ -210,6 +210,10 @@ export function createApoTracer(
           ? (currentGenerationSpanId ?? parentSpanId ?? trace.rootSpanId)
           : (parentSpanId ?? trace.rootSpanId),
       step_name: stepName,
+      tool_name:
+        observationType === "TOOL"
+          ? String(initialAttrs["ai.toolCall.name"] ?? "unknown")
+          : undefined,
       model: String(initialAttrs["ai.model.id"] ?? "ai-sdk"),
       observation_type: observationType,
       ...(input !== undefined ? { input } : {}),
