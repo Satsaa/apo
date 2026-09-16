@@ -12,6 +12,7 @@ Also pins the digest-gated reconcile semantics and fail-hard behavior.
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,9 @@ from apo.services.task_definition_revisions import ensure_task_definition_revisi
 
 
 @pytest.fixture(name="session")
-def scratch_session_fixture(tmp_path: Path, monkeypatch: MonkeyPatch) -> Session:
+def scratch_session_fixture(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> Generator[Session, None, None]:
     """A private scratch DB per test.
 
     The loader replays OTLP synchronously — per-span SAVEPOINTs nested in
@@ -83,6 +86,26 @@ class TestFixtureLoads:
         assert "real-agent/documents/document-qa" in inventory
         assert "real-agent/security/security-audit" in inventory
 
+        # Tree-backed tasks carry their path under the demo task root so
+        # project-scoped file reads resolve inside the task folder; the
+        # dabstep family has no tree counterpart and must stay pathless
+        # (its source ships as pinned definitions instead).
+        doc_qa = session.exec(
+            select(ProjectTaskInventoryDB).where(
+                ProjectTaskInventoryDB.id == "demo-inv-real-agent/documents/document-qa"
+            )
+        ).first()
+        assert doc_qa is not None
+        assert doc_qa.task_path == "real-agent/documents/document-qa"
+        dabstep = session.exec(
+            select(ProjectTaskInventoryDB).where(
+                ProjectTaskInventoryDB.id
+                == "demo-inv-tasks/dabstep/dabstep-merchant-high-fraud-fine-risk"
+            )
+        ).first()
+        assert dabstep is not None
+        assert dabstep.task_path == ""
+
         revision = ensure_task_definition_revision(
             session,
             project_id=DEMO_PROJECT_ID,
@@ -98,6 +121,42 @@ class TestFixtureLoads:
             },
         )
         assert revision.id is not None  # dedupe on content digest returned a row
+
+    def test_runs_pinned_to_definition_revisions(self, session: Session) -> None:
+        """Every catalog task ships a definition and every run is pinned to
+        it, so the run page can render check source through the run-bound
+        reader (issue: demo checks showed bare pass/fail with no code)."""
+        from apo.services.task_definition_revisions import (
+            get_definition_for_run,
+            read_definition_source,
+        )
+
+        assert _load(session)
+        # The dabstep family has no counterpart in the bundled demo tree —
+        # the pinned revision is the ONLY source path for its runs.
+        run = session.get(AgentTaskRunDB, "demo-run-001")
+        assert run is not None
+        assert run.task_definition_revision_id is not None
+        rev = get_definition_for_run(session, run.id)
+        assert rev is not None
+        path = str(rev.source_files_json[0]["path"])
+        source = read_definition_source(session, task_run_id=run.id, file_path=path)
+        assert source is not None
+        assert "dabstep-merchant-high-fraud-fine-risk.eval.ts" == path
+        # The check ids the fixture's check reports reference appear
+        # literally in the served source, so the code view can anchor them.
+        for check_id in ("computed-via-python", "answer-matches-benchmark"):
+            assert f'"{check_id}"' in source["content"]
+
+        # Tree-backed family: pinned as well, not only fallback-readable.
+        ra_run = session.get(AgentTaskRunDB, "demo-run-ra-001")
+        assert ra_run is not None
+        assert ra_run.task_definition_revision_id is not None
+        ra_source = read_definition_source(
+            session, task_run_id=ra_run.id, file_path="document-qa.eval.ts"
+        )
+        assert ra_source is not None
+        assert '"read-spec-and-searched"' in ra_source["content"]
 
     def test_batches_runs_and_evidence(self, session: Session) -> None:
         assert _load(session)

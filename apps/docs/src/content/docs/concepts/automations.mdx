@@ -56,7 +56,7 @@ Not a workflow engine. Actions deliver *information*; they never run tasks, edit
 
 ## Managing automations
 
-The dashboard's **Automations** page — reached from the Schedules page ("Manage Automations"), not the main nav, because it's configuration for the unattended loop — manages rules: create with a condition builder, toggle, rotate secrets, run tests, and read the execution log. New rules start scoped to `trigger.source = schedule`; widen them if you really want manual runs paging you. Project members can see rules and their history; only project admins create and modify them. The CLI covers scripting:
+The dashboard's **Automations** page — reached from the Schedules page ("Manage Automations"), not the main nav, because it's configuration for the unattended loop — manages rules: toggle, rotate secrets, run tests, and read the execution log. Creation is outcome-first: pick what should happen (issue or webhook), answer *when exactly* — four plain-language triggers, scheduled-only by default — then fill only the fields that action needs (paste a GitHub token and pick your repository from a searchable list). The full event and condition vocabulary lives behind the dialog's **Advanced** disclosure. New rules start scoped to `trigger.source = schedule`; widen them if you really want manual runs paging you. Project members can see rules and their history; only project admins create and modify them. The CLI covers scripting:
 
 ```bash
 apo automations list
