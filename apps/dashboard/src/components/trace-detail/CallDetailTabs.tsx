@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 
 import { ExpandableJson } from "@/components/ExpandableJson";
+import { cn } from "@/lib/utils";
 import { ChatMessagePreview } from "./ChatMessagePreview";
 import { TraceEventPreview } from "./TraceEventPreview";
 import { detectTraceEventKind } from "./trace-event-utils";
@@ -96,10 +97,19 @@ function FlatKeyValuePreview({
           key={key}
           className="flex items-start justify-between gap-4 border-b border-border/60 px-3 py-2.5 last:border-b-0"
         >
-          <span className="text-xs text-muted-foreground">
+          <span className="shrink-0 text-xs text-muted-foreground">
             {humanizeKey(key)}
           </span>
-          <span className="font-mono text-sm text-foreground">{String(value)}</span>
+          {/* Multi-line values (code, stdout) keep their line breaks — the
+              default white-space collapsing renders them as one run-on line. */}
+          <span
+            className={cn(
+              "min-w-0 font-mono text-sm text-foreground",
+              typeof value === "string" && value.includes("\n") && "whitespace-pre-wrap",
+            )}
+          >
+            {String(value)}
+          </span>
         </div>
       ))}
     </div>

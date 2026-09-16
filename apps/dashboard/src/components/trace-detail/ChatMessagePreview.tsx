@@ -8,7 +8,7 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { extractThinkingContent } from "./thinking-utils";
 import { CollapsibleHistory } from "./CollapsibleHistory";
 import { Markdown } from "./Markdown";
-import { formatJsonMessageText } from "./message-content-utils";
+import { formatJsonMessageText, parseJsonPayload, extractPayloadBody, type PayloadBodyView } from "./message-content-utils";
 
 interface ChatMessage {
   role: string;
@@ -229,12 +229,46 @@ function MessageContent({ parts }: { parts: ContentPart[] }) {
 /**
  * One text part. A model answering with structured output sends its JSON as
  * plain message text, which markdown renders as a single unreadable paragraph,
- * so JSON is indented in a code block and everything else stays markdown.
+ * so JSON gets special treatment; everything else stays markdown.
  */
 function TextContent({ text }: { text: string }) {
-  const json = useMemo(() => formatJsonMessageText(text), [text]);
-  if (json === null) return <Markdown>{text}</Markdown>;
-  return <CodeBlock body={json} variant="content" />;
+  const payload = useMemo(() => parseJsonPayload(text), [text]);
+  const body = useMemo(
+    () =>
+      payload !== null && typeof payload === "object"
+        ? extractPayloadBody(payload)
+        : null,
+    [payload],
+  );
+  if (body) return <PayloadBodyBlock view={body} />;
+  if (payload !== null) {
+    const json = formatJsonMessageText(text);
+    if (json !== null) return <CodeBlock body={json} variant="content" />;
+  }
+  return <Markdown>{text}</Markdown>;
+}
+
+/**
+ * A JSON payload whose substance is one multi-line string field — e.g. a tool
+ * result like `{stdout, stderr, exit_code}` recorded as message content. The
+ * body renders with real newlines (pretty-printed JSON would escape them into
+ * a wall of `\n`); scalar siblings stay visible as context chips.
+ */
+function PayloadBodyBlock({ view }: { view: PayloadBodyView }) {
+  return (
+    <div className="my-1 max-w-full">
+      {view.meta.length > 0 && (
+        <div className="mb-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+          {view.meta.map(({ key, value }) => (
+            <span key={key}>
+              <span className="text-foreground/60">{key}</span> {value}
+            </span>
+          ))}
+        </div>
+      )}
+      <CodeBlock body={view.body.text} label={view.body.label} variant="content" />
+    </div>
+  );
 }
 
 function ImageReference({ url }: { url: string }) {

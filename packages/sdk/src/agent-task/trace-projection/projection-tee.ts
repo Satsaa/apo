@@ -59,6 +59,8 @@ interface PendingObservation {
   parentSpanId?: string;
   type: TraceProjectionObservation["type"];
   name: string;
+  /** Explicit tool name (CreateSpanParams.tool_name) — more precise than the span name. */
+  toolName?: string;
   startedAtIso: string;
   startedAtMs: number;
   model?: string;
@@ -151,7 +153,7 @@ export function createProjectionTee(
 
     const meta = params?.metadata as Record<string, unknown> | undefined;
     if (p.type === "TOOL") {
-      obs.toolName = (meta?.tool_name as string | undefined) ?? p.name;
+      obs.toolName = p.toolName ?? (meta?.tool_name as string | undefined) ?? p.name;
       if (meta?.tool_parameters !== undefined) obs.toolParameters = meta.tool_parameters;
       else if (p.input !== undefined) obs.toolParameters = p.input;
       if (meta?.tool_result !== undefined) obs.toolResult = meta.tool_result;
@@ -175,6 +177,7 @@ export function createProjectionTee(
     observation_type?: CreateSpanParams["observation_type"];
     parent_call_id?: string | null;
     model?: string | null;
+    tool_name?: string | null;
     input?: unknown;
   }): string {
     spanCounter += 1;
@@ -184,6 +187,7 @@ export function createProjectionTee(
       parentSpanId: opts.parent_call_id ?? real.rootSpanId,
       type: observationTypeFor(opts.observation_type),
       name: opts.step_name ?? "step",
+      toolName: opts.tool_name ?? undefined,
       startedAtIso: new Date(monotonicNowMs()).toISOString(),
       startedAtMs: monotonicNowMs(),
       model: opts.model ?? undefined,
