@@ -4,7 +4,6 @@ import {
   FlaskConical,
   Layers,
   Waypoints,
-  Zap,
 } from "lucide-react";
 
 export type DashboardIcon = ComponentType<{
@@ -58,12 +57,6 @@ const dashboardIAGroups: DashboardIAGroup[] = [
         href: "/schedules",
         icon: Calendar,
         description: "Automated recurring task execution",
-      },
-      {
-        label: "Automations",
-        href: "/automations",
-        icon: Zap,
-        description: "Event-triggered notifications and actions",
       },
     ],
   },

@@ -2,6 +2,7 @@ import {
   listAgentTaskSchedules,
   listProjectAgentTasks,
 } from "@/lib/agent-task-api";
+import { listAutomations } from "@/lib/automations-api";
 import { getProject, type ProjectTaskSource } from "@/lib/projects-api";
 import { listExecutorPools } from "@/lib/executor-api";
 import { AgentTaskSchedulesClient } from "./schedules-client";
@@ -13,6 +14,7 @@ export const metadata = { title: "Schedules" };
 const EMPTY_TASKS: Awaited<ReturnType<typeof listProjectAgentTasks>> = [];
 const EMPTY_SCHEDULES: Awaited<ReturnType<typeof listAgentTaskSchedules>> = [];
 const EMPTY_EXECUTOR_POOLS: Awaited<ReturnType<typeof listExecutorPools>> = [];
+const EMPTY_AUTOMATIONS: Awaited<ReturnType<typeof listAutomations>> = [];
 
 export default async function AgentTaskSchedulesPage({
   params,
@@ -28,15 +30,19 @@ export default async function AgentTaskSchedulesPage({
   let error: string | null = null;
   let taskSource: ProjectTaskSource | null = null;
   let executorPools: Awaited<ReturnType<typeof listExecutorPools>> = EMPTY_EXECUTOR_POOLS;
+  let automations = EMPTY_AUTOMATIONS;
 
   let canManage = false;
   try {
-    [schedules, taskSource, executorPools] = await Promise.all([
+    [schedules, taskSource, executorPools, automations] = await Promise.all([
       listAgentTaskSchedules(projectId),
       getProject(projectId)
         .then((project) => project.task_source)
         .catch(() => null),
       listExecutorPools(projectId),
+      // Automations are the schedules' notification policy — surfaced here,
+      // not in the main nav, so the interactive loop stays uncluttered.
+      listAutomations(projectId).catch(() => EMPTY_AUTOMATIONS),
     ]);
 
     // The task list always comes from the project's configured source
@@ -70,6 +76,7 @@ export default async function AgentTaskSchedulesPage({
       error={error}
       taskSource={taskSource}
       executorPools={executorPools}
+      automations={automations}
       canManage={canManage}
     />
   );
