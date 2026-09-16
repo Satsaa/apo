@@ -74,6 +74,12 @@ interface ConditionDraft {
   value: string;
 }
 
+// Scheduled runs are the default watch: interactive runs are experiments
+// you're already watching — a notification there would only be noise.
+const DEFAULT_CONDITIONS: ConditionDraft[] = [
+  { field: "trigger.source", operator: "eq", value: "schedule" },
+];
+
 function parseConditionValue(raw: string): unknown {
   const trimmed = raw.trim();
   if (trimmed === "true") return true;
@@ -92,7 +98,7 @@ export default function CreateAutomationDialog({
 }: CreateAutomationDialogProps) {
   const [name, setName] = useState("");
   const [eventType, setEventType] = useState<AutomationEventType>("batch_run.failed");
-  const [conditions, setConditions] = useState<ConditionDraft[]>([]);
+  const [conditions, setConditions] = useState<ConditionDraft[]>(DEFAULT_CONDITIONS);
   const [actionType, setActionType] = useState<AutomationActionType>("webhook");
   const [url, setUrl] = useState("");
   const [owner, setOwner] = useState("");
@@ -126,7 +132,7 @@ export default function CreateAutomationDialog({
   const reset = useCallback(() => {
     setName("");
     setEventType("batch_run.failed");
-    setConditions([]);
+    setConditions(DEFAULT_CONDITIONS);
     setActionType("webhook");
     setUrl("");
     setOwner("");

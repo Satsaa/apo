@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
+  Bell,
   Calendar,
   CheckCircle2,
   Plus,
@@ -22,6 +24,8 @@ import { ScheduleListAutoRefresh } from "@/components/agent-task-execution/sched
 import type { ExecutorPoolSummary } from "@/lib/executor-api";
 
 interface AgentTaskSchedulesClientProps {
+  /** Failure-notification rules that watch these schedules. */
+  automations: import("@/lib/automations-api").AutomationSummary[];
   tasks: AgentTaskSummary[];
   schedules: import("@/lib/agent-task-api").AgentTaskScheduleSummary[];
   initialTaskIds: string[];
@@ -33,6 +37,7 @@ interface AgentTaskSchedulesClientProps {
 }
 
 export function AgentTaskSchedulesClient({
+  automations,
   tasks,
   schedules: initialSchedules,
   initialTaskIds,
@@ -102,6 +107,30 @@ export function AgentTaskSchedulesClient({
           New Schedule
         </Button>
         ) : null}
+      </div>
+
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2 border border-border bg-muted/20 px-4 py-3">
+        <div className="flex items-center gap-2 text-sm">
+          <Bell size={14} className="shrink-0 text-primary" />
+          {automations.length > 0 ? (
+            <span>
+              <span className="font-medium">
+                {automations.length} automation{automations.length === 1 ? "" : "s"}
+              </span>{" "}
+              get notified when scheduled runs fail
+            </span>
+          ) : (
+            <span className="text-muted-foreground">
+              No failure notifications — get told when a scheduled run fails
+            </span>
+          )}
+        </div>
+        <Link
+          href={`/project/${projectId}/automations`}
+          className="shrink-0 border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+        >
+          Manage Automations →
+        </Link>
       </div>
 
       {actionError && (

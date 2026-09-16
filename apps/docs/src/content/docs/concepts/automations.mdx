@@ -7,6 +7,8 @@ An **automation** is a project-scoped rule that watches run events, matches them
 
 apo produces one verdict plus evidence. The repair loop lives outside apo — in your harness repo, your team chat, your issue tracker. Automations are the bridge: they make the verdict *travel* to where repair actually happens, instead of sitting in the dashboard waiting for someone to look.
 
+That job belongs to [schedules](/concepts/schedules/) — the runs nobody is watching. When you're iterating interactively (new model, new eval), you *are* the notification: you're already looking at the trace. An automation firing mid-experiment would only be noise, so new automations default to scheduled runs only.
+
 ## The three parts of a rule
 
 | Part | Answers | Example |
@@ -54,7 +56,7 @@ Not a workflow engine. Actions deliver *information*; they never run tasks, edit
 
 ## Managing automations
 
-The dashboard's **Automations** page (next to Schedules) manages rules: create with a condition builder, toggle, rotate secrets, run tests, and read the execution log. Project members can see rules and their history; only project admins create and modify them. The CLI covers scripting:
+The dashboard's **Automations** page — reached from the Schedules page ("Manage Automations"), not the main nav, because it's configuration for the unattended loop — manages rules: create with a condition builder, toggle, rotate secrets, run tests, and read the execution log. New rules start scoped to `trigger.source = schedule`; widen them if you really want manual runs paging you. Project members can see rules and their history; only project admins create and modify them. The CLI covers scripting:
 
 ```bash
 apo automations list
