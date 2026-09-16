@@ -153,8 +153,8 @@ def _ensure_task_source(session: Session) -> ProjectTaskSourceDB:
 
 def _load_document(session: Session, document: dict[str, Any]) -> None:
     demo_user = _load_demo_user(session, document.get("demo_user"))
-    _load_catalog(session, document.get("catalog", {}))
-    batches = _load_batches(session, document.get("batches", []))
+    revisions = _load_catalog(session, document.get("catalog", {}))
+    batches = _load_batches(session, document.get("batches", []), revisions)
     _load_schedules(session, document.get("schedules", []), batches)
     _load_views(session, document.get("views", {}), demo_user)
     _replay_traces(session, document.get("batches", []), batches)
@@ -255,9 +255,17 @@ def _load_catalog(
 
 
 def _load_batches(
-    session: Session, batches: list[dict[str, Any]]
+    session: Session,
+    batches: list[dict[str, Any]],
+    revisions: dict[str, str],
 ) -> dict[str, AgentTaskBatchRunDB]:
-    """Load batch runs, their task runs, and run-scoped evidence rows."""
+    """Load batch runs, their task runs, and run-scoped evidence rows.
+
+    ``revisions`` (task_id → definition revision id, from ``_load_catalog``)
+    pins each run to its task's definition so the run page can render the
+    check source through the run-bound reader — the only path that works
+    for fixture tasks with no counterpart in the bundled demo tree.
+    """
     loaded: dict[str, AgentTaskBatchRunDB] = {}
     for batch_spec in batches:
         batch = AgentTaskBatchRunDB(
@@ -309,6 +317,7 @@ def _load_batches(
                 total_tokens=run_spec.get("total_tokens"),
                 configured_model=run_spec.get("configured_model"),
                 configured_effort=run_spec.get("configured_effort"),
+                task_definition_revision_id=revisions.get(str(run_spec["task_id"])),
             )
             session.add(run)
             # Bare-column FK: the check report row references the run
