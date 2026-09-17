@@ -105,3 +105,4 @@ spec*-proof/
 # tunnel.override.yml mounts this as the connector secret) — must never be
 # swept into a commit.
 .cloudflared/
+backend/data/*.key

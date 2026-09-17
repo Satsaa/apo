@@ -61,7 +61,15 @@ ERROR_MESSAGE_MAX_CHARS = 1000
 
 ACTION_WEBHOOK = "webhook"
 ACTION_GITHUB_ISSUE = "github_issue"
-ACTION_TYPES = (ACTION_WEBHOOK, ACTION_GITHUB_ISSUE)
+ACTION_SLACK = "slack"
+ACTION_TYPES = (ACTION_WEBHOOK, ACTION_GITHUB_ISSUE, ACTION_SLACK)
+
+_SLACK_URL_PREFIX = "https://hooks.slack.com/services/"
+# Canonical incoming-webhook path: non-empty segments, no trailing slash —
+# rejects the bare prefix and paths that would 404 every delivery.
+_SLACK_URL_RE = re.compile(
+    r"^https://hooks\.slack\.com/services/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)+$"
+)
 
 GITHUB_API_BASE = "https://api.github.com"
 # GitHub login/repo name rules: alphanumerics, hyphens, underscores, dots;
@@ -355,6 +363,20 @@ def validate_action_config(
             "title": action_config.get("title"),
             "body": action_config.get("body"),
         }
+    if action_type == ACTION_SLACK:
+        url = action_config.get("url")
+        if not isinstance(url, str) or not _SLACK_URL_RE.match(url):
+            raise AutomationRequestError(
+                "action_config.url must be a Slack incoming-webhook URL "
+                "(https://hooks.slack.com/services/T…/B…/X… — create it in "
+                "Slack under channel → Integrations → Incoming webhooks)",
+                422,
+            )
+        try:
+            validate_webhook_url(url)
+        except WebhookDestinationError as exc:
+            raise AutomationRequestError(str(exc), 422) from exc
+        return {"url_display": mask_slack_url(url)}
     raise AutomationRequestError(
         f"Unknown action type: {action_type!r}. Valid: {', '.join(ACTION_TYPES)}"
     )
@@ -363,16 +385,59 @@ def validate_action_config(
 # --- GitHub token encryption ------------------------------------------------
 
 
-def _fernet() -> Fernet:
+def _generated_key_path() -> str:
+    from .artifact_stores.paths import DATA_DIR
+
+    return os.path.join(DATA_DIR, "automation-secrets.key")
+
+
+def _load_or_create_generated_key(*, create: bool = True) -> Fernet:
+    """Zero-config encryption key: generated once, persisted in the data dir.
+
+    Protects stored secrets against database-file-only exfiltration. The
+    env var below always wins; a full-host compromise defeats both.
+    ``create=False`` for decrypt paths: reading must never mint a key.
+    """
+    path = _generated_key_path()
+    if os.path.exists(path):
+        with open(path, "rb") as handle:
+            data = handle.read().strip()
+        if data:
+            return Fernet(data)
+        raise AutomationSecretsUnavailable(
+            f"generated encryption key file at {path} is empty or corrupt; "
+            "delete it to regenerate (secrets encrypted under it are lost)"
+        )
+    if not create:
+        raise AutomationSecretsUnavailable("no encryption key available")
+    key = Fernet.generate_key()
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Another process won the create race — use its key.
+        with open(path, "rb") as handle:
+            return Fernet(handle.read().strip())
+    try:
+        written = 0
+        while written < len(key):
+            written += os.write(fd, key[written:])
+    finally:
+        os.close(fd)
+    return Fernet(key)
+
+
+def _fernet(*, require_env_key: bool = False, create: bool = True) -> Fernet:
     # Read at call time (not import time) so operators can set the key and
     # tests can monkeypatch it without reloading the module.
     key = os.environ.get("AUTOMATION_TOKEN_ENCRYPTION_KEY", "").strip()
     if not key:
-        raise AutomationSecretsUnavailable(
-            "AUTOMATION_TOKEN_ENCRYPTION_KEY is not configured on this server; "
-            "GitHub tokens cannot be stored. Set it to a Fernet key generated "
-            "with Fernet.generate_key()."
-        )
+        if require_env_key:
+            raise AutomationSecretsUnavailable(
+                "AUTOMATION_TOKEN_ENCRYPTION_KEY is not configured on this "
+                "server; GitHub tokens cannot be stored. Set it to a Fernet "
+                "key generated with Fernet.generate_key()."
+            )
+        return _load_or_create_generated_key(create=create)
     try:
         return Fernet(key.encode())
     except Exception as exc:
@@ -382,17 +447,60 @@ def _fernet() -> Fernet:
 
 
 def encrypt_github_token(token: str) -> str:
-    return str(_fernet().encrypt(token.encode()).decode())
+    return str(_fernet(require_env_key=True).encrypt(token.encode()).decode())
+
+
+def _decrypt_with_any_key(stored: str) -> str:
+    """Decrypt trying the active key first, then the other one.
+
+    Secrets encrypted under the generated key must keep working after an
+    operator sets the env key (the documented way to enable GitHub
+    automations), and vice versa — switching key presence must not brick
+    existing rules.
+    """
+    errors: list[Exception] = []
+    candidates: list[str] = []
+    env = os.environ.get("AUTOMATION_TOKEN_ENCRYPTION_KEY", "").strip()
+    def _file_key() -> str:
+        try:
+            with open(_generated_key_path(), "rb") as handle:
+                data = handle.read().strip()
+            return data.decode()
+        except OSError:
+            return ""
+
+    if env:
+        candidates.append(env)
+        candidates.append(_file_key())
+    else:
+        candidates.append(_file_key())
+    for raw in candidates:
+        if not raw:
+            continue
+        try:
+            return str(Fernet(raw.encode()).decrypt(stored.encode()).decode())
+        except Exception as exc:
+            errors.append(exc)
+    raise AutomationTokenError(
+        "stored secret is undecryptable (encryption key changed?); restore "
+        "the previous key, or rotate/re-save the secret on the automation"
+    ) from (errors[0] if errors else None)
 
 
 def decrypt_github_token(stored: str) -> str:
-    try:
-        return str(_fernet().decrypt(stored.encode()).decode())
-    except Exception as exc:
-        raise AutomationTokenError(
-            "stored GitHub token is undecryptable (encryption key changed?); "
-            "re-save the token on the automation"
-        ) from exc
+    return _decrypt_with_any_key(stored)
+
+
+def encrypt_webhook_secret(secret: str) -> str:
+    return str(_fernet().encrypt(secret.encode()).decode())
+
+
+def decrypt_webhook_secret(stored: str) -> str:
+    """Fernet-encrypted at rest since the encryption change; rows stored
+    before that hold the raw ``whsec_…`` secret and still work."""
+    if stored.startswith("whsec_"):
+        return stored
+    return _decrypt_with_any_key(stored)
 
 
 # --- Templates ----------------------------------------------------------------
@@ -470,6 +578,150 @@ def _format_duration(ms: object) -> str:
         return f"{minutes}m {sec:02d}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes:02d}m"
+
+
+def mask_slack_url(url: str) -> str:
+    """Masked tail for display: the URL embeds its secret in the path."""
+    tail = url[len(_SLACK_URL_PREFIX) :].split("/")
+    return f"hooks.slack.com/services/…/{tail[-1][-4:]}"
+
+
+def _slack_escape(text: str) -> str:
+    """Escape Slack mrkdwn-significant characters in interpolated values."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _slack_header(text: str) -> str:
+    # Slack header blocks cap plain_text at 150 characters.
+    return text[:147] + "…" if len(text) > 150 else text
+
+
+def render_slack_payload(
+    data: dict[str, object],
+    *,
+    project_id: str,
+    event_type: str,
+    failing_runs: list[dict[str, object]] | None = None,
+    automation_name: str | None = None,
+) -> dict[str, object]:
+    """Slack Block Kit message from the same content as the GitHub issue.
+
+    Header line, a compact fields section, the failing-tasks list with
+    trace links, and an attribution context block. The plain ``text`` is
+    the fallback clients show when blocks are not rendered.
+    """
+    base_url = os.environ.get("APO_PUBLIC_URL", "").strip()
+
+    def link_text(text: str, path: str) -> str:
+        return f"<{base_url}{path}|{text}>" if base_url else text
+
+    status = _slack_escape(_value_text(data.get("status")) or event_type)
+    is_batch = all(k in data for k in ("total_tasks", "failed_tasks"))
+    if is_batch:
+        headline = _slack_header(
+            f"Batch {status} — "
+            f"{_value_text(data.get('failed_tasks'))} of "
+            f"{_value_text(data.get('total_tasks'))} tasks failed"
+        )
+    elif data.get("task_id"):
+        checks = ""
+        if all(k in data for k in ("passed_checks", "total_checks")):
+            checks = (
+                f" ({data['passed_checks']}/{data['total_checks']} checks passed)"
+            )
+        headline = _slack_header(
+            f"Task {status} — {_slack_escape(_value_text(data.get('task_id')))}{checks}"
+        )
+    else:
+        headline = _slack_header(f"{event_type} — {status}")
+
+    fields: list[dict[str, object]] = [
+        {"type": "mrkdwn", "text": f"*Project*\n`{project_id}`"},
+    ]
+    if data.get("batch_run_id"):
+        fields.append(
+            {"type": "mrkdwn", "text": f"*Batch*\n`{data['batch_run_id']}`"},
+        )
+    run_metadata = data.get("run_metadata")
+    if isinstance(run_metadata, dict):
+        meta = cast("dict[str, object]", run_metadata)
+        raw_trigger = meta.get("trigger")
+        trigger = cast("dict[str, object]", raw_trigger) if isinstance(raw_trigger, dict) else {}
+        if trigger.get("source"):
+            fields.append(
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Trigger*\n{_slack_escape(_value_text(trigger['source']))}",
+                },
+            )
+    if "duration_ms" in data:
+        fields.append(
+            {
+                "type": "mrkdwn",
+                "text": f"*Duration*\n{_format_duration(data.get('duration_ms'))}",
+            },
+        )
+
+    blocks: list[dict[str, object]] = [
+        {"type": "header", "text": {"type": "plain_text", "text": headline}}
+    ]
+    if fields:
+        blocks.append({"type": "section", "fields": fields[:10]})
+
+    enriched = failing_runs or []
+    if enriched:
+        lines: list[str] = []
+        for run in enriched:
+            trace_id = run.get("trace_run_id")
+            task = _slack_escape(_value_text(run.get("task_id")))
+            checks = f"{run.get('passed_checks', '—')}/{run.get('total_checks', '—')}"
+            if trace_id and base_url:
+                lines.append(
+                    f"• `{task}` — {checks} checks — "
+                    + link_text("trace ↗", f"/project/{project_id}/traces/{trace_id}")
+                )
+            else:
+                lines.append(f"• `{task}` — {checks} checks")
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+            }
+        )
+
+    links: list[str] = []
+    if data.get("trace_run_id") and base_url:
+        links.append(
+            link_text(
+                "View trace", f"/project/{project_id}/traces/{data['trace_run_id']}"
+            )
+        )
+    if data.get("batch_run_id") and base_url:
+        links.append(
+            link_text(
+                "View batch run", f"/project/{project_id}/runs/{data['batch_run_id']}"
+            )
+        )
+    if links:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": " · ".join(links)},
+            }
+        )
+    who = f"apo automation \"{automation_name}\"" if automation_name else "an apo automation"
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"Filed automatically by {who}",
+                }
+            ],
+        }
+    )
+    return {"text": headline, "blocks": blocks}
 
 
 def _link(base_url: str, text: str, url: str) -> str:
@@ -821,6 +1073,7 @@ def _automation_snapshot(automation: AutomationDB) -> dict[str, object]:
         "action_config": dict(automation.action_config or {}),
         "secret": automation.secret,
         "github_token_encrypted": automation.github_token_encrypted,
+        "slack_webhook_url_encrypted": automation.slack_webhook_url_encrypted,
     }
 
 
@@ -873,6 +1126,10 @@ async def _execute_delivery(
             success, output, error = await _deliver_webhook_action(
                 client, snapshot, automation_id, execution_id, project, event_type, data
             )
+        elif snapshot["action_type"] == ACTION_SLACK:
+            success, output, error = await _deliver_slack_action(
+                client, snapshot, project, event_type, data
+            )
         else:
             success, output, error = await _deliver_github_issue_action(
                 client, snapshot, project, event_type, data
@@ -897,9 +1154,13 @@ async def _deliver_webhook_action(
 ) -> tuple[bool, dict[str, object] | None, str | None]:
     config = cast("dict[str, object]", snapshot["action_config"])
     url = str(config.get("url", ""))
-    secret = snapshot["secret"]
-    if not isinstance(secret, str) or not secret:
+    raw_secret = snapshot["secret"]
+    if not isinstance(raw_secret, str) or not raw_secret:
         return False, None, "automation has no signing secret"
+    try:
+        secret = decrypt_webhook_secret(raw_secret)
+    except AutomationTokenError as exc:
+        return False, None, str(exc)
 
     # Delivery-time SSRF guard: re-resolve so a URL whose DNS changed to an
     # internal address after configuration cannot be reached.
@@ -1065,6 +1326,62 @@ def _failing_task_runs(
             }
             for run in runs
         ]
+
+
+async def _deliver_slack_action(
+    client: httpx.AsyncClient,
+    snapshot: dict[str, object],
+    project: str,
+    event_type: str,
+    data: dict[str, object],
+) -> tuple[bool, dict[str, object] | None, str | None]:
+    stored = snapshot["slack_webhook_url_encrypted"]
+    if not isinstance(stored, str) or not stored:
+        return False, None, "automation has no stored Slack webhook URL"
+    try:
+        url = decrypt_webhook_secret(stored)
+    except AutomationTokenError:
+        return (
+            False,
+            None,
+            "stored Slack webhook URL is undecryptable (encryption key "
+            "changed?); re-save the URL on the automation",
+        )
+    # Same delivery-time guard as the webhook action, for symmetry.
+    try:
+        assert_public_destination(url)
+    except WebhookDestinationError as exc:
+        return False, None, str(exc)
+
+    failing_runs: list[dict[str, object]] = []
+    batch_run_id = data.get("batch_run_id")
+    if isinstance(batch_run_id, str) and batch_run_id:
+        try:
+            failing_runs = _failing_task_runs(project, batch_run_id)
+        except Exception:
+            logger.warning("Slack delivery: failing-run enrichment failed")
+
+    payload = render_slack_payload(
+        data,
+        project_id=project,
+        event_type=event_type,
+        failing_runs=failing_runs,
+        automation_name=_automation_name(str(snapshot["id"])),
+    )
+    # Single-shot by choice: a retried Slack post is a duplicate message in
+    # the channel, and a dropped one is visible as such. Slack 429s surface
+    # as execution errors like any other failure.
+    try:
+        resp = await client.post(url, json=payload)
+    except httpx.HTTPError as exc:
+        return False, None, str(exc)
+    if 200 <= resp.status_code < 300:
+        return True, {"http_status": resp.status_code}, None
+    return (
+        False,
+        None,
+        f"Slack returned {resp.status_code}: {resp.text[:ERROR_MESSAGE_MAX_CHARS]}",
+    )
 
 
 def _automation_name(automation_id: str) -> str:

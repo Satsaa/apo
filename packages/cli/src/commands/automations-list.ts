@@ -16,6 +16,9 @@ type AutomationSummary = {
 };
 
 function describeAction(automation: AutomationSummary): string {
+  if (automation.action_type === "slack") {
+    return `slack ${String(automation.action_config.url_display ?? "channel")}`;
+  }
   if (automation.action_type === "webhook") {
     return `webhook ${String(automation.action_config.url ?? "")}`;
   }

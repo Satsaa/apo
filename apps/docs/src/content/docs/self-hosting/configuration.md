@@ -104,6 +104,15 @@ The token is encrypted at rest and never appears in any API response. If you
 rotate the key later, stored tokens become undecryptable; each affected
 automation's execution log says so, and re-saving its token fixes it.
 
+:::caution[Setting the key after webhook/Slack automations exist]
+Webhook signing secrets and Slack URLs work with zero configuration via an
+auto-generated key in the data directory. Setting this variable later
+switches the active key — apo tries both keys when decrypting, so existing
+secrets keep working; if decryption ever fails after a key change, rotate
+the webhook secret (or re-save the Slack URL / GitHub token) to re-encrypt
+under the current key.
+:::
+
 ## Upgrades and migrations
 
 The backend applies database migrations itself on startup, there is no separate migration command to run. On upgrade, pull the new images and restart; the backend boots once migrations finish.

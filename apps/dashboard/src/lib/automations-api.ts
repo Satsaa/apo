@@ -12,7 +12,7 @@ export type AutomationEventType =
   | "task_run.error"
   | "task_run.trace_claimed";
 
-export type AutomationActionType = "webhook" | "github_issue";
+export type AutomationActionType = "webhook" | "github_issue" | "slack";
 
 export interface AutomationCondition {
   field: string;
@@ -84,11 +84,25 @@ export function createAutomation(
   return apiClient("/v1/automations", { method: "POST", body: request });
 }
 
+export interface AutomationPatch
+  extends Partial<
+    Pick<
+      AutomationSummary,
+      | "name"
+      | "description"
+      | "enabled"
+      | "event_type"
+      | "conditions"
+      | "action_config"
+    >
+  > {
+  /** Non-empty string replaces the stored token; omitted keeps it. */
+  github_token?: string | null;
+}
+
 export function updateAutomation(
   automationId: string,
-  patch: Partial<Pick<AutomationSummary, "name" | "description" | "enabled">> & {
-    github_token?: string | null;
-  },
+  patch: AutomationPatch,
 ): Promise<AutomationSummary> {
   return apiClient(`/v1/automations/${encodeURIComponent(automationId)}`, {
     method: "PATCH",

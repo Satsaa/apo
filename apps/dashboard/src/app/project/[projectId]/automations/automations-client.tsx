@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import AutomationCard from "./AutomationCard";
 import CreateAutomationDialog from "./CreateAutomationDialog";
+import EditAutomationDialog from "./EditAutomationDialog";
 
 interface AutomationsClientProps {
   projectId: string;
@@ -28,6 +29,7 @@ export default function AutomationsClient({
   const [automations, setAutomations] =
     useState<AutomationSummary[]>(initialAutomations);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<AutomationSummary | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [oneTimeSecret, setOneTimeSecret] = useState<string | null>(null);
 
@@ -129,12 +131,25 @@ export default function AutomationsClient({
               onToggle={handleToggle}
               onRotate={handleRotate}
               onDelete={handleDeleted}
+              onEdit={setEditing}
               onError={setActionError}
             />
           ))}
         </div>
       )}
 
+      {canManage && editing ? (
+        <EditAutomationDialog
+          key={editing.id}
+          automation={editing}
+          open={editing !== null}
+          onOpenChange={(open) => {
+            if (!open) setEditing(null);
+          }}
+          onUpdated={patchInList}
+          onError={setActionError}
+        />
+      ) : null}
       {canManage ? (
         <CreateAutomationDialog
           projectId={projectId}

@@ -983,6 +983,9 @@ class AutomationDB(SQLModel, table=True):
     # AUTOMATION_TOKEN_ENCRYPTION_KEY. Client-supplied on create, replace-only
     # on update (no clear; delete the automation instead).
     github_token_encrypted: str | None = Field(default=None)
+    # Slack incoming-webhook URL for slack actions — the URL embeds the
+    # secret token, so it gets the encrypted-column treatment too.
+    slack_webhook_url_encrypted: str | None = Field(default=None)
 
     enabled: bool = Field(default=True, index=True)
     # Delivery health, mirroring WebhookDB's columns so auto-disable works

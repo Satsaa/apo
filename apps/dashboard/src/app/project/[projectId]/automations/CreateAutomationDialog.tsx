@@ -13,12 +13,21 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  type ConditionDraft,
+  type TriggerId,
+  EVENT_TYPES,
+  fieldsForEvent,
+  OPERATORS,
+  parseConditionValue,
+  SELECT_CLASS,
+  TRIGGER_CHOICES,
+  triggerToRule,
+} from "./automation-presets";
 
 interface CreateAutomationDialogProps {
   projectId: string;
@@ -42,124 +51,18 @@ const OUTCOMES: {
     blurb: "The failure lands next to the harness code, with trace links.",
   },
   {
+    id: "slack",
+    title: "Post to Slack",
+    blurb: "A formatted message in a channel you pick (incoming webhook).",
+  },
+  {
     id: "webhook",
     title: "Call a webhook",
     blurb: "A signed POST to any endpoint you own.",
   },
 ];
 
-type TriggerId = "scheduled" | "any-batch" | "task" | "error";
 
-interface TriggerChoice {
-  id: TriggerId;
-  label: string;
-  hint: string;
-}
-
-const TRIGGER_CHOICES: TriggerChoice[] = [
-  {
-    id: "scheduled",
-    label: "A scheduled batch fails",
-    hint: "Nightly / weekly suites — not manual runs",
-  },
-  {
-    id: "any-batch",
-    label: "Any batch fails",
-    hint: "Including manual and CLI runs",
-  },
-  {
-    id: "task",
-    label: "A specific task fails",
-    hint: "Watch one task while you stabilize it",
-  },
-  {
-    id: "error",
-    label: "A run errors out",
-    hint: "Infrastructure breakage, not a test failure",
-  },
-];
-
-const EVENT_TYPES: { value: AutomationEventType; label: string }[] = [
-  { value: "batch_run.failed", label: "Batch run failed" },
-  { value: "batch_run.completed", label: "Batch run completed" },
-  { value: "task_run.completed", label: "Task run completed" },
-  { value: "task_run.error", label: "Task run errored" },
-  { value: "task_run.started", label: "Task run started" },
-  { value: "task_run.trace_claimed", label: "Task run trace claimed" },
-];
-
-const TASK_RUN_FIELDS = [
-  "task_id",
-  "status",
-  "pass_result",
-  "failed_checks",
-  "total_checks",
-  "trace_run_id",
-] as const;
-const BATCH_RUN_FIELDS = [
-  "status",
-  "failed_tasks",
-  "total_tasks",
-  "errored_tasks",
-  "trigger.source",
-  "schedule.name",
-] as const;
-
-const OPERATORS = ["eq", "ne", "gt", "gte", "lt", "lte", "in", "contains"] as const;
-
-const SELECT_CLASS = "h-8 border border-input bg-background px-2 text-xs";
-
-interface ConditionDraft {
-  field: string;
-  operator: string;
-  value: string;
-}
-
-function fieldsForEvent(eventType: AutomationEventType): readonly string[] {
-  if (eventType === "batch_run.completed" || eventType === "batch_run.failed") {
-    return BATCH_RUN_FIELDS;
-  }
-  if (eventType === "task_run.trace_claimed") {
-    return ["task_run_id", "trace_run_id", "batch_run_id", "status"] as const;
-  }
-  return TASK_RUN_FIELDS;
-}
-
-function parseConditionValue(raw: string): unknown {
-  const trimmed = raw.trim();
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (trimmed === "null") return null;
-  if (trimmed !== "" && !Number.isNaN(Number(trimmed))) return Number(trimmed);
-  return raw;
-}
-
-function triggerToRule(
-  trigger: TriggerId,
-  taskFilter: string,
-): { event: AutomationEventType; conditions: AutomationCondition[] } {
-  switch (trigger) {
-    case "scheduled":
-      return {
-        event: "batch_run.failed",
-        conditions: [
-          { field: "trigger.source", operator: "eq", value: "schedule" },
-        ],
-      };
-    case "any-batch":
-      return { event: "batch_run.failed", conditions: [] };
-    case "task":
-      return {
-        event: "task_run.completed",
-        conditions: [
-          { field: "pass_result", operator: "eq", value: false },
-          { field: "task_id", operator: "eq", value: taskFilter.trim() },
-        ],
-      };
-    case "error":
-      return { event: "task_run.error", conditions: [] };
-  }
-}
 
 export default function CreateAutomationDialog({
   projectId,
@@ -267,6 +170,9 @@ export default function CreateAutomationDialog({
 
   const canSubmit = useMemo(() => {
     if (submitting) return false;
+    if (outcome === "slack") {
+      return url.trim().startsWith("https://hooks.slack.com/services/");
+    }
     if (outcome === "webhook") return url.trim().length > 0;
     if (outcome === "github_issue") {
       return (
@@ -296,14 +202,14 @@ export default function CreateAutomationDialog({
         name:
           useAdvanced || trigger === "task"
             ? `${EVENT_TYPES.find((e) => e.value === event)?.label ?? event} → ${
-                outcome === "github_issue" ? "GitHub issue" : "webhook"
+                outcome === "github_issue" ? "GitHub issue" : outcome === "slack" ? "Slack" : "webhook"
               }`
-            : `${triggerLabel} → ${outcome === "github_issue" ? "GitHub issue" : "webhook"}`,
+            : `${triggerLabel} → ${outcome === "github_issue" ? "GitHub issue" : outcome === "slack" ? "Slack" : "webhook"}`,
         event_type: event,
         conditions,
         action_type: outcome,
         action_config:
-          outcome === "webhook"
+          outcome === "webhook" || outcome === "slack"
             ? { url: url.trim() }
             : {
                 owner: repoOwner.trim(),
@@ -363,7 +269,9 @@ export default function CreateAutomationDialog({
                 ? "When exactly?"
                 : outcome === "github_issue"
                   ? "Which repository?"
-                  : "Where should we POST?"}
+                  : outcome === "slack"
+                    ? "Which Slack channel?"
+                    : "Where should we POST?"}
           </DialogTitle>
           <DialogDescription>
             {step === 0
@@ -372,7 +280,9 @@ export default function CreateAutomationDialog({
                 ? "Pick the runs this applies to."
                 : outcome === "github_issue"
                   ? "Last step — where the issue lands."
-                  : "Last step — the destination."}
+                  : outcome === "slack"
+                    ? "Last step — the channel's incoming-webhook URL."
+                    : "Last step — the destination."}
           </DialogDescription>
         </DialogHeader>
 
@@ -687,6 +597,57 @@ export default function CreateAutomationDialog({
               </p>
             </div>
 
+            <div className="mt-1 flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="h-8"
+                disabled={!canSubmit}
+                onClick={handleSubmit}
+              >
+                {submitting ? "Creating…" : "Create Automation"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={() => setStep(1)}
+              >
+                Back
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 && outcome === "slack" ? (
+          <div className="flex flex-col gap-3 text-xs">
+            <label className="flex flex-col gap-1">
+              <span className="text-muted-foreground">Slack webhook URL</span>
+              <Input
+                aria-label="Slack webhook URL"
+                className="h-8 text-xs"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://hooks.slack.com/services/…"
+              />
+              <span className="text-muted-foreground">
+                In Slack: channel → Integrations → Incoming webhooks. The URL
+                is stored encrypted; only a masked tail is ever shown again.
+              </span>
+            </label>
+            <div className="border border-border bg-muted/20 p-3 font-mono text-xs">
+              <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                The message that will post
+              </p>
+              <p className="font-medium">Batch failed — 2 of 3 tasks failed</p>
+              <p className="mt-1 text-muted-foreground">
+                Project · Batch · Trigger · Duration
+              </p>
+              <p className="text-muted-foreground">
+                • data-extraction — 1/4 checks · trace ↗
+              </p>
+            </div>
             <div className="mt-1 flex gap-2">
               <Button
                 type="button"
