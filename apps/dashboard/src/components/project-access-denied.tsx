@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { Lock } from "lucide-react";
-import { signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
 
 import { Button } from "@/components/ui/button";
 import { StatusPage } from "@/components/status-page";
+import { signOutOfApo } from "@/lib/sign-out";
 
 interface ProjectAccessDeniedProps {
   /** Project identifier from the route, shown as a reference. */
@@ -24,6 +25,7 @@ interface ProjectAccessDeniedProps {
  * the behavior instead of each page re-deriving it from error strings.
  */
 export function ProjectAccessDenied({ projectId }: ProjectAccessDeniedProps) {
+  const { data: session } = useSession();
   return (
     <StatusPage
       badge="Access required"
@@ -46,7 +48,7 @@ export function ProjectAccessDenied({ projectId }: ProjectAccessDeniedProps) {
         <Button
           type="button"
           variant="outline"
-          onClick={() => signOut({ redirectTo: "/login" })}
+          onClick={() => void signOutOfApo(session)}
         >
           Sign in with a different account
         </Button>

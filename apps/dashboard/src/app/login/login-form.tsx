@@ -14,14 +14,28 @@ import { Label } from "@/components/ui/label"
 import { backendFetch } from "@/lib/backend-fetch"
 import { getSafeRedirectPath } from "@/lib/redirect"
 
+/**
+ * Which sign-in methods the backend offers (``GET /auth/sso/config``). The
+ * form hides what is off as a courtesy; the backend refuses it regardless.
+ */
+export type SsoConfig = {
+  enabled: boolean
+  providerName: string | null
+  passwordLoginEnabled: boolean
+}
+
+const PASSWORD_ONLY: SsoConfig = { enabled: false, providerName: null, passwordLoginEnabled: true }
+
 export function LoginPage({
   hasUsers,
   setupAvailable,
   devSignin,
+  sso = PASSWORD_ONLY,
 }: {
   hasUsers: boolean
   setupAvailable: boolean
   devSignin: { enabled: boolean; landingPath: string }
+  sso?: SsoConfig
 }) {
   return (
     <Suspense>
@@ -29,8 +43,94 @@ export function LoginPage({
         hasUsers={hasUsers}
         setupAvailable={setupAvailable}
         devSignin={devSignin}
+        sso={sso}
       />
     </Suspense>
+  )
+}
+
+/** The login page's explanation of a refused single sign-on, by the code `auth.ts` redirects with. */
+export function describeSsoError(code: string | null, providerName: string | null): string | null {
+  const provider = providerName ?? "single sign-on"
+  switch (code) {
+    case null:
+      return null
+    case "forbidden":
+      return `Your ${provider} account is not authorized to use this APO installation.`
+    case "conflict":
+      return `An APO account with your email already exists and is not linked to ${provider}. Ask an administrator to resolve it.`
+    case "unavailable":
+      return `${provider} is not reachable right now. Try again in a moment.`
+    default:
+      return `${provider} sign-in failed. Please try again.`
+  }
+}
+
+function SsoButton({
+  sso,
+  onClick,
+  loading,
+}: {
+  sso: SsoConfig
+  onClick: () => void
+  loading: boolean
+}) {
+  return (
+    <Button
+      type="button"
+      variant={sso.passwordLoginEnabled ? "outline" : "default"}
+      data-testid="login-sso"
+      onClick={onClick}
+      disabled={loading}
+      className="group h-10 w-full"
+    >
+      {loading ? (
+        <>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Redirecting
+        </>
+      ) : (
+        <>
+          Sign in with {sso.providerName ?? "single sign-on"}
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+        </>
+      )}
+    </Button>
+  )
+}
+
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-2 pt-1" aria-hidden="true">
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">or</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  )
+}
+
+/** SSO-only installations: no password fields to show, nothing to set up by hand. */
+function SsoOnlyForm({
+  sso,
+  onSsoSignIn,
+  ssoLoading,
+  error,
+}: {
+  sso: SsoConfig
+  onSsoSignIn: () => void
+  ssoLoading: boolean
+  error: string | null
+}) {
+  return (
+    <AuthShell>
+      <div className="space-y-4">
+        <p className="text-xs text-muted-foreground">
+          This APO installation signs in through {sso.providerName ?? "single sign-on"}.
+        </p>
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        <SsoButton sso={sso} onClick={onSsoSignIn} loading={ssoLoading} />
+      </div>
+    </AuthShell>
   )
 }
 
@@ -115,6 +215,9 @@ function LoginCredentialsForm({
   hasUsers,
   setupAvailable,
   devSignin,
+  sso,
+  onSsoSignIn,
+  ssoLoading,
 }: {
   email: string
   password: string
@@ -130,6 +233,9 @@ function LoginCredentialsForm({
   hasUsers: boolean
   setupAvailable: boolean
   devSignin: { enabled: boolean; landingPath: string }
+  sso: SsoConfig
+  onSsoSignIn: () => void
+  ssoLoading: boolean
 }) {
   return (
     <AuthShell>
@@ -222,15 +328,16 @@ function LoginCredentialsForm({
           )}
         </Button>
 
+        {sso.enabled && (
+          <>
+            <OrDivider />
+            <SsoButton sso={sso} onClick={onSsoSignIn} loading={ssoLoading} />
+          </>
+        )}
+
         {devSignin.enabled && (
           <>
-            <div className="flex items-center gap-2 pt-1" aria-hidden="true">
-              <span className="h-px flex-1 bg-border" />
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                or
-              </span>
-              <span className="h-px flex-1 bg-border" />
-            </div>
+            <OrDivider />
             <Button
               type="button"
               variant="outline"
@@ -291,6 +398,7 @@ interface LoginState {
   error: string | null
   loading: boolean
   devSignInLoading: boolean
+  ssoLoading: boolean
   retryAfter: number
   showVerifyPrompt: boolean
   resending: boolean
@@ -302,6 +410,7 @@ type LoginAction =
   | { type: "SUBMIT_START" }
   | { type: "SUBMIT_ERROR"; error: string }
   | { type: "DEV_SIGNIN_START" }
+  | { type: "SSO_SIGNIN_START" }
   | { type: "SHOW_VERIFY" }
   | { type: "RESEND_START" }
   | { type: "RESEND_SUCCESS"; info: string }
@@ -318,6 +427,7 @@ const initialLoginState: LoginState = {
   error: null,
   loading: false,
   devSignInLoading: false,
+  ssoLoading: false,
   retryAfter: 0,
   showVerifyPrompt: false,
   resending: false,
@@ -338,7 +448,9 @@ function loginReducer(state: LoginState, action: LoginAction): LoginState {
         loading: true,
       }
     case "SUBMIT_ERROR":
-      return { ...state, error: action.error, loading: false, devSignInLoading: false }
+      return { ...state, error: action.error, loading: false, devSignInLoading: false, ssoLoading: false }
+    case "SSO_SIGNIN_START":
+      return { ...state, error: null, ssoLoading: true }
     case "SHOW_VERIFY":
       return { ...state, showVerifyPrompt: true, loading: false }
     case "RESEND_START":
@@ -374,17 +486,35 @@ function LoginForm({
   hasUsers,
   setupAvailable,
   devSignin,
+  sso,
 }: {
   hasUsers: boolean
   setupAvailable: boolean
   devSignin: { enabled: boolean; landingPath: string }
+  sso: SsoConfig
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const callbackUrl = getSafeRedirectPath(searchParams.get("callbackUrl"))
 
   const [state, dispatch] = useReducer(loginReducer, initialLoginState)
-  const { email, password, error, loading, devSignInLoading, retryAfter, showVerifyPrompt, resending, resendInfo } = state
+  const { email, password, error, loading, devSignInLoading, ssoLoading, retryAfter, showVerifyPrompt, resending, resendInfo } = state
+
+  // A refused SSO login comes back here with `sso_error=<code>` (set by the
+  // signIn callback in auth.ts); Auth.js's own failures arrive as `error=`.
+  const ssoError = describeSsoError(
+    searchParams.get("sso_error") ?? (searchParams.get("error") ? "failed" : null),
+    sso.providerName,
+  )
+
+  // Full-page redirect to the identity provider; Auth.js returns to
+  // /api/auth/callback/oidc and then to the sanitized callbackUrl.
+  function handleSsoSignIn() {
+    dispatch({ type: "SSO_SIGNIN_START" })
+    void signIn("oidc", { redirectTo: callbackUrl }).catch(() => {
+      dispatch({ type: "SUBMIT_ERROR", error: "Unable to start single sign-on" })
+    })
+  }
 
   useEffect(() => {
     if (retryAfter <= 0) return
@@ -516,6 +646,17 @@ function LoginForm({
       ? "Password reset successfully. Please sign in with your new password."
       : null
 
+  if (!sso.passwordLoginEnabled && sso.enabled) {
+    return (
+      <SsoOnlyForm
+        sso={sso}
+        onSsoSignIn={handleSsoSignIn}
+        ssoLoading={ssoLoading}
+        error={error ?? ssoError}
+      />
+    )
+  }
+
   if (showVerifyPrompt) {
     return (
       <VerifyPrompt
@@ -539,13 +680,16 @@ function LoginForm({
       onSubmit={handleSubmit}
       onDevSignIn={handleDevSignIn}
       devSignInLoading={devSignInLoading}
-      error={error}
+      error={error ?? ssoError}
       retryAfter={retryAfter}
       successMessage={successMessage}
       loading={loading}
       hasUsers={hasUsers}
       setupAvailable={setupAvailable}
       devSignin={devSignin}
+      sso={sso}
+      onSsoSignIn={handleSsoSignIn}
+      ssoLoading={ssoLoading}
     />
   )
 }

@@ -22,6 +22,7 @@ from ..auth import (
 )
 from ..auth.rate_limit import LoginRateLimiter, login_rate_limiter
 from ..auth.client_ip import get_client_ip
+from ..auth.password_login import require_password_login_enabled
 from ..db import get_session
 from ..db_helpers import as_column
 from ..models.db import EmailVerificationTokenDB, PasswordResetTokenDB, ProjectDB, UserDB
@@ -223,6 +224,7 @@ async def setup(body: SetupRequest, session: Session = Depends(get_session)) -> 
     First-installation only — afterwards admission is invite-only. If email
     verification is required, sends an OTP and returns ``verification_required``.
     """
+    require_password_login_enabled()
     error = validate_password_strength(body.password)
     if error:
         raise HTTPException(status_code=422, detail=error)
@@ -290,6 +292,7 @@ def verify_password_endpoint(
     dummy hash. Failed password checks count against the per-account limiter
     (keyed by email) so a spoofed x-forwarded-for cannot reset the budget.
     """
+    require_password_login_enabled()
     ip = get_client_ip(request)
     email_key = f"account:{body.email.lower()}"
 
@@ -464,6 +467,7 @@ async def forgot_password(
 ) -> dict[str, str]:
     """Request a password-reset email. Anti-enumeration: identical response
     whether or not the account exists. Tokens expire after 1 hour."""
+    require_password_login_enabled()
     user = session.exec(
         select(UserDB).where(UserDB.email == body.email)
     ).first()
@@ -525,6 +529,7 @@ def reset_password(
     On success the token is consumed and all of the user's other reset
     tokens are deleted. Invalid/used/expired tokens return 401.
     """
+    require_password_login_enabled()
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()
     reset_token = session.exec(
         select(PasswordResetTokenDB).where(
@@ -589,6 +594,7 @@ def change_password(
 
     Invalidates all of the user's existing sessions on success.
     """
+    require_password_login_enabled()
     user_id = cast(str | None, getattr(request.state, "user_id", None))
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -649,6 +655,7 @@ def invite_user(
 ):
     """Create a new user. Admin only."""
     _ = _require_admin(request, session)
+    require_password_login_enabled()
 
     error = validate_password_strength(body.password)
     if error:
@@ -767,6 +774,7 @@ def accept_invitation_create_account_endpoint(
     The frontend is expected to sign the user in afterward using the
     credentials it just collected.
     """
+    require_password_login_enabled()
     membership, invitation = accept_invitation_create_account(
         session,
         raw_token=body.token,

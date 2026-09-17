@@ -2,7 +2,7 @@
 
 from starlette.requests import Request
 
-from apo.auth.middleware import _COOKIE_NAMES, _get_session_cookie
+from apo.auth.middleware import _COOKIE_NAMES, get_session_cookie
 
 
 class TestCookieNameAlignment:
@@ -13,16 +13,16 @@ class TestCookieNameAlignment:
         assert "authjs.session-token" in _COOKIE_NAMES
         assert "__Secure-authjs.session-token" in _COOKIE_NAMES
 
-    def test_get_session_cookie_finds_http_cookie(self) -> None:
+    def testget_session_cookie_finds_http_cookie(self) -> None:
         """The plain (HTTP) session cookie name should be recognized."""
         scope = {
             "type": "http",
             "headers": [(b"cookie", b"authjs.session-token=jwt-token-123")],
         }
         request = Request(scope)  # type: ignore[arg-type]
-        assert _get_session_cookie(request) == "jwt-token-123"
+        assert get_session_cookie(request) == "jwt-token-123"
 
-    def test_get_session_cookie_finds_https_cookie(self) -> None:
+    def testget_session_cookie_finds_https_cookie(self) -> None:
         """The __Secure- prefixed (HTTPS) session cookie name should be recognized."""
         scope = {
             "type": "http",
@@ -31,18 +31,18 @@ class TestCookieNameAlignment:
             ],
         }
         request = Request(scope)  # type: ignore[arg-type]
-        assert _get_session_cookie(request) == "jwt-token-456"
+        assert get_session_cookie(request) == "jwt-token-456"
 
-    def test_get_session_cookie_returns_none_when_absent(self) -> None:
+    def testget_session_cookie_returns_none_when_absent(self) -> None:
         """No session cookie present should return None."""
         scope = {
             "type": "http",
             "headers": [(b"cookie", b"other-cookie=value")],
         }
         request = Request(scope)  # type: ignore[arg-type]
-        assert _get_session_cookie(request) is None
+        assert get_session_cookie(request) is None
 
-    def test_get_session_cookie_prefers_first_match(self) -> None:
+    def testget_session_cookie_prefers_first_match(self) -> None:
         """When both cookies present, the first in _COOKIE_NAMES order wins."""
         scope = {
             "type": "http",
@@ -54,9 +54,9 @@ class TestCookieNameAlignment:
             ],
         }
         request = Request(scope)  # type: ignore[arg-type]
-        assert _get_session_cookie(request) == "http-value"
+        assert get_session_cookie(request) == "http-value"
 
-    def test_get_session_cookie_reassembles_chunked_authjs_cookie(self) -> None:
+    def testget_session_cookie_reassembles_chunked_authjs_cookie(self) -> None:
         """Chunked Auth.js cookies should be reassembled in numeric order."""
         scope = {
             "type": "http",
@@ -68,4 +68,4 @@ class TestCookieNameAlignment:
             ],
         }
         request = Request(scope)  # type: ignore[arg-type]
-        assert _get_session_cookie(request) == "firstsecond"
+        assert get_session_cookie(request) == "firstsecond"

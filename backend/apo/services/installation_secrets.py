@@ -135,6 +135,22 @@ def validate_installation_secrets(config: InstallationConfig) -> None:
     if problem is not None:
         raise InstallationConfigError(problem, variable="AUTH_SECRET")
 
+    # Single sign-on — partial or invalid AUTH_OIDC_* fails here, not at the
+    # first login; an SSO-only installation with no provider has no way in.
+    from ..auth.oidc import OidcConfigError, load_oidc_config
+    from ..auth.password_login import password_login_enabled
+
+    try:
+        oidc = load_oidc_config()
+    except OidcConfigError as exc:
+        raise InstallationConfigError(str(exc), variable=exc.variable) from None
+    if oidc is None and not password_login_enabled():
+        raise InstallationConfigError(
+            "AUTH_PASSWORD_LOGIN_ENABLED=false requires AUTH_OIDC_ISSUER and "
+            "AUTH_OIDC_CLIENT_ID, otherwise nobody can sign in",
+            variable="AUTH_PASSWORD_LOGIN_ENABLED",
+        )
+
     # POSTGRES_PASSWORD
     if config.database_profile == "postgres":
         pg_password = os.environ.get("POSTGRES_PASSWORD", "").strip()

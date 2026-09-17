@@ -29,6 +29,7 @@ from .api_key_auth import (
     validate_legacy_bearer,
 )
 from .api_key_tracker import api_key_usage_tracker
+from .oidc import cookie_session_authorized
 from .rate_limit import LoginRateLimiter
 from ..services.installation_secrets import auth_secret_problem
 from .service_tokens import decode_service_token
@@ -46,6 +47,11 @@ PUBLIC_PATHS: tuple[str, ...] = (
     "/auth/verify-password",
     "/auth/setup",
     "/auth/has-users",
+    # single sign-on: the login page reads the provider name and whether
+    # password sign-in is open; the exchange is authenticated by the ID token
+    # it carries, which the handler verifies against the issuer.
+    "/auth/sso/config",
+    "/auth/oidc/exchange",
     # dev sign-in: the DEV_SIGNIN_ENABLED / deployment-profile
     # gate is enforced inside the handlers; the frontend button is cosmetic.
     "/auth/dev-signin",
@@ -289,7 +295,7 @@ def _warn_no_secret() -> None:
 
 def _authenticate(request: Request) -> AuthContext | None:
     # 1. Cookie auth (dashboard) — highest priority
-    cookie_token = _get_session_cookie(request)
+    cookie_token = get_session_cookie(request)
     if cookie_token:
         cookie_user = _authenticate_cookie(cookie_token)
         if cookie_user is not None:
@@ -314,7 +320,7 @@ def _authenticate(request: Request) -> AuthContext | None:
     return None
 
 
-def _get_session_cookie(request: Request) -> str | None:
+def get_session_cookie(request: Request) -> str | None:
     for name in _COOKIE_NAMES:
         value = request.cookies.get(name)
         if value:
@@ -369,6 +375,9 @@ def _authenticate_cookie(token: str) -> AuthContext | None:
             token_iat = _extract_token_iat(payload)
             if token_iat is not None and _is_before(token_iat, user.token_invalid_before):
                 return None
+
+        if not cookie_session_authorized(session, user, payload):
+            return None
 
         return {
             "user_id": user.id,

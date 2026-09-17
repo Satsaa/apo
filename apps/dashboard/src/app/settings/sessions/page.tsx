@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { signOut } from "next-auth/react";
-import { signOutEverywhere } from "@/lib/users-api";
+import { useSession } from "next-auth/react";
+import { signOutOfApo } from "@/lib/sign-out";
 import { SettingsPageHeader } from "@/components/settings/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,14 +17,14 @@ import { toast } from "sonner";
 import { MonitorSmartphone } from "lucide-react";
 
 export default function SessionsSettingsPage() {
+  const { data: session } = useSession();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
   async function handleSignOutEverywhere() {
     setSigningOut(true);
     try {
-      await signOutEverywhere();
-      signOut({ callbackUrl: "/login" });
+      await signOutOfApo(session, { everywhere: true });
     } catch (e) {
       setSigningOut(false);
       setConfirmOpen(false);

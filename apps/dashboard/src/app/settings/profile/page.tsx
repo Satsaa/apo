@@ -146,6 +146,15 @@ export default function ProfileSettingsPage() {
           </dl>
         </section>
 
+        {session?.user?.auth_provider === "oidc" ? (
+          <section>
+            <h2 className="text-sm font-semibold mb-1">Password</h2>
+            <p className="text-xs text-muted-foreground">
+              You sign in through single sign-on, so this account has no apo
+              password. Manage your credentials with your identity provider.
+            </p>
+          </section>
+        ) : (
         <section>
           <h2 className="text-sm font-semibold mb-1">Change Password</h2>
           <p className="text-xs text-muted-foreground mb-4">
@@ -208,6 +217,7 @@ export default function ProfileSettingsPage() {
             </Button>
           </div>
         </section>
+        )}
       </div>
     </>
   );
