@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
+from ..auth.password_login import password_login_enabled, require_password_login_enabled
 from ..db import get_session
 from ..services.dev_workspace import (
     dev_landing_path,
@@ -47,7 +48,7 @@ class DevSigninResponse(BaseModel):
 @router.get("/auth/dev-signin/available")
 async def dev_signin_available() -> DevSigninAvailableResponse:
     """Report whether dev sign-in is enabled, for login-page rendering."""
-    if not is_dev_signin_enabled():
+    if not is_dev_signin_enabled() or not password_login_enabled():
         return DevSigninAvailableResponse(
             enabled=False, landing_path=None, project_id=None
         )
@@ -65,6 +66,9 @@ async def dev_signin(
     """Provision (idempotently) and return the dev user for a browser session."""
     if not is_dev_signin_enabled():
         raise HTTPException(status_code=404, detail="Dev sign-in is not enabled")
+    # A dev session is a password-less local login; on an SSO-only installation
+    # it would be a session the provider never checks.
+    require_password_login_enabled()
 
     user = ensure_dev_workspace(session)
     return DevSigninResponse(

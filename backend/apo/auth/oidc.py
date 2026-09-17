@@ -28,6 +28,7 @@ be used without patching:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -377,10 +378,24 @@ def _hostname(issuer: str) -> str:
     return issuer.split("//", 1)[-1].split("/", 1)[0].replace(":", "-")
 
 
-def _ensure_project(session: Session, config: OidcConfig, user: UserDB) -> bool:
-    """Create the SSO project on first use; ``True`` when this user became its owner."""
-    if session.get(ProjectDB, config.project_id) is not None:
-        return False
+def _require_project(session: Session, config: OidcConfig) -> None:
+    """Refuse a login whose configured project is gone.
+
+    Only the installation claim creates the project (`_create_project`), so
+    ownership is handed out exactly once. Recreating it for whoever logs in
+    next would make that person owner by accident; an instance admin
+    recreates it deliberately instead.
+    """
+    if session.get(ProjectDB, config.project_id) is None:
+        raise OidcAuthError(
+            403,
+            f"The single sign-on project '{config.project_id}' does not exist on this "
+            "installation; an administrator must create it before anyone can sign in",
+        )
+
+
+def _create_project(session: Session, config: OidcConfig, user: UserDB) -> None:
+    """Create the SSO project for the person who just claimed the installation."""
     project = ProjectDB(id=config.project_id, name=config.project_name, created_by=user.id)
     session.add(project)
     now = _utcnow()
@@ -394,7 +409,6 @@ def _ensure_project(session: Session, config: OidcConfig, user: UserDB) -> bool:
 
     if bundled_executor_enabled():
         _ = ensure_bundled_pool(session, project_id=project.id)
-    return True
 
 
 def _ensure_membership(session: Session, config: OidcConfig, user: UserDB) -> None:
@@ -456,7 +470,7 @@ def provision_identity(
             existing.last_login_at = _utcnow()
             session.add(existing)
             session.commit()
-            _ensure_project(session, config, user)
+            _require_project(session, config)
             _ensure_membership(session, config, user)
             return user
 
@@ -477,10 +491,16 @@ def provision_identity(
         is_active=True,
         email_verified_at=_utcnow() if email is not None else None,
     )
+    claimed = False
     if get_installation_setup_status(session).setup_available:
         try:
             claim_installation_for_user(session, user, is_instance_admin=True)
+            claimed = True
         except InstallationAlreadyInitializedError:
+            # Lost the claim to a concurrent first login. The rollback leaves the
+            # pending row's attributes as the claim set them, so the instance-admin
+            # flag has to be taken back explicitly before the row is stored.
+            user.is_admin = False
             session.add(user)
             session.commit()
     else:
@@ -496,7 +516,10 @@ def provision_identity(
         )
     )
     session.commit()
-    _ensure_project(session, config, user)
+    if claimed:
+        _create_project(session, config, user)
+    else:
+        _require_project(session, config)
     _ensure_membership(session, config, user)
     return user
 
@@ -529,24 +552,35 @@ def _refresh_profile(session: Session, user: UserDB, identity: VerifiedIdentity)
 
 
 class _RevalidationClock:
-    """Per-user timestamp of the last successful UserInfo confirmation."""
+    """Per-session timestamp of the last successful UserInfo confirmation.
+
+    Keyed on the user *and* the access token, so one person's second browser
+    holds its own clock: a token revoked in one session is noticed there even
+    while the other session keeps confirming its own token.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._confirmed: dict[str, float] = {}
+        self._confirmed: dict[tuple[str, str], float] = {}
 
-    def is_due(self, user_id: str, interval_seconds: int) -> bool:
+    @staticmethod
+    def _key(user_id: str, access_token: str) -> tuple[str, str]:
+        return (user_id, hashlib.sha256(access_token.encode()).hexdigest()[:32])
+
+    def is_due(self, user_id: str, access_token: str, interval_seconds: int) -> bool:
         with self._lock:
-            last = self._confirmed.get(user_id)
+            last = self._confirmed.get(self._key(user_id, access_token))
         return last is None or time.monotonic() - last >= interval_seconds
 
-    def confirm(self, user_id: str) -> None:
+    def confirm(self, user_id: str, access_token: str) -> None:
         with self._lock:
-            self._confirmed[user_id] = time.monotonic()
+            self._confirmed[self._key(user_id, access_token)] = time.monotonic()
 
     def forget(self, user_id: str) -> None:
+        """Drop every session clock of one user — on logout and role removal."""
         with self._lock:
-            self._confirmed.pop(user_id, None)
+            for key in [key for key in self._confirmed if key[0] == user_id]:
+                del self._confirmed[key]
 
     def reset(self) -> None:
         with self._lock:
@@ -575,11 +609,13 @@ def cookie_session_authorized(
     expires_at = payload.get("oidc_expires_at")
     if not isinstance(expires_at, (int, float)) or expires_at <= time.time():
         return False
-    if not revalidation_clock.is_due(user.id, config.revalidate_seconds):
-        return True
     access_token = payload.get("oidc_access_token")
+    if not isinstance(access_token, str) or not access_token:
+        return False
+    if not revalidation_clock.is_due(user.id, access_token, config.revalidate_seconds):
+        return True
     identity = identity_for_user(session, user.id)
-    if not isinstance(access_token, str) or not access_token or identity is None:
+    if identity is None:
         return False
     try:
         revalidate_access(access_token, identity.subject, config)
@@ -589,8 +625,9 @@ def cookie_session_authorized(
             from . import invalidate_user_sessions
 
             invalidate_user_sessions(session, user.id)
+            revalidation_clock.forget(user.id)
         return False
-    revalidation_clock.confirm(user.id)
+    revalidation_clock.confirm(user.id, access_token)
     return True
 
 

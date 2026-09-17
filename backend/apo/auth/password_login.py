@@ -3,7 +3,8 @@
 ``AUTH_PASSWORD_LOGIN_ENABLED=false`` closes every path that creates or
 proves a password — sign-in, first-user setup, reset, invitation and
 hosted-access account creation, and the CLI's email+password bootstraps —
-so an installation fronted by single sign-on has no second door. Project
+and the password-less dev sign-in, so an installation fronted by single
+sign-on has no second door. Project
 API keys are unaffected: executors and the CLI keep authenticating with
 project-scoped credentials minted from the dashboard.
 """
