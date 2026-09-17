@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlmodel import Session
 
 from ..auth.client_ip import get_client_ip
+from ..auth.password_login import require_password_login_enabled
 from ..auth.rate_limit import LoginRateLimiter
 from ..db import get_session
 from ..models.schemas import (
@@ -163,6 +164,7 @@ async def accept_create_account(
     User, Project, owner membership, and invitation consumption commit
     together or not at all. Single-use; replays are rejected.
     """
+    require_password_login_enabled()
     _enforce_public_rate_limit(request)
     return accept_hosted_access_create_account(
         session,

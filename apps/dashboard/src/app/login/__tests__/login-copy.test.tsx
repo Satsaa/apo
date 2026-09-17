@@ -19,7 +19,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: vi.fn().mockReturnValue({ get: () => null }),
 }));
 
-import { LoginPage } from "../login-form";
+import { LoginPage, describeSsoError } from "../login-form";
 
 describe("login page admission copy", () => {
   it("links to first-user setup while setup is available", () => {
@@ -55,5 +55,49 @@ describe("login page admission copy", () => {
 
     expect(screen.queryByText(/invitation-only/i)).toBeNull();
     expect(screen.queryByRole("link", { name: /set up the first account/i })).toBeNull();
+  });
+});
+
+describe("login page sign-in methods", () => {
+  const noDev = { enabled: false, landingPath: "/" };
+
+  it("offers single sign-on beside the password form when both are open", () => {
+    render(
+      <LoginPage
+        hasUsers={true}
+        setupAvailable={false}
+        devSignin={noDev}
+        sso={{ enabled: true, providerName: "Agentio", passwordLoginEnabled: true }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /sign in with agentio/i })).toBeDefined();
+    expect(screen.getByLabelText(/password/i)).toBeDefined();
+  });
+
+  it("shows only single sign-on when password sign-in is disabled, even on a fresh install", () => {
+    render(
+      <LoginPage
+        hasUsers={false}
+        setupAvailable={true}
+        devSignin={noDev}
+        sso={{ enabled: true, providerName: "Agentio", passwordLoginEnabled: false }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /sign in with agentio/i })).toBeDefined();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    // First-user setup is a password path; an SSO-only installation is
+    // claimed by its first authorized SSO login instead.
+    expect(screen.queryAllByRole("link").filter((a) => a.getAttribute("href") === "/setup")).toEqual([]);
+    expect(screen.queryByRole("link", { name: /forgot password/i })).toBeNull();
+  });
+
+  it("explains a refused single sign-on from the redirect code", () => {
+    expect(describeSsoError("forbidden", "Agentio")).toMatch(/not authorized/i);
+    expect(describeSsoError("conflict", "Agentio")).toMatch(/already exists/i);
+    expect(describeSsoError("unavailable", null)).toMatch(/not reachable/i);
+    expect(describeSsoError("anything-else", null)).toMatch(/failed/i);
+    expect(describeSsoError(null, "Agentio")).toBeNull();
   });
 });

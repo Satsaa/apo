@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { signOut, useSession } from "next-auth/react"
+import { useSession } from "next-auth/react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SettingsIcon } from "lucide-react"
 import { SETTINGS_DEFAULT_SEGMENT } from "@/app/settings/nav-config"
+import { signOutOfApo } from "@/lib/sign-out"
 
 const SETTINGS_HREF = `/settings/${SETTINGS_DEFAULT_SEGMENT}`
 
@@ -45,9 +46,7 @@ export function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={() => signOut({ redirectTo: "/login" })}
-        >
+        <DropdownMenuItem onSelect={() => void signOutOfApo(session)}>
           Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

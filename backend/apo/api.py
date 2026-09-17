@@ -49,6 +49,7 @@ from .routes import (
     executor_result_evidence,
     automations,
     hosted_access,
+    oidc,
 )
 
 
@@ -241,6 +242,7 @@ def create_app() -> FastAPI:
     app.include_router(comments.router)
     app.include_router(api_keys.router)
     app.include_router(auth.router)
+    app.include_router(oidc.router)
     app.include_router(dev_signin.router)
     app.include_router(projects.router)
     app.include_router(project_members.router)

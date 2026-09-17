@@ -59,6 +59,19 @@ Account creation is exposed through the dashboard's public `/setup` route.
 - Later accounts created through the same flow become standard users.
 - The sign-in page should always expose a path to account creation; role assignment happens in the backend based on whether any users already exist.
 
+With single sign-on configured (`AUTH_OIDC_ISSUER` + `AUTH_OIDC_CLIENT_ID`), the
+dashboard's Auth.js runs the OIDC code flow and hands the resulting tokens to
+`POST /auth/oidc/exchange`. The backend — never the browser — verifies the ID
+token against the issuer's keys, confirms the access token at UserInfo, requires
+the configured claim, and provisions or reuses an `oidc_identities` row keyed by
+`(issuer, subject)`. The first SSO login on an uninitialized installation takes
+the same first-user bootstrap as `/auth/setup` (instance admin + owner of the
+SSO project); later logins receive `AUTH_OIDC_PROJECT_ROLE` in that project.
+Live SSO sessions are re-verified at UserInfo every
+`AUTH_OIDC_REVALIDATE_SECONDS` and end at the token's expiry; with
+`AUTH_PASSWORD_LOGIN_ENABLED=false` every password path (setup, verify, reset,
+invitation account creation, CLI bootstrap) answers `403 PASSWORD_LOGIN_DISABLED`.
+
 ## Auth Boundaries
 
 The system has three distinct authentication modes. They should not be mixed.

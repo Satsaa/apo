@@ -1179,6 +1179,27 @@ class PasswordResetTokenDB(SQLModel, table=True):
     )
 
 
+class OidcIdentityDB(SQLModel, table=True):
+    """A single-sign-on identity: the verified ``(issuer, subject)`` pair
+    that owns one apo user. Email is display data on the user; this row is
+    what makes the account the same person across email changes."""
+
+    __tablename__: ClassVar[str] = "oidc_identities"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_oidc_identity_subject"),
+    )
+
+    id: str = Field(primary_key=True, default_factory=lambda: uuid4().hex[:16])
+    issuer: str = Field(index=True)
+    subject: str
+    user_id: str = Field(foreign_key="users.id", unique=True, index=True)
+    last_login_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(UTCDateTime, server_default=func.now()),
+    )
+
+
 class ProjectDB(SQLModel, table=True):
     """A project is the main organizational unit for agent testing.
 

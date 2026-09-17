@@ -148,15 +148,28 @@ def claim_initial_user(
     if not normalized_email:
         raise ValueError("email is required")
 
-    _ensure_singleton(session)
-
-    # Create the User first (flush to get the ID, but don't commit yet).
     user = UserDB(
         email=normalized_email,
         name=name.strip() if name else "",
         password_hash=hash_password(password),
-        is_admin=is_instance_admin,
     )
+    return claim_installation_for_user(session, user, is_instance_admin=is_instance_admin)
+
+
+def claim_installation_for_user(
+    session: Session, user: UserDB, *, is_instance_admin: bool
+) -> UserDB:
+    """Atomically initialize the installation with ``user`` as its initial user.
+
+    ``user`` is an unsaved row whose credential (password hash or the SSO
+    marker) the caller has already set. Raises
+    :class:`InstallationAlreadyInitializedError` — inserting nothing — when
+    another caller won the compare-and-set.
+    """
+    _ensure_singleton(session)
+
+    user.is_admin = is_instance_admin
+    # Create the User first (flush to get the ID, but don't commit yet).
     session.add(user)
     session.flush()
 

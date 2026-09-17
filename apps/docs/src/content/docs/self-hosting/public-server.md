@@ -138,6 +138,8 @@ One deliberate exception: the read-only **demo workspace** is browsable without 
 | `DEMO_ANON_RATE_LIMIT_MAX` | `120` | Anonymous requests per IP per window. |
 | `DEMO_ANON_RATE_LIMIT_WINDOW_SECONDS` | `60` | The rate-limit window in seconds. |
 
+To sign people in through your own identity provider instead of apo passwords, set `AUTH_OIDC_ISSUER` and `AUTH_OIDC_CLIENT_ID` (see [Configuration → Single sign-on](/reference/configuration/#single-sign-on-openid-connect)) and register `https://apo.example.com/api/auth/callback/oidc` as the client's redirect URI. With `AUTH_PASSWORD_LOGIN_ENABLED=false` the login page offers only the provider, and the first authorized person to sign in claims the installation — there is no `/setup` password to hand around.
+
 :::note[One origin, one authentication boundary]
 The ingress (Caddy) owns TLS and routing only. It never asks for a password of its own: browsers get Apo's login and invitation pages directly, and `apo login --backend https://apo.example.com` works without any ingress credential. Apo's application authentication (sessions, API keys, and Project authorization) is the only security boundary in front of your data.
 :::

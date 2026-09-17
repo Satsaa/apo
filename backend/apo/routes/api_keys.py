@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session, col, delete, select
 
 from ..auth import _dummy_hash, verify_password
+from ..auth.password_login import require_password_login_enabled
 from ..services.ingest_quota import today_usage
 from ..auth.api_key_auth import generate_key_pair
 from ..auth.api_key_cache import (
@@ -411,6 +412,7 @@ def bootstrap_api_key(
 
     Protected by the same rate limiter as `/auth/verify-password`.
     """
+    require_password_login_enabled()
     ip = get_client_ip(request)
 
     if not _bootstrap_rate_limiter.is_allowed(ip):

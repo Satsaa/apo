@@ -169,6 +169,27 @@ means unlimited — an invalid value fails startup.
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `300` | Lockout window length. |
 | `AUTH_EMAIL_VERIFICATION_REQUIRED` | `false` | Require email verification before login. |
 | `ADMIN_API_KEY` | - | Admin-level API key for privileged routes. |
+| `AUTH_PASSWORD_LOGIN_ENABLED` | `true` | Set `false` to close every password path — sign-in, first-user setup, forgot/reset, invitation account creation, the CLI's `api-keys/bootstrap` — with a `403` carrying `code: PASSWORD_LOGIN_DISABLED`. Refused at startup unless single sign-on is configured, so an installation can never lock everyone out. |
+
+### Single sign-on (OpenID Connect)
+
+Set both `AUTH_OIDC_ISSUER` and `AUTH_OIDC_CLIENT_ID` on the **backend and the dashboard** to offer "Sign in with …" on the login page. The dashboard only runs the code flow (PKCE, state and nonce); the backend then verifies the ID token against the issuer's keys, calls UserInfo with the access token, and decides who may enter — nothing the browser sends is trusted as identity. Identities are keyed by `(issuer, subject)`; a verified email that already belongs to an unrelated apo account is refused (`409`) rather than merged.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTH_OIDC_ISSUER` | - | The provider's issuer URL; discovery is read from `<issuer>/.well-known/openid-configuration`. |
+| `AUTH_OIDC_CLIENT_ID` | - | The client id registered with the provider, and the `aud` the ID token must carry. |
+| `AUTH_OIDC_CLIENT_SECRET` | - | Optional. Unset means a public client (`token_endpoint_auth_method: none`), which is what a dashboard shared by many developers should be. |
+| `AUTH_OIDC_PROVIDER_NAME` | `Single sign-on` | The name on the login button and in refusals. |
+| `AUTH_OIDC_REQUIRED_CLAIM` | `roles` | A claim that must be present in **both** the ID token and UserInfo. |
+| `AUTH_OIDC_REQUIRED_CLAIM_VALUE` | - | The value that claim must carry (or contain, for an array) for the person to be allowed in at all. Unset accepts every authenticated user of the provider. |
+| `AUTH_OIDC_PROJECT_ID` | `sso` | The project every authorized person is added to on login. Created on first use. |
+| `AUTH_OIDC_PROJECT_NAME` | project id | Display name for that project when it is created. |
+| `AUTH_OIDC_PROJECT_ROLE` | `admin` | Membership role granted in that project: `viewer`, `member` or `admin`. Never `owner` — the owner is the first person to sign in on an uninitialized installation, who also becomes its instance admin (apo's usual first-user bootstrap, driven by a verified identity instead of a password). |
+| `AUTH_OIDC_REVALIDATE_SECONDS` | `300` | How often a live SSO session is re-checked against UserInfo. A removed role, a revoked token or an unreachable issuer ends the session — the check fails closed. |
+| `AUTH_OIDC_SESSION_MAX_AGE_SECONDS` | `3600` | Ceiling on an SSO session, applied together with the ID token's own expiry (whichever is sooner). There is no rolling extension: after it the person signs in again. |
+
+SSO users hold no apo password (`verify-password` always refuses them) and sign out through the provider's end-session endpoint, which also revokes their other apo sessions. Project API keys are unaffected: executors keep using the keys the dashboard issues, scoped to a project, whether or not the person who created them is still signed in.
 
 ## Bootstrap, retention, and maintenance
 

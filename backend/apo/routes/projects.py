@@ -23,6 +23,7 @@ from sqlmodel import Session, select
 
 from ..auth import _dummy_hash, verify_password
 from ..auth.deps import get_user_id
+from ..auth.password_login import require_password_login_enabled
 from ..auth.rate_limit import LoginRateLimiter
 from ..db import get_session
 from ..models.db import (
@@ -278,6 +279,7 @@ def bootstrap_project(
 
     Rate-limited (5/min/IP) independently from the api-keys bootstrap path.
     """
+    require_password_login_enabled()
     ip = get_client_ip(request)
     if not _projects_bootstrap_rate_limiter.is_allowed(ip):
         retry_after = _projects_bootstrap_rate_limiter.get_retry_after(ip)

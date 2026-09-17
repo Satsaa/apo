@@ -31,6 +31,13 @@ services:
       # deployments use APO_PUBLIC_URL as the single public-origin setting.
       - NEXTAUTH_URL=${APO_PUBLIC_URL:-${NEXTAUTH_URL:-http://localhost:3000}}
       - APO_PUBLIC_URL=${APO_PUBLIC_URL:-${NEXTAUTH_URL:-http://localhost:3000}}
+      # Optional single sign-on (OpenID Connect). Both services need the pair:
+      # the dashboard runs the code flow, the backend verifies the tokens and
+      # decides admission. See docs → Configuration → Single sign-on.
+      - AUTH_OIDC_ISSUER=${AUTH_OIDC_ISSUER:-}
+      - AUTH_OIDC_CLIENT_ID=${AUTH_OIDC_CLIENT_ID:-}
+      - AUTH_OIDC_CLIENT_SECRET=${AUTH_OIDC_CLIENT_SECRET:-}
+      - AUTH_OIDC_PROVIDER_NAME=${AUTH_OIDC_PROVIDER_NAME:-}
     depends_on:
       backend:
         condition: service_healthy
@@ -83,6 +90,21 @@ services:
       # page + agent-demo workspace provisioning. Operator opt-in for this
       # localhost profile; never enable on a publicly reachable deployment.
       - DEV_SIGNIN_ENABLED=${DEV_SIGNIN_ENABLED:-false}
+      # Optional single sign-on (OpenID Connect). Both services need the pair:
+      # the dashboard runs the code flow, the backend verifies the tokens and
+      # decides admission. See docs → Configuration → Single sign-on.
+      - AUTH_OIDC_ISSUER=${AUTH_OIDC_ISSUER:-}
+      - AUTH_OIDC_CLIENT_ID=${AUTH_OIDC_CLIENT_ID:-}
+      - AUTH_OIDC_CLIENT_SECRET=${AUTH_OIDC_CLIENT_SECRET:-}
+      - AUTH_OIDC_PROVIDER_NAME=${AUTH_OIDC_PROVIDER_NAME:-}
+      - AUTH_OIDC_REQUIRED_CLAIM=${AUTH_OIDC_REQUIRED_CLAIM:-roles}
+      - AUTH_OIDC_REQUIRED_CLAIM_VALUE=${AUTH_OIDC_REQUIRED_CLAIM_VALUE:-}
+      - AUTH_OIDC_PROJECT_ID=${AUTH_OIDC_PROJECT_ID:-sso}
+      - AUTH_OIDC_PROJECT_NAME=${AUTH_OIDC_PROJECT_NAME:-}
+      - AUTH_OIDC_PROJECT_ROLE=${AUTH_OIDC_PROJECT_ROLE:-admin}
+      # Set false to close every password path once SSO is configured; the
+      # backend refuses to start with this false and no issuer.
+      - AUTH_PASSWORD_LOGIN_ENABLED=${AUTH_PASSWORD_LOGIN_ENABLED:-true}
       # --- Data size control (SQLite) ---
       # Age out traces/runs older than N days (0 = disabled, recommended 90).
       - APO_RETENTION_DAYS=${APO_RETENTION_DAYS:-0}

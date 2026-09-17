@@ -36,6 +36,11 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
+    # Single-sign-on accounts carry a non-bcrypt marker as their hash: no
+    # password may ever match one, and bcrypt would raise on the malformed
+    # salt instead of answering False.
+    if not hashed.startswith("$2"):
+        return False
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 

@@ -1195,6 +1195,9 @@ _ROUTE_MODULE_AUDIT: dict[str, tuple[str, list[tuple[str, str]]]] = {
         [("tests/test_project_authorization_boundary.py", "test_api_key_cannot_manage_other_projects_keys")],
     ),
     "auth": ("public", []),
+    # Single sign-on: the token exchange and logout act on the caller's own
+    # identity (tests/test_oidc_sso.py); no Project-owned data.
+    "oidc": ("public", []),
     "comments": (
         "project",
         [
