@@ -66,7 +66,8 @@ token against the issuer's keys, confirms the access token at UserInfo, requires
 the configured claim, and provisions or reuses an `oidc_identities` row keyed by
 `(issuer, subject)`. The first SSO login on an uninitialized installation takes
 the same first-user bootstrap as `/auth/setup` (instance admin + owner of the
-SSO project); later logins receive `AUTH_OIDC_PROJECT_ROLE` in that project.
+SSO project); later logins receive `AUTH_OIDC_PROJECT_ROLE` in that project and
+are refused while it does not exist, so ownership is handed out exactly once.
 Live SSO sessions are re-verified at UserInfo every
 `AUTH_OIDC_REVALIDATE_SECONDS` and end at the token's expiry; with
 `AUTH_PASSWORD_LOGIN_ENABLED=false` every password path (setup, verify, reset,

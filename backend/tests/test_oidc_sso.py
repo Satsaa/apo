@@ -10,6 +10,7 @@ really verified — only the network is replaced.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -263,6 +264,58 @@ class TestExchange:
         ).one()
         assert (membership.project_id, membership.role) == ("sso", "admin")
 
+    def test_losing_the_first_login_race_grants_no_instance_admin(
+        self, client: TestClient, session: Session, issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two first logins at once: the claim's rollback must not leave is_admin on the loser."""
+        from apo.services import installation_initialization as init_module
+
+        real_claim = init_module.claim_installation_for_user
+
+        from apo.models.db import ProjectDB
+
+        def racing_claim(session: Session, user: UserDB, **kwargs: object) -> None:
+            # Someone else claims — and gets the project — between the
+            # availability check and this call.
+            winner = UserDB(email="winner@example.test", name="W", password_hash=SSO_PASSWORD_HASH)
+            real_claim(session, winner, is_instance_admin=True)
+            session.add(ProjectDB(id="sso", name="SSO", created_by=winner.id))
+            session.commit()
+            real_claim(session, user, **kwargs)  # pyright: ignore[reportArgumentType]
+
+        monkeypatch.setattr(init_module, "claim_installation_for_user", racing_claim)
+
+        id_token, access_token = _login(issuer, "user-2", roles=["agentio_super_admin"])
+        resp = _exchange(client, id_token, access_token)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["is_admin"] is False
+        membership = session.exec(
+            select(ProjectMembershipDB).where(ProjectMembershipDB.user_id == resp.json()["id"])
+        ).one()
+        assert membership.role == "admin"
+
+    def test_missing_project_refuses_later_logins_rather_than_recreating_it(
+        self, client: TestClient, session: Session, issuer: FakeIssuer
+    ) -> None:
+        """Only the installation claim hands out ownership; a deleted project is an admin's job."""
+        first = _login(issuer, "user-1", roles=["agentio_super_admin"], email="a@example.test")
+        assert _exchange(client, *first).status_code == 200
+        from apo.models.db import ProjectDB
+
+        for membership in session.exec(select(ProjectMembershipDB)).all():
+            session.delete(membership)
+        project = session.get(ProjectDB, "sso")
+        assert project is not None
+        session.delete(project)
+        session.commit()
+
+        second = _login(issuer, "user-2", roles=["agentio_super_admin"], email="b@example.test")
+        resp = _exchange(client, *second)
+        assert resp.status_code == 403, resp.text
+        assert "does not exist" in resp.json()["detail"]
+        assert session.get(ProjectDB, "sso") is None, "nobody became owner by logging in"
+        assert _exchange(client, *first).status_code == 403, "the first user is refused too"
+
     def test_repeat_login_reuses_identity_and_refreshes_profile(
         self, client: TestClient, session: Session, issuer: FakeIssuer
     ) -> None:
@@ -302,13 +355,16 @@ class TestExchange:
     def test_unverified_email_is_not_trusted_for_linking_or_display(
         self, client: TestClient, session: Session, issuer: FakeIssuer
     ) -> None:
-        session.add(
-            UserDB(
-                email="taken@example.test",
-                name="Local",
-                password_hash=hash_password("SecretPass123"),
-            )
+        # An installation set up with a password, whose admin created the SSO project.
+        from apo.models.db import ProjectDB
+
+        local = UserDB(
+            email="taken@example.test", name="Local", password_hash=hash_password("SecretPass123")
         )
+        session.add(local)
+        session.commit()
+        session.refresh(local)
+        session.add(ProjectDB(id="sso", name="SSO", created_by=local.id))
         session.commit()
         tokens = _login(
             issuer,
@@ -391,6 +447,19 @@ class TestLiveSession:
         session.refresh(user)
         assert user.token_invalid_before is not None, "a revoked role invalidates every session"
 
+    def test_each_session_of_one_person_is_revalidated_on_its_own(
+        self, session: Session, issuer: FakeIssuer
+    ) -> None:
+        """A token revoked in one browser is noticed there while another browser stays valid."""
+        user = self._sso_user(session)
+        _, token_a = _login(issuer, "user-1", roles=["agentio_super_admin"])
+        _, token_b = _login(issuer, "user-1", roles=["agentio_super_admin"])
+        assert cookie_session_authorized(session, user, self._payload(token_a)) is True
+        del issuer.userinfo_by_token[token_b]  # revoked at the provider
+        assert cookie_session_authorized(session, user, self._payload(token_b)) is False
+        assert cookie_session_authorized(session, user, self._payload(token_a)) is True
+        assert issuer.userinfo_calls == 2
+
     def test_revoked_access_token_ends_session(self, session: Session, issuer: FakeIssuer) -> None:
         user = self._sso_user(session)
         payload = self._payload("at-revoked")
@@ -465,6 +534,17 @@ class TestPasswordPaths:
         assert resp.status_code == 403, resp.text
         assert resp.json()["detail"]["code"] == PASSWORD_LOGIN_DISABLED_CODE
 
+    def test_dev_signin_is_closed_in_sso_mode(
+        self, client: TestClient, issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dev session is never revalidated at the provider, so SSO-only must refuse it."""
+        monkeypatch.setenv("DEV_SIGNIN_ENABLED", "true")
+        monkeypatch.setenv("AUTH_PASSWORD_LOGIN_ENABLED", "false")
+        assert client.get("/auth/dev-signin/available").json()["enabled"] is False
+        resp = client.post("/auth/dev-signin")
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["detail"]["code"] == PASSWORD_LOGIN_DISABLED_CODE
+
     def test_password_paths_open_by_default(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -473,6 +553,25 @@ class TestPasswordPaths:
             "/auth/verify-password", json={"email": "nobody@b.c", "password": "SecretPass123"}
         )
         assert resp.status_code == 401
+
+
+class TestLogout:
+    def test_end_session_redirects_to_the_bare_origin(
+        self, issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Providers match post-logout URIs exactly, and an origin is what gets registered."""
+        from urllib.parse import parse_qs, urlsplit
+
+        monkeypatch.setenv("FRONTEND_URL", "https://apo.example.test/")
+        config = load_oidc_config()
+        assert config is not None
+        url = oidc_module.end_session_url(
+            config, "the-id-token", os.environ["FRONTEND_URL"].rstrip("/")
+        )
+        assert url is not None
+        query = parse_qs(urlsplit(url).query)
+        assert query["post_logout_redirect_uri"] == ["https://apo.example.test"]
+        assert query["id_token_hint"] == ["the-id-token"]
 
 
 class TestConfiguration:

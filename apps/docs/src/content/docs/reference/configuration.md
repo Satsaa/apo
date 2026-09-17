@@ -183,7 +183,7 @@ Set both `AUTH_OIDC_ISSUER` and `AUTH_OIDC_CLIENT_ID` on the **backend and the d
 | `AUTH_OIDC_PROVIDER_NAME` | `Single sign-on` | The name on the login button and in refusals. |
 | `AUTH_OIDC_REQUIRED_CLAIM` | `roles` | A claim that must be present in **both** the ID token and UserInfo. |
 | `AUTH_OIDC_REQUIRED_CLAIM_VALUE` | - | The value that claim must carry (or contain, for an array) for the person to be allowed in at all. Unset accepts every authenticated user of the provider. |
-| `AUTH_OIDC_PROJECT_ID` | `sso` | The project every authorized person is added to on login. Created on first use. |
+| `AUTH_OIDC_PROJECT_ID` | `sso` | The project every authorized person is added to on login. Created, and owned, by the first SSO login on an uninitialized installation only; on an installation set up with a password an administrator creates it first, and a login is refused while it does not exist. |
 | `AUTH_OIDC_PROJECT_NAME` | project id | Display name for that project when it is created. |
 | `AUTH_OIDC_PROJECT_ROLE` | `admin` | Membership role granted in that project: `viewer`, `member` or `admin`. Never `owner` — the owner is the first person to sign in on an uninitialized installation, who also becomes its instance admin (apo's usual first-user bootstrap, driven by a verified identity instead of a password). |
 | `AUTH_OIDC_REVALIDATE_SECONDS` | `300` | How often a live SSO session is re-checked against UserInfo. A removed role, a revoked token or an unreachable issuer ends the session — the check fails closed. |
