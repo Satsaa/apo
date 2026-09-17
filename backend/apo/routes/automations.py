@@ -20,12 +20,14 @@ from ..db import get_session
 from ..models.db import AutomationDB, AutomationExecutionDB
 from ..services.automations import (
     ACTION_GITHUB_ISSUE,
+    ACTION_SLACK,
     ACTION_WEBHOOK,
     MAX_AUTOMATIONS_PER_PROJECT,
     AutomationRequestError,
     AutomationSecretsUnavailable,
     deliver_test_event,
     encrypt_github_token,
+    encrypt_webhook_secret,
     validate_action_config,
     validate_conditions,
     validate_event_type,
@@ -49,6 +51,9 @@ class AutomationCreate(BaseModel):
     action_type: str
     action_config: dict[str, object]
     github_token: str | None = None
+    # Slack actions carry the incoming-webhook URL in action_config.url;
+    # it is validated there, stored encrypted, and only a masked tail is
+    # ever returned in action_config.
 
 
 class AutomationUpdate(BaseModel):
@@ -184,10 +189,24 @@ def create_automation(
             f"{MAX_AUTOMATIONS_PER_PROJECT} automations",
         )
 
-    secret: str | None = None
+    secret_plaintext: str | None = None
+    secret_stored: str | None = None
     github_token_encrypted: str | None = None
+    slack_url_encrypted: str | None = None
+    if body.action_type == ACTION_SLACK:
+        raw_url = body.action_config.get("url")
+        if isinstance(raw_url, str) and raw_url:
+            try:
+                slack_url_encrypted = encrypt_webhook_secret(raw_url)
+            except AutomationSecretsUnavailable as exc:
+                raise _map_automation_error(exc) from exc
     if body.action_type == ACTION_WEBHOOK:
-        secret = generate_secret()
+        # Plaintext is echoed exactly once; only the encrypted form is stored.
+        secret_plaintext = generate_secret()
+        try:
+            secret_stored = encrypt_webhook_secret(secret_plaintext)
+        except AutomationSecretsUnavailable as exc:
+            raise _map_automation_error(exc) from exc
     elif body.action_type == ACTION_GITHUB_ISSUE:
         if not body.github_token:
             raise HTTPException(
@@ -207,14 +226,15 @@ def create_automation(
         conditions=body.conditions,
         action_type=body.action_type,
         action_config=action_config,
-        secret=secret,
+        secret=secret_stored,
         github_token_encrypted=github_token_encrypted,
+        slack_webhook_url_encrypted=slack_url_encrypted,
     )
     session.add(automation)
     session.commit()
     session.refresh(automation)
     response = AutomationCreateResponse(**_to_response(automation).model_dump())
-    response.secret = secret
+    response.secret = secret_plaintext
     return response
 
 
@@ -285,11 +305,30 @@ def update_automation(
         if body.event_type is not None:
             validate_event_type(event_type)
         validate_conditions(event_type, conditions)
-        action_config = (
-            validate_action_config(automation.action_type, body.action_config)
+        # Merge over the stored config: a partial PATCH (e.g. dashboard edit
+        # sending only owner/repo) must not silently erase labels, title, or
+        # body templates the rule was created with.
+        merged_config = (
+            {
+                **(automation.action_config or {}),
+                **(body.action_config or {}),
+            }
             if body.action_config is not None
             else automation.action_config
         )
+        if (
+            automation.action_type == ACTION_SLACK
+            and body.action_config is not None
+            and not isinstance(body.action_config.get("url"), str)
+        ):
+            # Slack keep-existing: no url key means keep the stored URL and
+            # its masked display — validating the merged config would demand
+            # a plaintext URL the client was never shown.
+            action_config = automation.action_config
+        else:
+            action_config = validate_action_config(
+                automation.action_type, merged_config
+            )
     except (AutomationRequestError, AutomationSecretsUnavailable) as exc:
         raise _map_automation_error(exc) from exc
 
@@ -317,6 +356,15 @@ def update_automation(
             )
         except AutomationSecretsUnavailable as exc:
             raise _map_automation_error(exc) from exc
+    if body.action_config is not None and automation.action_type == ACTION_SLACK:
+        raw_url = body.action_config.get("url")
+        if isinstance(raw_url, str) and raw_url:
+            try:
+                automation.slack_webhook_url_encrypted = encrypt_webhook_secret(
+                    raw_url
+                )
+            except AutomationSecretsUnavailable as exc:
+                raise _map_automation_error(exc) from exc
 
     session.add(automation)
     session.commit()
@@ -368,12 +416,12 @@ def rotate_secret(
             status_code=400,
             detail="Only webhook automations have a signing secret to rotate",
         )
-    automation.secret = generate_secret()
+    # Store encrypted; the plaintext secret is returned exactly once.
+    plaintext = generate_secret()
+    automation.secret = encrypt_webhook_secret(plaintext)
     session.add(automation)
     session.commit()
-    session.refresh(automation)
-    assert automation.secret is not None
-    return AutomationSecretResponse(id=automation.id, secret=automation.secret)
+    return AutomationSecretResponse(id=automation.id, secret=plaintext)
 
 
 @router.post("/{automation_id}/test", response_model=AutomationTestResponse)

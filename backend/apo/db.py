@@ -1312,6 +1312,19 @@ def _migrate_to_v3() -> None:
         _enforce_single_task_trace(conn)
 
 
+
+def _migrate_to_v45() -> None:
+    """Version 45: encrypted Slack webhook URL column on ``automations``.
+
+    The incoming-webhook URL embeds its secret token in the path, so it is
+    stored encrypted like the GitHub PAT. New DBs get the column from
+    ``create_all``; existing DBs add it here, idempotently.
+    """
+    with engine.begin() as conn:
+        _add_column_if_missing(
+            conn, "automations", "slack_webhook_url_encrypted", "VARCHAR"
+        )
+
 def _migrate_to_v4() -> None:
     """Version 4: check-level rollup columns on agent_task_batch_runs.
 
@@ -2631,7 +2644,7 @@ def _migrate_to_v25() -> None:
         )
 
 
-LATEST_SCHEMA_VERSION = 44
+LATEST_SCHEMA_VERSION = 45
 
 _SCHEMA_MIGRATIONS: dict[int, Callable[[], None]] = {
     1: _migrate_to_baseline,
@@ -2678,6 +2691,7 @@ _SCHEMA_MIGRATIONS: dict[int, Callable[[], None]] = {
     42: _migrate_to_v42,
     43: _migrate_to_v43,
     44: _migrate_to_v44,
+    45: _migrate_to_v45,
 }
 
 

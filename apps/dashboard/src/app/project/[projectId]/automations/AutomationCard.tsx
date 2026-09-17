@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { ChevronDown, ChevronRight, FlaskConical, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, FlaskConical, Pencil, Trash2 } from "lucide-react";
 import {
   type AutomationExecution,
   type AutomationSummary,
@@ -19,10 +19,14 @@ interface AutomationCardProps {
   onToggle: (automation: AutomationSummary) => void;
   onRotate: (automation: AutomationSummary) => void;
   onDelete: (id: string) => void;
+  onEdit: (automation: AutomationSummary) => void;
   onError: (message: string | null) => void;
 }
 
 function describeAction(automation: AutomationSummary): string {
+  if (automation.action_type === "slack") {
+    return `Slack → ${String(automation.action_config.url_display ?? "channel")}`;
+  }
   if (automation.action_type === "webhook") {
     return `Webhook → ${String(automation.action_config.url ?? "")}`;
   }
@@ -47,6 +51,7 @@ export default function AutomationCard({
   onToggle,
   onRotate,
   onDelete,
+  onEdit,
   onError,
 }: AutomationCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -176,6 +181,16 @@ export default function AutomationCard({
                 Rotate Secret
               </Button>
             ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => onEdit(automation)}
+            >
+              <Pencil className="size-4" aria-hidden />
+              Edit
+            </Button>
             <Button
               type="button"
               variant="outline"

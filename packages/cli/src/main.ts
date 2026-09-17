@@ -449,13 +449,14 @@ const commands: Record<string, CommandEntry> = {
   },
   "automations create": {
     handler: loadCommand("automations-create"),
-    help: "Create an automation (event trigger → webhook or GitHub issue)",
+    help: "Create an automation (event trigger → webhook, GitHub issue, or Slack)",
     options: [
       ["--name <n>", "Automation name (required)"],
       ["--event <type>", "Event type: batch_run.failed, batch_run.completed, task_run.completed, task_run.error, task_run.started, task_run.trace_claimed (required)"],
-      ["--action <type>", "webhook | github_issue (default: webhook)"],
+      ["--action <type>", "webhook | github_issue | slack (default: webhook)"],
       ["--condition <json>", '{"field","operator","value"} — repeatable, AND-combined'],
       ["--url <url>", "Webhook action: destination URL (required for webhook)"],
+      ["--slack-url <url>", "Slack action: incoming-webhook URL (required for slack)"],
       ["--owner <o>", "GitHub action: repository owner (required for github_issue)"],
       ["--repo <r>", "GitHub action: repository name (required for github_issue)"],
       ["--github-token <tok>", "GitHub action: PAT with issues:write (required for github_issue)"],

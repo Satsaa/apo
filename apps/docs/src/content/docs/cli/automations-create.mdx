@@ -35,9 +35,10 @@ apo automations create --name <n> --event <type> [--action webhook|github_issue]
 |---|---|---|
 | `--name <n>` | — | Automation name. **Required.** |
 | `--event <type>` | — | One of `batch_run.failed`, `batch_run.completed`, `task_run.completed`, `task_run.error`, `task_run.started`, `task_run.trace_claimed`. **Required.** |
-| `--action <type>` | `webhook` | `webhook` or `github_issue`. Immutable after creation. |
+| `--action <type>` | `webhook` | `webhook`, `github_issue`, or `slack`. Immutable after creation. |
 | `--condition <json>` | none | `{"field","operator","value"}` — repeatable, AND-combined. |
 | `--url <url>` | — | Webhook action: destination URL. Required for `webhook`. |
+| `--slack-url <url>` | — | Slack action: incoming-webhook URL (`https://hooks.slack.com/services/…`). Required for `slack`. Stored encrypted. |
 | `--owner <o>` / `--repo <r>` | — | GitHub action: target repository. Required for `github_issue`. |
 | `--github-token <tok>` | — | GitHub action: PAT with `issues:write`. Encrypted at rest; never printed. |
 | `--labels <a,b>` | none | GitHub action: comma-separated issue labels. |

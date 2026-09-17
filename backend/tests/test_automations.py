@@ -355,6 +355,411 @@ class TestPruning:
         assert len([e for e in remaining if e.created_at == now]) == 3
 
 
+class TestPatchMerge:
+    def test_partial_patch_preserves_labels_and_templates(
+        self, make_authed_client, session: Session
+    ):
+        _seed(session)
+        automation = _make_automation(
+            session,
+            action_type="github_issue",
+            action_config={
+                "owner": "acme",
+                "repo": "old-repo",
+                "labels": ["apo"],
+                "title": "custom {{task_id}}",
+                "body": "custom body",
+            },
+        )
+        client = make_authed_client(OWNER_USER, session)
+        resp = client.patch(
+            f"/v1/automations/{automation.id}",
+            json={"action_config": {"owner": "acme", "repo": "new-repo"}},
+        )
+        assert resp.status_code == 200, resp.text
+        config = resp.json()["action_config"]
+        assert config["repo"] == "new-repo"
+        assert config["labels"] == ["apo"]
+        assert config["title"] == "custom {{task_id}}"
+        assert config["body"] == "custom body"
+
+
+class TestSlackAction:
+    SLACK_URL: str = "https://hooks.slack.com/services/T000/B000/abc123secret"
+
+    def _create(self, make_authed_client, session: Session):
+        _seed(session)
+        client = make_authed_client(OWNER_USER, session)
+        resp = client.post(
+            "/v1/automations",
+            json={
+                "project_id": PROJECT,
+                "name": "failures → slack",
+                "event_type": "batch_run.failed",
+                "conditions": [],
+                "action_type": "slack",
+                "action_config": {"url": self.SLACK_URL},
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        return client, resp.json()
+
+    def test_create_stores_encrypted_and_masks(self, make_authed_client, session: Session):
+        client, body = self._create(make_authed_client, session)
+        # responses never carry the URL — only a masked tail
+        assert "abc123secret" not in __import__("json").dumps(body)
+        listing = client.get(f"/v1/automations?project_id={PROJECT}").json()
+        assert "abc123secret" not in __import__("json").dumps(listing)
+        assert listing[0]["action_config"]["url_display"].startswith(
+            "hooks.slack.com/services/"
+        )
+        row = session.get(AutomationDB, body["id"])
+        assert row is not None
+        stored_url = row.slack_webhook_url_encrypted
+        assert stored_url
+        assert "abc123secret" not in stored_url
+
+    def test_patch_without_url_keeps_stored_slack_url(
+        self, make_authed_client, session: Session
+    ):
+        client, body = self._create(make_authed_client, session)
+        automation_id = body["id"]
+        before_row = session.get(AutomationDB, automation_id)
+        assert before_row is not None
+        stored_before = before_row.slack_webhook_url_encrypted
+        assert stored_before is not None
+        resp = client.patch(
+            f"/v1/automations/{automation_id}",
+            json={"name": "renamed", "action_config": {}},
+        )
+        assert resp.status_code == 200, resp.text
+        after_row = session.get(AutomationDB, automation_id)
+        assert after_row is not None
+        assert after_row.slack_webhook_url_encrypted == stored_before
+        assert str(after_row.action_config["url_display"]).startswith(
+            "hooks.slack.com/"
+        )
+
+    def test_create_rejects_non_slack_url(self, make_authed_client, session: Session):
+        _seed(session)
+        client = make_authed_client(OWNER_USER, session)
+        resp = client.post(
+            "/v1/automations",
+            json={
+                "project_id": PROJECT,
+                "name": "bad slack",
+                "event_type": "batch_run.failed",
+                "conditions": [],
+                "action_type": "slack",
+                "action_config": {"url": "https://example.com/hook"},
+            },
+        )
+        assert resp.status_code == 422
+        assert "Slack incoming-webhook" in resp.json()["detail"]
+
+    def test_patch_replaces_slack_url_and_display(
+        self, make_authed_client, session: Session
+    ):
+        client, body = self._create(make_authed_client, session)
+        automation_id = body["id"]
+        new_url = "https://hooks.slack.com/services/T111/B111/newsecret999"
+        resp = client.patch(
+            f"/v1/automations/{automation_id}",
+            json={"action_config": {"url": new_url}},
+        )
+        assert resp.status_code == 200, resp.text
+        assert "newsecret999" not in __import__("json").dumps(resp.json())
+        row = session.get(AutomationDB, automation_id)
+        assert row is not None
+        decrypted = am.decrypt_webhook_secret(row.slack_webhook_url_encrypted or "")
+        assert decrypted == new_url
+
+    def test_rotate_rejected_for_slack(self, make_authed_client, session: Session):
+        client, body = self._create(make_authed_client, session)
+        resp = client.post(f"/v1/automations/{body['id']}/rotate-secret")
+        assert resp.status_code == 400
+
+    async def test_execution_log_never_leaks_slack_url(
+        self, session: Session, monkeypatch: MonkeyPatch
+    ):
+        _make_automation(
+            session,
+            event_type="batch_run.failed",
+            action_type="slack",
+            action_config={"url_display": "hooks.slack.com/services/…/ret"},
+            slack_webhook_url_encrypted=am.encrypt_webhook_secret(self.SLACK_URL),
+        )
+        import json as _json
+
+        async def failing_post(self_client: httpx.AsyncClient, url: str, **kwargs: object):
+            return httpx.Response(
+                403, request=httpx.Request("POST", url), text="forbidden"
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", failing_post)
+        await fire_automations_for_event(
+            PROJECT,
+            RunEvent(
+                event_type="batch_run.failed",
+                project=PROJECT,
+                data={"status": "failed", "total_tasks": 1, "failed_tasks": 1, "passed_tasks": 0},
+            ),
+        )
+        await await_pending_deliveries()
+        session.expire_all()
+        execution = session.exec(select(AutomationExecutionDB)).one()
+        blob = _json.dumps(
+            {"input": execution.input, "output": execution.output, "error": execution.error}
+        )
+        assert "abc123secret" not in blob
+
+    def test_long_task_id_header_is_truncated(self):
+        payload = am.render_slack_payload(
+            {
+                "status": "failed",
+                "task_id": "x" * 300,
+                "passed_checks": 1,
+                "total_checks": 2,
+            },
+            project_id="p",
+            event_type="task_run.completed",
+        )
+        from typing import Any, cast
+
+        header = cast("dict[str, Any]", cast("list[object]", payload["blocks"])[0])
+        header_text = str(cast("dict[str, Any]", header["text"])["text"])
+        assert len(header_text) <= 150
+
+    def test_rejects_bare_prefix_and_trailing_slash(self, make_authed_client, session: Session):
+        _seed(session)
+        client = make_authed_client(OWNER_USER, session)
+        for bad in [
+            "https://hooks.slack.com/services/",
+            "https://hooks.slack.com/services/T/B/X/",
+            "https://hooks.slack.com/services/T B/X",
+        ]:
+            resp = client.post(
+                "/v1/automations",
+                json={
+                    "project_id": PROJECT,
+                    "name": "bad",
+                    "event_type": "batch_run.failed",
+                    "conditions": [],
+                    "action_type": "slack",
+                    "action_config": {"url": bad},
+                },
+            )
+            assert resp.status_code == 422, bad
+
+    async def test_delivery_posts_block_kit(self, session: Session, monkeypatch: MonkeyPatch):
+        _make_automation(
+            session,
+            event_type="batch_run.failed",
+            action_type="slack",
+            action_config={"url_display": "hooks.slack.com/services/…/ret"},
+            slack_webhook_url_encrypted=am.encrypt_webhook_secret(self.SLACK_URL),
+        )
+        recorder = _PostRecorder(status=200)
+        _patch_post(monkeypatch, recorder)
+        await fire_automations_for_event(
+            PROJECT,
+            RunEvent(
+                event_type="batch_run.failed",
+                project=PROJECT,
+                data={
+                    "status": "failed",
+                    "total_tasks": 3,
+                    "failed_tasks": 2,
+                    "passed_tasks": 1,
+                    "batch_run_id": "b-1",
+                    "duration_ms": 1000.0,
+                },
+            ),
+        )
+        await await_pending_deliveries()
+        assert len(recorder.calls) == 1
+        call = recorder.calls[0]
+        assert call["url"] == self.SLACK_URL
+        payload = call["json"]
+        assert payload["blocks"][0]["type"] == "header"
+        assert payload["text"] == "Batch failed — 2 of 3 tasks failed"
+        execution = session.exec(select(AutomationExecutionDB)).one()
+        session.expire_all()
+        execution = session.exec(select(AutomationExecutionDB)).one()
+        assert execution.status == "completed"
+
+    async def test_slack_error_counts_failure(self, session: Session, monkeypatch: MonkeyPatch):
+        _make_automation(
+            session,
+            event_type="batch_run.failed",
+            action_type="slack",
+            action_config={"url_display": "hooks.slack.com/services/…/ret"},
+            slack_webhook_url_encrypted=am.encrypt_webhook_secret(self.SLACK_URL),
+        )
+        recorder = _PostRecorder(status=403)
+        _patch_post(monkeypatch, recorder)
+        async def no_delay() -> None:
+            return None
+        monkeypatch.setattr(am, "_retry_delay", no_delay)
+        await fire_automations_for_event(
+            PROJECT,
+            RunEvent(
+                event_type="batch_run.failed",
+                project=PROJECT,
+                data={"status": "failed", "total_tasks": 1, "failed_tasks": 1, "passed_tasks": 0},
+            ),
+        )
+        await await_pending_deliveries()
+        session.expire_all()
+        execution = session.exec(select(AutomationExecutionDB)).one()
+        assert execution.status == "error"
+        assert "Slack returned 403" in (execution.error or "")
+
+
+class TestV45Migration:
+    def test_existing_v44_db_gains_slack_column(self, tmp_path, monkeypatch: MonkeyPatch):
+        """The slack column must reach databases stamped before it existed.
+
+        Guards the LATEST_SCHEMA_VERSION bump: a registered-but-never-applied
+        migration 500s every automations read on upgraded installs.
+        """
+        import sqlalchemy as sa
+        from sqlmodel import SQLModel
+        from apo import db as apo_db
+
+        db_file = tmp_path / "v44.db"
+        url = f"sqlite:///{db_file}"
+        engine44 = sa.create_engine(url)
+        # create automations without the v45 column by hand, stamped at v44
+        with engine44.begin() as conn:
+            conn.exec_driver_sql(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"
+            )
+            conn.exec_driver_sql(
+                "CREATE TABLE automations ("
+                + " id VARCHAR PRIMARY KEY,"
+                + " project_id VARCHAR NOT NULL,"
+                + " name VARCHAR NOT NULL,"
+                + " description VARCHAR,"
+                + " event_type VARCHAR NOT NULL,"
+                + " conditions JSON,"
+                + " action_type VARCHAR NOT NULL,"
+                + " action_config JSON,"
+                + " secret VARCHAR,"
+                + " github_token_encrypted VARCHAR,"
+                + " enabled BOOLEAN,"
+                + " last_delivery_at DATETIME,"
+                + " last_delivery_status VARCHAR,"
+                + " consecutive_failures INTEGER,"
+                + " created_at DATETIME,"
+                + " updated_at DATETIME)"
+            )
+            conn.exec_driver_sql("INSERT INTO schema_migrations (version) VALUES (44)")
+        engine44.dispose()
+
+        old_engine = apo_db.engine
+        apo_db.engine = sa.create_engine(url)
+        try:
+            apo_db.init_db()
+            with apo_db.engine.begin() as conn:
+                cols = [c["name"] for c in sa.inspect(conn).get_columns("automations")]
+            assert "slack_webhook_url_encrypted" in cols
+        finally:
+            apo_db.engine.dispose()
+            apo_db.engine = old_engine
+
+
+class TestWebhookSecretEncryption:
+    def test_create_stores_encrypted_echoes_plaintext_once(
+        self, make_authed_client, session: Session
+    ):
+        _seed(session)
+        client = make_authed_client(OWNER_USER, session)
+        resp = client.post("/v1/automations", json=WEBHOOK_BODY)
+        assert resp.status_code == 201, resp.text
+        echoed = resp.json()["secret"]
+        assert echoed.startswith("whsec_")
+        automation_id = resp.json()["id"]
+        row = session.get(AutomationDB, automation_id)
+        assert row is not None
+        stored = row.secret
+        assert stored is not None
+        # encrypted at rest — not the echoed plaintext, not a whsec_ prefix
+        assert stored != echoed
+        assert not stored.startswith("whsec_")
+        # and the stored form still signs deliveries with the echoed secret
+        assert am.decrypt_webhook_secret(stored) == echoed
+
+    def test_round_trip_and_legacy_plaintext(self, monkeypatch: MonkeyPatch):
+        stored = am.encrypt_webhook_secret("whsec_abc")
+        assert not stored.startswith("whsec_")
+        assert am.decrypt_webhook_secret(stored) == "whsec_abc"
+        # rows from before encryption still carry the raw secret
+        assert am.decrypt_webhook_secret("whsec_legacy") == "whsec_legacy"
+
+    def test_undecryptable_secret_raises_actionable_error(self, monkeypatch: MonkeyPatch):
+        from cryptography.fernet import Fernet
+
+        stored = am.encrypt_webhook_secret("whsec_abc")
+        monkeypatch.setenv(
+            "AUTOMATION_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode()
+        )
+        with pytest.raises(am.AutomationTokenError, match="rotate"):
+            am.decrypt_webhook_secret(stored)
+
+    def test_key_switch_env_to_generated_and_back(
+        self, monkeypatch: MonkeyPatch, tmp_path
+    ):
+        # generated-key era → operator sets env → secrets must still decrypt
+        key_file = tmp_path / "automation-secrets.key"
+        monkeypatch.delenv("AUTOMATION_TOKEN_ENCRYPTION_KEY", raising=False)
+        monkeypatch.setattr(am, "_generated_key_path", lambda: str(key_file))
+        stored = am.encrypt_webhook_secret("whsec_switch")
+        from cryptography.fernet import Fernet
+
+        monkeypatch.setenv(
+            "AUTOMATION_TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode()
+        )
+        assert am.decrypt_webhook_secret(stored) == "whsec_switch"
+        # The reverse transition is unrecoverable by design — an unset env
+        # key cannot be tried — so it must fail with actionable guidance.
+        env_stored = am.encrypt_webhook_secret("whsec_env")
+        monkeypatch.delenv("AUTOMATION_TOKEN_ENCRYPTION_KEY", raising=False)
+        with pytest.raises(am.AutomationTokenError, match="restore"):
+            am.decrypt_webhook_secret(env_stored)
+
+    def test_corrupt_key_file_is_actionable_503(
+        self, monkeypatch: MonkeyPatch, tmp_path, make_authed_client, session: Session
+    ):
+        _seed(session)
+        bad = tmp_path / "bad.key"
+        bad.write_text("")
+        monkeypatch.delenv("AUTOMATION_TOKEN_ENCRYPTION_KEY", raising=False)
+        monkeypatch.setattr(am, "_generated_key_path", lambda: str(bad))
+        client = make_authed_client(OWNER_USER, session)
+        resp = client.post("/v1/automations", json=WEBHOOK_BODY)
+        assert resp.status_code == 503
+        assert "empty or corrupt" in resp.json()["detail"]
+
+    def test_decrypt_never_mints_a_key_file(self, monkeypatch: MonkeyPatch, tmp_path):
+        monkeypatch.delenv("AUTOMATION_TOKEN_ENCRYPTION_KEY", raising=False)
+        key_file = tmp_path / "automation-secrets.key"
+        monkeypatch.setattr(am, "_generated_key_path", lambda: str(key_file))
+        with pytest.raises(am.AutomationTokenError):
+            am.decrypt_webhook_secret("gAAAAAnotarealtoken")
+        assert not key_file.exists()
+
+    def test_generated_key_zero_config(self, monkeypatch: MonkeyPatch, tmp_path):
+        # no env key → a key file is generated once and reused afterwards
+        monkeypatch.delenv("AUTOMATION_TOKEN_ENCRYPTION_KEY", raising=False)
+        key_file = tmp_path / "automation-secrets.key"
+        monkeypatch.setattr(am, "_generated_key_path", lambda: str(key_file))
+        stored = am.encrypt_webhook_secret("whsec_zero")
+        assert key_file.exists()
+        assert am.decrypt_webhook_secret(stored) == "whsec_zero"
+        assert oct(key_file.stat().st_mode & 0o777) == "0o600"
+
+
 class TestStartupRecovery:
     def test_pending_marked_error_never_delivered(self, session: Session):
         automation = _make_automation(session)

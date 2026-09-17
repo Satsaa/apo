@@ -52,8 +52,8 @@ export async function run(argv: string[]): Promise<number> {
     console.error("--event is required");
     return 1;
   }
-  if (action !== "webhook" && action !== "github_issue") {
-    console.error("--action must be webhook or github_issue");
+  if (action !== "webhook" && action !== "github_issue" && action !== "slack") {
+    console.error("--action must be webhook, github_issue, or slack");
     return 1;
   }
 
@@ -71,7 +71,16 @@ export async function run(argv: string[]): Promise<number> {
 
   let actionConfig: Record<string, unknown>;
   let githubToken: string | undefined;
-  if (action === "webhook") {
+  if (action === "slack") {
+    const slackUrl = getFlagValue(flags, "slack-url");
+    if (!slackUrl || !slackUrl.startsWith("https://hooks.slack.com/services/")) {
+      console.error(
+        "--slack-url must be a Slack incoming-webhook URL (https://hooks.slack.com/services/…)",
+      );
+      return 1;
+    }
+    actionConfig = { url: slackUrl };
+  } else if (action === "webhook") {
     const url = getFlagValue(flags, "url");
     if (!url) {
       console.error("--url is required for webhook actions");

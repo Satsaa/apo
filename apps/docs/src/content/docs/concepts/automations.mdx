@@ -37,11 +37,12 @@ Anything a condition doesn't recognize never matches — an automation with a st
 | Action | What it does | Where it lands |
 |---|---|---|
 | **GitHub issue** | Opens an issue in a repo you pick, with counts, failing task-run ids, and deep links to the run and trace | Next to the harness code — where the fix happens |
+| **Slack message** | Posts a formatted message (verdict header, counts, failing tasks, trace links) via an incoming-webhook URL you create per channel | The channel your team watches |
 | **Signed webhook** | POSTs the full event payload, HMAC-SHA256-signed with a per-automation secret | Any system that can verify a signature |
 
 The GitHub issue is the flagship: a failing nightly schedule produces an issue titled `apo: <task or batch> — failed` whose body carries the pass/fail counts and, when the server's public URL is configured, one-click links into the [trace](/concepts/traces/) that explains the failure. Webhook receivers verify `X-Automation-Signature` (`sha256=HMAC(secret, body)`) over the exact bytes received — the secret is shown once when the automation is created or rotated.
 
-GitHub tokens are Fernet-encrypted at rest; the server refuses to store one until `AUTOMATION_TOKEN_ENCRYPTION_KEY` is configured (see [self-hosting configuration](/self-hosting/configuration/)).
+Secrets are Fernet-encrypted at rest: GitHub tokens (the server refuses to store one until `AUTOMATION_TOKEN_ENCRYPTION_KEY` is configured — see [self-hosting configuration](/self-hosting/configuration/)), signing secrets, and Slack webhook URLs, whose masked tail is the only thing any API response ever shows.
 
 ## Reliability contract
 
