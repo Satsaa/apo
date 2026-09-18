@@ -1349,6 +1349,29 @@
       ]
     },
     {
+      "_doc": "The same DeepSeek build as the row above, reached DIRECTLY at Fireworks (fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash) instead of through OpenRouter's pool; the -fw suffix is how a caller distinguishes the two routes. Fireworks publishes flat serverless rates, $0.22/$0.66 per MTok with a $0.007 cache read (fireworks.ai/models/deepseek-ai/deepseek-v4p1-flash, 2026-09-18), so this entry carries none of the peak/off-peak caveat above. A SEPARATE entry rather than widening the anchor above: the two hosts price the same weights differently, and one shared pattern would meter Fireworks traffic at OpenRouter's rates — hiding the very difference a host comparison is run to measure. Without a matching entry the calls arrive unpriced and the run reports $0.00, which reads as free rather than as unknown. DeepSeek charges no cache-write premium — writes bill as ordinary input, so cache_write_5m equals the input rate.",
+      "match_pattern": "(?i)^deepseek-v4[.-]1-flash-fw$",
+      "provider": "generic",
+      "display_name": "DeepSeek V4.1 Flash (Fireworks)",
+      "start_date": null,
+      "updated_at": "2026-09-18T00:00:00Z",
+      "last_reviewed": "2026-09",
+      "pricing_tiers": [
+        {
+          "name": "default",
+          "is_default": true,
+          "priority": 0,
+          "conditions": [],
+          "prices": {
+            "input": 0.22,
+            "cache_read": 0.007,
+            "cache_write_5m": 0.22,
+            "output": 0.66
+          }
+        }
+      ]
+    },
+    {
       "_doc": "OpenRouter marks this rotating alias with floor pricing (~ prefix), so a provider may charge up to these rates: $0.96/$2.88 per MTok, $0.088 cache read. Pinning the floor under-charges worst-case, which beats arriving unpriced; the dated deepseek-v4-pro-0813 build carries its own entry. DeepSeek charges no cache-write premium \u2014 writes bill as ordinary input, so cache_write_5m equals the input rate. OpenRouter rates read from https://openrouter.ai/api/v1/models on 2026-09-16.",
       "match_pattern": "(?i)^deepseek-pro-latest$",
       "provider": "generic",
