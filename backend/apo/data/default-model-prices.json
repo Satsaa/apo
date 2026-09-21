@@ -1326,12 +1326,13 @@
       ]
     },
     {
-      "_doc": "DeepSeek V4.1 Flash as served DIRECTLY by Fireworks (fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash), which is what the bare id means to its callers since 2026-09-18 \u2014 it changed host without changing name, so this entry changed rates rather than the pattern moving. Flat serverless rates, $0.22/$0.66 per MTok with a $0.007 cache read (fireworks.ai/models/deepseek-ai/deepseek-v4p1-flash, 2026-09-18), and therefore none of the peak/off-peak caveat the -or row carries. Anchored to the 4.1 slug so a later 4.2 build does not inherit these rates, and NOT widened to cover the -or suffix: the two hosts price the same weights differently, and one shared pattern would meter Fireworks traffic at OpenRouter's rates, hiding the very difference a host comparison is run to measure. DeepSeek charges no cache-write premium \u2014 writes bill as ordinary input, so cache_write_5m equals the input rate.",
+      "_doc": "DeepSeek V4.1 Flash served DIRECTLY by Fireworks on its Standard serverless tier (fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash): from 2026-09-18, when the bare id moved there from OpenRouter's pool keeping its name, until the proxy moved the route to the Priority tier (bindlegal/litellm#222, deployed 2026-09-21T10:47:14Z). $0.22/$0.66 per MTok with a $0.007 cache read are the model page's rates (fireworks.ai/models/deepseek-ai/deepseek-v4p1-flash, 2026-09-18). Fireworks' pricing table (docs.fireworks.ai/serverless/pricing), which it names the source of truth, lists Standard at $0.30/$0.006/$1.20, so this era may under-meter; left as-is until the account's rated-cost export settles which billed. DeepSeek charges no cache-write premium, so cache_write_5m equals the input rate.",
       "match_pattern": "(?i)^deepseek-v4[.-]1-flash$",
       "provider": "generic",
-      "display_name": "DeepSeek V4.1 Flash (Fireworks)",
+      "display_name": "DeepSeek V4.1 Flash (Fireworks, Standard)",
       "start_date": null,
-      "updated_at": "2026-09-18T12:00:00Z",
+      "end_date": "2026-09-21T10:47:14Z",
+      "updated_at": "2026-09-21T10:47:14Z",
       "last_reviewed": "2026-09",
       "pricing_tiers": [
         {
@@ -1344,6 +1345,29 @@
             "cache_read": 0.007,
             "cache_write_5m": 0.22,
             "output": 0.66
+          }
+        }
+      ]
+    },
+    {
+      "_doc": "DeepSeek V4.1 Flash served DIRECTLY by Fireworks on its Priority serverless tier: since 2026-09-21T10:47:14Z the proxy sends service_tier \"priority\" on every request to this id (bindlegal/litellm#222). Priority is served ahead of Standard and less likely to be load-shed, at 1.25x. Rates are the Priority column of docs.fireworks.ai/serverless/pricing (2026-09-21): $0.375/$1.50 per MTok with a $0.0075 cache read. The response carries no tier marker, so a call is priced as Priority by date alone; the account's usage-cost export grouped by model_tier is where that is confirmed. Anchored to the 4.1 slug and NOT widened to the -or suffix, for the same reason as the Standard era. DeepSeek charges no cache-write premium, so cache_write_5m equals the input rate.",
+      "match_pattern": "(?i)^deepseek-v4[.-]1-flash$",
+      "provider": "generic",
+      "display_name": "DeepSeek V4.1 Flash (Fireworks, Priority)",
+      "start_date": "2026-09-21T10:47:14Z",
+      "updated_at": "2026-09-21T10:47:14Z",
+      "last_reviewed": "2026-09",
+      "pricing_tiers": [
+        {
+          "name": "default",
+          "is_default": true,
+          "priority": 0,
+          "conditions": [],
+          "prices": {
+            "input": 0.375,
+            "cache_read": 0.0075,
+            "cache_write_5m": 0.375,
+            "output": 1.5
           }
         }
       ]
