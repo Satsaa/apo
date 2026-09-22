@@ -344,6 +344,81 @@ describe("runs show command", () => {
     expect(out).toMatch(/Tokens:.*partial/);
   });
 
+  it("prints model time and reasoning with the call that dominates each", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        generation_usage: {
+          generations: 21,
+          model_time_ms: 58_538,
+          slowest_call_ms: 7_419,
+          slowest_call_id: "8c68d098872c5aab",
+          reasoning_tokens: 5_492,
+          reasoning_calls: 21,
+          max_call_reasoning_tokens: 1_054,
+          max_reasoning_call_id: "2e1e24fa23cfff6c",
+        },
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Model time: 58.5s over 21 generations · slowest 7.4s (8c68d098872c5aab)");
+    expect(out).toContain("Reasoning: 5,492 tokens · largest call 1,054 (2e1e24fa23cfff6c)");
+    expect(out).not.toContain("reported reasoning");
+  });
+
+  it("marks reasoning partial when some generations did not report it", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        generation_usage: {
+          generations: 4,
+          model_time_ms: 900,
+          slowest_call_ms: 400,
+          slowest_call_id: "a",
+          reasoning_tokens: 120,
+          reasoning_calls: 3,
+          max_call_reasoning_tokens: 80,
+          max_reasoning_call_id: "b",
+        },
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toMatch(/Reasoning: 120 tokens.*partial — 3 of 4 generations reported reasoning/);
+  });
+
+  it("omits the reasoning line when no generation reported reasoning", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        generation_usage: {
+          generations: 2,
+          model_time_ms: 3_000,
+          slowest_call_ms: 2_000,
+          slowest_call_id: "a",
+          reasoning_tokens: null,
+          reasoning_calls: 0,
+          max_call_reasoning_tokens: null,
+          max_reasoning_call_id: null,
+        },
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Model time: 3.0s over 2 generations");
+    expect(out).not.toContain("Reasoning:");
+  });
+
   it("returns exit code 1 with --exit-status on failed run", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       mockResponse(makeRun({ pass_result: false })),

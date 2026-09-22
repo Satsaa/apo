@@ -17,7 +17,7 @@ import {
 import { loadCheckSource, type DefinitionRef } from "@/lib/load-check-source";
 import type { TaskComparisonEvidenceLoader } from "@/lib/agent-task-view-api";
 import { cn } from "@/lib/utils";
-import { formatDuration, runDurationMs, formatCostMicro, formatTokenTotal } from "@/lib/format";
+import { formatDuration, formatInterval, runDurationMs, formatCostMicro, formatTokenTotal } from "@/lib/format";
 import { extractJudgeReasoning } from "@/lib/judge-reasoning";
 import { resolveCheckBlock } from "@/lib/extract-check-block";
 import { locateAssertionsInBlock } from "@/lib/locate-assertion";
@@ -790,7 +790,21 @@ function CheckDiff({
   const rightTime = runDurationMs(right?.started_at ?? null, right?.completed_at ?? null);
   const leftTokens = left?.total_tokens != null && left.total_tokens > 0 ? left.total_tokens : null;
   const rightTokens = right?.total_tokens != null && right.total_tokens > 0 ? right.total_tokens : null;
-  const hasMetrics = (leftCost ?? rightCost) != null || (leftTime ?? rightTime) != null || (leftTokens ?? rightTokens) != null;
+  // Model time and reasoning (issue #309): the totals plus the single largest
+  // call, so a change that makes one call slow or verbose shows as a number.
+  const leftUsage = left?.generation_usage ?? null;
+  const rightUsage = right?.generation_usage ?? null;
+  const usageRows: { label: string; left: number | null; right: number | null; format: (v: number) => string }[] = [
+    { label: "model time", left: leftUsage?.model_time_ms ?? null, right: rightUsage?.model_time_ms ?? null, format: formatInterval },
+    { label: "slowest call", left: leftUsage?.slowest_call_ms ?? null, right: rightUsage?.slowest_call_ms ?? null, format: formatInterval },
+    { label: "reasoning", left: leftUsage?.reasoning_tokens ?? null, right: rightUsage?.reasoning_tokens ?? null, format: formatTokenTotal },
+    { label: "max reasoning/call", left: leftUsage?.max_call_reasoning_tokens ?? null, right: rightUsage?.max_call_reasoning_tokens ?? null, format: formatTokenTotal },
+  ].filter((row) => row.left != null || row.right != null);
+  const hasMetrics =
+    (leftCost ?? rightCost) != null ||
+    (leftTime ?? rightTime) != null ||
+    (leftTokens ?? rightTokens) != null ||
+    usageRows.length > 0;
 
   // The grid is the single container for header + metrics + checks. Columns
   // are wide enough that cost/time values (e.g. "$0.0122") don't ellipsize —
@@ -867,6 +881,16 @@ function CheckDiff({
                   formatRight={rightTokens != null ? formatTokenTotal(rightTokens) : "—"}
                 />
               )}
+              {usageRows.map((row) => (
+                <MetricRow
+                  key={row.label}
+                  label={row.label}
+                  leftValue={row.left}
+                  rightValue={row.right}
+                  formatLeft={row.left != null ? row.format(row.left) : "—"}
+                  formatRight={row.right != null ? row.format(row.right) : "—"}
+                />
+              ))}
             </div>
           )}
 

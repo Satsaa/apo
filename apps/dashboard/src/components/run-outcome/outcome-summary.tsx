@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 export interface OutcomeCounts {
@@ -12,6 +13,8 @@ export interface OutcomeMetadataItem {
   icon?: LucideIcon;
   value: string;
   label?: string;
+  /** Makes the value a link, e.g. to the call it summarizes. */
+  href?: string;
 }
 
 interface OutcomeSummaryProps {
@@ -122,9 +125,18 @@ export function OutcomeSummary({
             {metadata.map((item) => (
               <span key={`${item.label ?? ""}-${item.value}`} className="inline-flex items-center gap-1">
                 {item.icon && <item.icon className="h-3 w-3 text-muted-foreground/50" />}
-                <span className="font-mono tabular-nums text-foreground/80">
-                  {item.value}
-                </span>
+                {item.href ? (
+                  <Link
+                    href={item.href}
+                    className="font-mono tabular-nums text-foreground/80 underline decoration-muted-foreground/40 underline-offset-2 hover:text-foreground"
+                  >
+                    {item.value}
+                  </Link>
+                ) : (
+                  <span className="font-mono tabular-nums text-foreground/80">
+                    {item.value}
+                  </span>
+                )}
                 {item.label && (
                   <span className="text-muted-foreground">{item.label}</span>
                 )}

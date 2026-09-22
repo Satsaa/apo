@@ -20,7 +20,7 @@ import { TriggerInline } from "@/components/trigger-badge";
 import { DeleteRunButton } from "@/components/runs/DeleteRunButton";
 import { TaskRunDetailBody } from "./task-run-detail-body";
 import { TaskRunAutoRefresh } from "@/components/agent-task-execution/task-run-auto-refresh";
-import { OutcomeSummary } from "@/components/run-outcome";
+import { OutcomeSummary, generationUsageMetadata } from "@/components/run-outcome";
 import { formatTokenTotal, formatCostMicro } from "@/lib/format";
 import { getProject } from "@/lib/projects-api";
 import GenerationExecutionNotice from "@/components/generation-execution-notice";
@@ -307,6 +307,10 @@ export default async function TaskRunDetailPage({
                   ? `${formatTokenTotal(taskRun.total_tokens)}${generationErrors > 0 ? " partial" : ""}`
                   : "cost",
               },
+              ...generationUsageMetadata(
+                taskRun.generation_usage,
+                taskRun.trace_run_id ? `/project/${projectId}/traces/${taskRun.trace_run_id}` : null,
+              ),
               ...(taskRun.adapter_name
                 ? [{ value: taskRun.adapter_name, label: "adapter" }]
                 : []),

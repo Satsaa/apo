@@ -1,6 +1,6 @@
 import { parseArgs, getFlagValue } from "../lib/args.ts";
 import { resolveConfig } from "../lib/config.ts";
-import { bold, dim, formatCost, formatJson, formatTime, passFail, yellow } from "../lib/format.ts";
+import { bold, dim, formatCost, formatJson, formatMs, formatTime, passFail, yellow } from "../lib/format.ts";
 import { apiGet } from "../lib/api.ts";
 import type { CheckResult, DeliverableSummary } from "../lib/agent-task-types.ts";
 import { formatChecks, NO_CHECKS_REGISTERED_MESSAGE, secondJudgeSummary } from "../lib/checks-format.ts";
@@ -23,6 +23,7 @@ type RunDetail = {
   total_cost: number | null;
   unpriced_call_count?: number;
   generation_execution?: GenerationExecution | null;
+  generation_usage?: GenerationUsage | null;
   total_tokens: number | null;
   total_checks: number;
   passed_checks: number;
@@ -50,6 +51,17 @@ type GenerationExecution = {
   total: number;
   errored: number;
   error_finish_reasons: Record<string, number>;
+};
+
+type GenerationUsage = {
+  generations: number;
+  model_time_ms: number | null;
+  slowest_call_ms: number | null;
+  slowest_call_id: string | null;
+  reasoning_tokens: number | null;
+  reasoning_calls: number;
+  max_call_reasoning_tokens: number | null;
+  max_reasoning_call_id: string | null;
 };
 
 export async function run(argv: string[]): Promise<number> {
@@ -187,6 +199,7 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
       `  Tokens:   ${run.total_tokens.toLocaleString()}${formatErroredGenerationSuffix(run.generation_execution)}`,
     );
   }
+  for (const line of formatGenerationUsage(run.generation_usage)) console.log(line);
   if (run.trace_run_id) {
     console.log(`  Trace:    ${run.trace_run_id} ${dim("(apo traces show " + run.trace_run_id + ")")}`);
   }
@@ -328,6 +341,32 @@ function formatErroredGenerationSuffix(execution?: GenerationExecution | null): 
   return dim(
     ` (partial — ${execution.errored} errored generation${execution.errored === 1 ? "" : "s"})`,
   );
+}
+
+/** Model time and reasoning, with the one call that dominates each. */
+function formatGenerationUsage(usage?: GenerationUsage | null): string[] {
+  if (!usage) return [];
+  const lines: string[] = [];
+  const plural = (n: number, word: string): string => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
+  if (usage.model_time_ms != null) {
+    const slowest =
+      usage.slowest_call_ms != null
+        ? ` · slowest ${formatMs(usage.slowest_call_ms)}${usage.slowest_call_id ? dim(` (${usage.slowest_call_id})`) : ""}`
+        : "";
+    lines.push(`  Model time: ${formatMs(usage.model_time_ms)} over ${plural(usage.generations, "generation")}${slowest}`);
+  }
+  if (usage.reasoning_tokens != null) {
+    const largest =
+      usage.max_call_reasoning_tokens != null
+        ? ` · largest call ${usage.max_call_reasoning_tokens.toLocaleString()}${usage.max_reasoning_call_id ? dim(` (${usage.max_reasoning_call_id})`) : ""}`
+        : "";
+    const partial =
+      usage.reasoning_calls < usage.generations
+        ? dim(` (partial — ${usage.reasoning_calls} of ${plural(usage.generations, "generation")} reported reasoning)`)
+        : "";
+    lines.push(`  Reasoning: ${plural(usage.reasoning_tokens, "token")}${largest}${partial}`);
+  }
+  return lines;
 }
 
 function formatFinishReasons(execution: GenerationExecution): string {

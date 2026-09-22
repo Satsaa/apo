@@ -533,6 +533,12 @@ class AgentTaskRunDB(SQLModel, table=True):
     generation_execution_json: dict[str, object] | None = Field(
         default=None, sa_column=Column(JSON)
     )
+    # Model time and reasoning rolled up from the run's Generation
+    # Observations (issue #309). Null for runs aggregated before the column
+    # existed, or with no generations — unknown, not zero.
+    generation_usage_json: dict[str, object] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
     # adapter-reported Run Configuration. Typed, indexed product
     # dimensions — never backfilled from adapter name, env, or trace data.
     # Both columns nullable so legacy rows remain readable as "unknown".

@@ -621,6 +621,27 @@ class GenerationExecutionSummary(SQLModel):
     error_finish_reasons: dict[str, int] = Field(default_factory=dict)
 
 
+class GenerationUsageSummary(SQLModel):
+    """Model time and reasoning across a Task Run's model generations.
+
+    Latency counts every generation, errored ones included: a stalled call is
+    time the run spent. Reasoning skips errored generations, whose usage is
+    often a false zero, and is null when no generation reported the dimension
+    (the provider does not expose it) rather than zero.
+    """
+
+    generations: int
+    model_time_ms: float | None = None
+    slowest_call_ms: float | None = None
+    slowest_call_id: str | None = None
+    reasoning_tokens: int | None = None
+    # Generations that reported the reasoning dimension. Fewer than
+    # ``generations`` means ``reasoning_tokens`` is a partial sum.
+    reasoning_calls: int = 0
+    max_call_reasoning_tokens: int | None = None
+    max_reasoning_call_id: str | None = None
+
+
 # Canonical Task Run lifecycle: pending -> running -> passed/failed, or
 # error when execution itself failed. "completed" is a *batch* status and
 # must never appear on a run — the dashboard renders any status outside
@@ -683,6 +704,7 @@ class AgentTaskRunSummary(SQLModel):
     # ``total_cost`` is a partial sum, not a complete total.
     unpriced_call_count: int = 0
     generation_execution: GenerationExecutionSummary | None = None
+    generation_usage: GenerationUsageSummary | None = None
     # Total tokens (prompt + completion) across all calls in the run.
     total_tokens: int | None = None
     total_checks: int = 0
@@ -719,6 +741,7 @@ class AgentTaskRunDetail(SQLModel):
     # ``total_cost`` is a partial sum, not a complete total.
     unpriced_call_count: int = 0
     generation_execution: GenerationExecutionSummary | None = None
+    generation_usage: GenerationUsageSummary | None = None
     total_tokens: int | None = None
     total_checks: int = 0
     passed_checks: int = 0

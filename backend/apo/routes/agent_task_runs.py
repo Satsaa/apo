@@ -28,6 +28,7 @@ from ..models import (
     AgentTaskRunSummary,
     CreateAgentTaskBatchRunRequest,
     GenerationExecutionSummary,
+    GenerationUsageSummary,
     LoggedCallDB,
     ReportAgentTaskRunResultRequest,
     RunDB,
@@ -192,6 +193,11 @@ def _build_task_run_detail(
                 task_run.generation_execution_json
             )
             if task_run.generation_execution_json is not None
+            else None
+        ),
+        generation_usage=(
+            GenerationUsageSummary.model_validate(task_run.generation_usage_json)
+            if task_run.generation_usage_json is not None
             else None
         ),
         total_tokens=task_run.total_tokens,

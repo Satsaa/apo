@@ -131,6 +131,7 @@ export interface AgentTaskRunSummary {
   total_cost: number | null;
   unpriced_call_count?: number;
   generation_execution?: GenerationExecutionSummary | null;
+  generation_usage?: GenerationUsageSummary | null;
   total_tokens: number | null;
   total_checks: number;
   passed_checks: number;
@@ -149,6 +150,23 @@ export interface GenerationExecutionSummary {
   total: number;
   errored: number;
   error_finish_reasons: Record<string, number>;
+}
+
+/**
+ * Model time and reasoning across a run's generations (issue #309). Latency
+ * includes errored generations; reasoning skips them and is null when no
+ * generation reported the dimension, which means unknown rather than zero.
+ */
+export interface GenerationUsageSummary {
+  generations: number;
+  model_time_ms: number | null;
+  slowest_call_ms: number | null;
+  slowest_call_id: string | null;
+  reasoning_tokens: number | null;
+  /** Fewer than `generations` means `reasoning_tokens` is a partial sum. */
+  reasoning_calls: number;
+  max_call_reasoning_tokens: number | null;
+  max_reasoning_call_id: string | null;
 }
 
 export type EvaluatorType = "llm" | "code" | "agent" | "regex";

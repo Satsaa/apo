@@ -506,3 +506,76 @@ describe("CompareTaskRow check source for generated-title checks (issue #178)", 
     expect(marker?.right).toBe(true);
   });
 });
+
+describe("CompareTaskRow run-level usage rows", () => {
+  it("shows model time and reasoning rows with each side's values", async () => {
+    const usage = (modelMs: number, slowestMs: number, reasoning: number | null, maxReasoning: number | null) => ({
+      generations: 21,
+      model_time_ms: modelMs,
+      slowest_call_ms: slowestMs,
+      slowest_call_id: "call",
+      reasoning_tokens: reasoning,
+      reasoning_calls: reasoning == null ? 0 : 21,
+      max_call_reasoning_tokens: maxReasoning,
+      max_reasoning_call_id: maxReasoning == null ? null : "call",
+    });
+    const evidenceLoader = vi.fn().mockResolvedValue({
+      left: { id: "run-a", checks_json: [], generation_usage: usage(58_538, 7_419, 5_492, 1_054) },
+      right: { id: "run-b", checks_json: [], generation_usage: usage(142_000, 61_000, 24_100, 18_300) },
+    });
+
+    render(
+      <CompareTaskRow
+        task={makeTask()}
+        expanded={new Set(["task-1"])}
+        onToggleExpand={noopToggle}
+        projectId="proj"
+        evidenceLoader={evidenceLoader}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("model time")).toBeInTheDocument();
+    });
+    expect(screen.getByText("slowest call")).toBeInTheDocument();
+    expect(screen.getByText("reasoning")).toBeInTheDocument();
+    expect(screen.getByText("max reasoning/call")).toBeInTheDocument();
+    expect(screen.getByText("7.42s")).toBeInTheDocument();
+    expect(screen.getByText("1m 01s")).toBeInTheDocument();
+    expect(screen.getByText("1.1k tok")).toBeInTheDocument();
+    expect(screen.getByText("18.3k tok")).toBeInTheDocument();
+  });
+
+  it("leaves the reasoning rows out when neither side reported reasoning", async () => {
+    const usage = {
+      generations: 2,
+      model_time_ms: 3_000,
+      slowest_call_ms: 2_000,
+      slowest_call_id: "call",
+      reasoning_tokens: null,
+      reasoning_calls: 0,
+      max_call_reasoning_tokens: null,
+      max_reasoning_call_id: null,
+    };
+    const evidenceLoader = vi.fn().mockResolvedValue({
+      left: { id: "run-a", checks_json: [], generation_usage: usage },
+      right: { id: "run-b", checks_json: [], generation_usage: usage },
+    });
+
+    render(
+      <CompareTaskRow
+        task={makeTask()}
+        expanded={new Set(["task-1"])}
+        onToggleExpand={noopToggle}
+        projectId="proj"
+        evidenceLoader={evidenceLoader}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("model time")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("reasoning")).not.toBeInTheDocument();
+    expect(screen.queryByText("max reasoning/call")).not.toBeInTheDocument();
+  });
+});

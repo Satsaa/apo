@@ -161,6 +161,10 @@ export function formatDuration(startedAt: string | null, completedAt: string | n
   const end = completedAt ? new Date(completedAt).getTime() : Date.now();
   const ms = end - start;
   if (ms < 0) return "-";
+  return formatMs(ms);
+}
+
+export function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   const mins = Math.floor(ms / 60000);

@@ -1325,6 +1325,21 @@ def _migrate_to_v45() -> None:
             conn, "automations", "slack_webhook_url_encrypted", "VARCHAR"
         )
 
+def _migrate_generation_usage_schema(conn: Connection) -> None:
+    """Add the nullable issue #309 usage summary to an existing Task Run table."""
+    _add_column_if_missing(conn, "agent_task_runs", "generation_usage_json", "JSON")
+
+
+def _migrate_to_v46() -> None:
+    """Version 46 (issue #309): generation usage summary on Task Runs.
+
+    Existing rows stay NULL: their model time and reasoning were never
+    rolled up, which is unknown rather than zero.
+    """
+    with engine.begin() as conn:
+        _migrate_generation_usage_schema(conn)
+
+
 def _migrate_to_v4() -> None:
     """Version 4: check-level rollup columns on agent_task_batch_runs.
 
@@ -2644,7 +2659,7 @@ def _migrate_to_v25() -> None:
         )
 
 
-LATEST_SCHEMA_VERSION = 45
+LATEST_SCHEMA_VERSION = 46
 
 _SCHEMA_MIGRATIONS: dict[int, Callable[[], None]] = {
     1: _migrate_to_baseline,
@@ -2692,6 +2707,7 @@ _SCHEMA_MIGRATIONS: dict[int, Callable[[], None]] = {
     43: _migrate_to_v43,
     44: _migrate_to_v44,
     45: _migrate_to_v45,
+    46: _migrate_to_v46,
 }
 
 

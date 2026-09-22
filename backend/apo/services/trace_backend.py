@@ -134,6 +134,7 @@ class NativeTraceBackend:
         ).all()
         generation_execution, errored_span_ids = _generation_execution(calls, spans)
         task_run.generation_execution_json = generation_execution
+        task_run.generation_usage_json = _generation_usage(calls, errored_span_ids)
         total_cost = 0.0
         total_tokens = 0
         unpriced_count = 0
@@ -205,6 +206,45 @@ def _generation_execution(
         },
         errored_span_ids,
     )
+
+
+def _generation_usage(
+    calls: Sequence[LoggedCallDB], errored_span_ids: set[str]
+) -> dict[str, object] | None:
+    """Roll model time and reasoning up from the run's generations.
+
+    An average hides the one long call a change introduced, so the summary
+    keeps the slowest and the most-reasoning call alongside the totals, with
+    their ids so a reader can open that call.
+    """
+    generations = [c for c in calls if c.observation_type == "GENERATION"]
+    if not generations:
+        return None
+
+    timed = [c for c in generations if c.latency_ms is not None]
+    slowest = max(timed, key=lambda c: c.latency_ms or 0.0, default=None)
+
+    reasoning: list[tuple[LoggedCallDB, int]] = []
+    for call in generations:
+        if call.id in errored_span_ids:
+            continue
+        value = (call.raw_usage or {}).get("reasoning")
+        if isinstance(value, int) and not isinstance(value, bool):
+            reasoning.append((call, value))
+    most = max(reasoning, key=lambda pair: pair[1], default=None)
+
+    return {
+        "generations": len(generations),
+        "model_time_ms": (
+            round(sum(c.latency_ms or 0.0 for c in timed), 3) if timed else None
+        ),
+        "slowest_call_ms": slowest.latency_ms if slowest else None,
+        "slowest_call_id": slowest.id if slowest else None,
+        "reasoning_tokens": sum(v for _, v in reasoning) if reasoning else None,
+        "reasoning_calls": len(reasoning),
+        "max_call_reasoning_tokens": most[1] if most else None,
+        "max_reasoning_call_id": most[0].id if most else None,
+    }
 
 
 def _finish_reasons(attributes: dict[str, object]) -> list[str]:

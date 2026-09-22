@@ -4,6 +4,7 @@ export type {
   OutcomeMetadataItem,
 } from "./outcome-summary";
 export { FailuresByType } from "./failures-by-type";
+export { generationUsageMetadata } from "./generation-usage";
 export {
   conclusionStyle,
   type Conclusion,

@@ -20,6 +20,7 @@ from ..models import (
     AgentTaskBatchRunSummary,
     AgentTaskRunConfiguration,
     GenerationExecutionSummary,
+    GenerationUsageSummary,
     AgentTaskRunDB,
     AgentTaskRunTrigger,
     AgentTaskRunSummary,
@@ -129,6 +130,11 @@ def to_task_run_summary(
         generation_execution=(
             GenerationExecutionSummary.model_validate(tr.generation_execution_json)
             if tr.generation_execution_json is not None
+            else None
+        ),
+        generation_usage=(
+            GenerationUsageSummary.model_validate(tr.generation_usage_json)
+            if tr.generation_usage_json is not None
             else None
         ),
         total_tokens=tr.total_tokens,
