@@ -78,12 +78,12 @@
       ]
     },
     {
-      "_doc": "Issue #102: Opus 5 uses the same reduced rates as 4.6 ($5/$25 per MTok), not the legacy 4.5 rates. Pattern allows a date suffix.",
-      "match_pattern": "(?i)^claude-opus-5.*$",
+      "_doc": "Issue #102: Opus 5 uses the same reduced rates as 4.6 ($5/$25 per MTok), not the legacy 4.5 rates. Pattern allows a date suffix, and excludes Opus 5.5 (its own entry below): matching is not most-specific-wins, so an overlap would price 5.5 at these rates.",
+      "match_pattern": "(?i)^claude-opus-5(?![.-]5\\b).*$",
       "provider": "anthropic",
       "display_name": "Claude Opus 5",
       "start_date": null,
-      "updated_at": "2026-08-03T00:00:00Z",
+      "updated_at": "2026-09-23T00:00:00Z",
       "last_reviewed": "2026-08",
       "pricing_tiers": [
         {
@@ -97,6 +97,30 @@
             "cache_write_5m": 6.25,
             "cache_write_1h": 10.0,
             "output": 25.0
+          }
+        }
+      ]
+    },
+    {
+      "_doc": "Claude Opus 5.5: $4/$20 per MTok, cache read $0.20, cache write $5 (5-minute) / $8 (1-hour). Anthropic first-party list price (platform.claude.com pricing). Before this entry it matched the Opus 5 pattern and was priced 25% (cache reads 150%) too high.",
+      "match_pattern": "(?i)^claude-opus-5[.-]5.*$",
+      "provider": "anthropic",
+      "display_name": "Claude Opus 5.5",
+      "start_date": null,
+      "updated_at": "2026-09-23T00:00:00Z",
+      "last_reviewed": "2026-09",
+      "pricing_tiers": [
+        {
+          "name": "default",
+          "is_default": true,
+          "priority": 0,
+          "conditions": [],
+          "prices": {
+            "input": 4.0,
+            "cache_read": 0.2,
+            "cache_write_5m": 5.0,
+            "cache_write_1h": 8.0,
+            "output": 20.0
           }
         }
       ]
