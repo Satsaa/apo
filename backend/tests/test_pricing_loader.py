@@ -410,6 +410,26 @@ class TestBundledCurrentModels:
         assert cost.breakdown["input"] == 15_000_000
         assert cost.breakdown["output"] == 75_000_000
 
+    def test_opus_55_has_its_own_rates_not_opus_5(self, session: Session) -> None:
+        """Opus 5.5 is $4/$20 per MTok with cache reads at $0.20. The Opus 5
+        pattern used to be ``^claude-opus-5.*$``, which also matched
+        ``claude-opus-5-5`` and priced it at Opus 5's $5/$25/$0.50. Resolution
+        has no most-specific-wins rule, so the two patterns must not overlap."""
+        load_default_prices(session)
+        usage = {"input": 1_000_000, "cache_read": 1_000_000, "output": 1_000_000}
+        for name in ("claude-opus-5-5", "claude-opus-5.5", "claude-opus-5-5-20261001"):
+            cost = compute_cost(session, name, usage, "__global__", NOW)
+            assert cost is not None, f"{name} should be priced"
+            assert cost.breakdown["input"] == 4_000_000, name
+            assert cost.breakdown["cache_read"] == 200_000, name
+            assert cost.breakdown["output"] == 20_000_000, name
+        for name in ("claude-opus-5", "claude-opus-5-2025", "claude-opus-5-20260401"):
+            cost = compute_cost(session, name, usage, "__global__", NOW)
+            assert cost is not None, f"{name} should be priced"
+            assert cost.breakdown["input"] == 5_000_000, name
+            assert cost.breakdown["cache_read"] == 500_000, name
+            assert cost.breakdown["output"] == 25_000_000, name
+
     def test_prices_current_gemini_models_bare_and_prefixed(self, session: Session) -> None:
         load_default_prices(session)
         usage = {"input": 1_000_000, "output": 1_000_000}
