@@ -25,6 +25,7 @@ from ..models.schemas import (
     AgentTaskRunSummary,
     AgentTaskRunTrigger,
     GenerationExecutionSummary,
+    GenerationUsageSummary,
     as_task_run_status,
     as_trace_persistence_status,
 )
@@ -106,7 +107,15 @@ def _to_summary(
         total_cost=run.total_cost,
         unpriced_call_count=run.unpriced_call_count,
         generation_execution=_generation_execution_summary(run),
+        generation_usage=_generation_usage_summary(run),
         total_tokens=run.total_tokens,
+        # Issue #309 reasoning + timing rollups (see AgentTaskRunSummary).
+        total_reasoning_tokens=run.total_reasoning_tokens,
+        max_call_reasoning_tokens=run.max_call_reasoning_tokens,
+        max_call_reasoning_call_id=run.max_call_reasoning_call_id,
+        max_call_latency_ms=run.max_call_latency_ms,
+        max_call_latency_call_id=run.max_call_latency_call_id,
+        total_model_time_ms=run.total_model_time_ms,
         total_checks=run.total_checks,
         passed_checks=run.passed_checks,
         failed_checks=run.failed_checks,
@@ -252,7 +261,15 @@ def _to_detail(
         total_cost=run.total_cost,
         unpriced_call_count=run.unpriced_call_count,
         generation_execution=_generation_execution_summary(run),
+        generation_usage=_generation_usage_summary(run),
         total_tokens=run.total_tokens,
+        # Issue #309 reasoning + timing rollups (see AgentTaskRunSummary).
+        total_reasoning_tokens=run.total_reasoning_tokens,
+        max_call_reasoning_tokens=run.max_call_reasoning_tokens,
+        max_call_reasoning_call_id=run.max_call_reasoning_call_id,
+        max_call_latency_ms=run.max_call_latency_ms,
+        max_call_latency_call_id=run.max_call_latency_call_id,
+        total_model_time_ms=run.total_model_time_ms,
         total_checks=run.total_checks,
         passed_checks=run.passed_checks,
         failed_checks=run.failed_checks,
@@ -280,3 +297,9 @@ def _generation_execution_summary(
     if run.generation_execution_json is None:
         return None
     return GenerationExecutionSummary.model_validate(run.generation_execution_json)
+
+
+def _generation_usage_summary(run: AgentTaskRunDB) -> GenerationUsageSummary | None:
+    if run.generation_usage_json is None:
+        return None
+    return GenerationUsageSummary.model_validate(run.generation_usage_json)

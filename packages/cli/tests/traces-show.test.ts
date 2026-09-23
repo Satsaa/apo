@@ -177,3 +177,371 @@ describe("traces show evidence + attributes (issue #164)", () => {
     expect(out).toContain("apo.observation.type");
   });
 });
+
+describe("traces show content caps (issue #308)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // A reply long enough that both default previews cut it (300 per message,
+  // 500 for output) — shorter fixtures would leak the tail via `output:`.
+  const LONG_REPLY = `[thinking] ${"reasoning ".repeat(80)}final answer: ship it`;
+  const REPLY_TAIL = "final answer: ship it";
+
+  function makeCall(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id,
+      level: "DEFAULT",
+      step_name: "ai.generateText",
+      observation_type: "GENERATION",
+      model: "test-model",
+      latency_ms: 500,
+      cost: 0.0001,
+      total_tokens: 42,
+      messages: [{ role: "assistant", content: LONG_REPLY }],
+      output: LONG_REPLY,
+      ...overrides,
+    };
+  }
+
+  it("default verbose preview cuts a message at 300 chars", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ ...makeTraceDetail(), calls: [makeCall("call-1")] }),
+    );
+    const { logs, restore } = captureLog();
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--verbose"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain(`[assistant] ${LONG_REPLY.slice(0, 300)}`);
+    // Upper bound: without it the test passes for any cap in [300, 811) —
+    // a regression that drops the cap wiring entirely stays invisible.
+    expect(out).not.toContain(`[assistant] ${LONG_REPLY.slice(0, 301)}`);
+    expect(out).not.toContain(REPLY_TAIL);
+    // Verbose call lines carry the call id — it's what --call selects on.
+    expect(out).toContain("call-1");
+  });
+
+  it("--full prints the whole message and output without truncation", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ ...makeTraceDetail(), calls: [makeCall("call-1")] }),
+    );
+    const { logs, restore } = captureLog();
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--full"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain(REPLY_TAIL);
+    expect(out).toContain(`output:`);
+    expect(out).toContain(LONG_REPLY);
+    // --full implies the verbose view, so messages are requested at all.
+    expect(out).toContain("messages:");
+  });
+
+  it("--full requests messages from the backend without an explicit --verbose", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ ...makeTraceDetail(), calls: [makeCall("call-1")] }),
+    );
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--full"]);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain("include=messages%2Cattributes");
+  });
+
+  it("--max-chars caps the message at the given size", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ ...makeTraceDetail(), calls: [makeCall("call-1")] }),
+    );
+    const { logs, restore } = captureLog();
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--max-chars", "60"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain(`[assistant] ${LONG_REPLY.slice(0, 60)}`);
+    // Upper bound pins the cap at exactly 60 — without it the default 300
+    // would satisfy both assertions and a dead --max-chars would pass.
+    expect(out).not.toContain(`[assistant] ${LONG_REPLY.slice(0, 61)}`);
+    expect(out).not.toContain(REPLY_TAIL);
+  });
+
+  it("--full prints the whole input when a call has no messages", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [makeCall("call-1", { messages: null, input: { prompt: LONG_REPLY } })],
+      }),
+    );
+    const { logs, restore } = captureLog();
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--full"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("input:");
+    expect(out).toContain(REPLY_TAIL);
+  });
+
+  it("accepts --full=true and --max-chars=100 inline forms", async () => {
+    // Fresh Response per call — a Response body can only be read once.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      mockResponse({ ...makeTraceDetail(), calls: [makeCall("call-1")] }),
+    );
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    const uncapped = captureLog();
+    await run([FULL_ID, "--backend", "http://backend.test", "--full=true"]);
+    uncapped.restore();
+    const uncappedOut = stripAnsi(uncapped.logs.join("\n"));
+    expect(uncappedOut).toContain(REPLY_TAIL); // --full=true lifted the caps
+
+    const capped = captureLog();
+    await run([FULL_ID, "--backend", "http://backend.test", "--max-chars=100"]);
+    capped.restore();
+    const cappedOut = stripAnsi(capped.logs.join("\n"));
+    expect(cappedOut).toContain(`[assistant] ${LONG_REPLY.slice(0, 100)}`);
+    expect(cappedOut).not.toContain(`[assistant] ${LONG_REPLY.slice(0, 101)}`);
+  });
+
+  it("rejects --max-chars junk and the --full combination before fetching", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await expect(run([FULL_ID, "--backend", "http://backend.test", "--max-chars", "lots"]))
+      .rejects.toThrow("--max-chars requires a positive integer");
+    await expect(run([FULL_ID, "--backend", "http://backend.test", "--max-chars"]))
+      .rejects.toThrow("--max-chars requires a positive integer");
+    await expect(run([FULL_ID, "--backend", "http://backend.test", "--full", "--max-chars", "100"]))
+      .rejects.toThrow("mutually exclusive");
+    await expect(run([FULL_ID, "--backend", "http://backend.test", "--call"]))
+      .rejects.toThrow("--call requires a call id");
+    // `--call=` parses to an empty string, not boolean true — it must be
+    // rejected too, or it silently matches every call id as a prefix.
+    await expect(run([FULL_ID, "--backend", "http://backend.test", "--call="]))
+      .rejects.toThrow("--call requires a call id");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("--call prints only the selected generation, untruncated", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [
+          makeCall("aaa1", { step_name: "first-generation", messages: [{ role: "assistant", content: "short one" }] }),
+          makeCall("bbb2", { step_name: "second-generation" }),
+        ],
+      }),
+    );
+    const { logs, restore } = captureLog();
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--call", "bbb"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("second-generation");
+    expect(out).toContain(REPLY_TAIL);
+    expect(out).not.toContain("first-generation");
+    expect(out).not.toContain("short one");
+  });
+
+  it("--call reports unknown and ambiguous prefixes with exit code 2", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [makeCall("aaa1"), makeCall("aaa2")],
+      }),
+    );
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    const miss = captureError();
+    const missCode = await run([FULL_ID, "--backend", "http://backend.test", "--call", "zzz"]);
+    miss.restore();
+    expect(missCode).toBe(2);
+    expect(miss.errors.join("\n")).toContain("Call not found: zzz");
+
+    const ambiguous = captureError();
+    const ambiguousCode = await run([FULL_ID, "--backend", "http://backend.test", "--call", "aaa"]);
+    ambiguous.restore();
+    expect(ambiguousCode).toBe(2);
+    expect(ambiguous.errors.join("\n")).toContain("matches 2 calls");
+    expect(ambiguous.errors.join("\n")).toContain("aaa1");
+    expect(ambiguous.errors.join("\n")).toContain("aaa2");
+  });
+
+  it("--call wins over --errors-only and composes with --max-chars", async () => {
+    // Fresh Response per call — a Response body can only be read once.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [
+          makeCall("aaa1", { level: "ERROR", step_name: "the-error" }),
+          makeCall("bbb2", { step_name: "second-generation" }),
+        ],
+      }),
+    );
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    // A DEFAULT-level call still prints: naming the call beats the filter.
+    const filtered = captureLog();
+    await run([FULL_ID, "--backend", "http://backend.test", "--call", "bbb", "--errors-only"]);
+    filtered.restore();
+    const filteredOut = stripAnsi(filtered.logs.join("\n"));
+    expect(filteredOut).toContain("second-generation");
+    expect(filteredOut).not.toContain("the-error");
+    expect(filteredOut).toContain(REPLY_TAIL); // --call alone: no cap
+
+    // Explicit --max-chars overrides --call's implied no-cap default.
+    const capped = captureLog();
+    await run([FULL_ID, "--backend", "http://backend.test", "--call", "bbb", "--max-chars", "40"]);
+    capped.restore();
+    const cappedOut = stripAnsi(capped.logs.join("\n"));
+    expect(cappedOut).toContain(`[assistant] ${LONG_REPLY.slice(0, 40)}`);
+    expect(cappedOut).not.toContain(`[assistant] ${LONG_REPLY.slice(0, 41)}`);
+    expect(cappedOut).not.toContain(REPLY_TAIL);
+  });
+
+  it("bare --json still requests messages and attributes", async () => {
+    // --json is the everything-mode: the raw dump must carry the content the
+    // text view previews, so it opts into the heavy include params too.
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ ...makeTraceDetail(), calls: [makeCall("call-1")] }),
+    );
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    await run([FULL_ID, "--backend", "http://backend.test", "--json"]);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain("include=messages%2Cattributes");
+  });
+
+  it("--json stays the full raw trace even with --call", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [makeCall("aaa1"), makeCall("bbb2")],
+      }),
+    );
+    const { logs, restore } = captureLog();
+    const { run } = await import("../src/commands/traces-show.ts");
+
+    const code = await run([FULL_ID, "--backend", "http://backend.test", "--call", "bbb", "--json"]);
+    restore();
+
+    expect(code).toBe(0);
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("aaa1");
+    expect(out).toContain("bbb2");
+  });
+});
+
+describe("traces show reasoning and timing rollups (issue #309)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function call(overrides: Record<string, unknown>): Record<string, unknown> {
+    return {
+      id: "call-1",
+      model: "fixture-model",
+      observation_type: "GENERATION",
+      step_name: null,
+      level: "DEFAULT",
+      latency_ms: 2_000,
+      cost: 100,
+      total_tokens: 120,
+      prompt_tokens: 100,
+      completion_tokens: 20,
+      raw_usage: null,
+      time_to_first_token_ms: null,
+      parent_call_id: "root",
+      status_message: null,
+      created_at: "2026-07-14T18:12:38Z",
+      input: {},
+      output: {},
+      messages: null,
+      tool_name: null,
+      tool_parameters: null,
+      tool_result: null,
+      metadata: null,
+      ...overrides,
+    };
+  }
+
+  it("prints reasoning totals with the deepest call, slowest call, and model time", async () => {
+    const { run } = await import("../src/commands/traces-show.ts");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [
+          call({
+            id: "gen-1",
+            latency_ms: 2_000,
+            raw_usage: { input: 100, output: 20, reasoning: 500 },
+          }),
+          call({
+            id: "gen-2",
+            latency_ms: 6_500,
+            raw_usage: { input: 100, output: 20, reasoning: 7_000 },
+          }),
+          // Tool + structural rows must not win "slowest call" nor count as
+          // model time: the root span's latency is the run's wall clock.
+          call({
+            id: "tool-1",
+            observation_type: "TOOL",
+            latency_ms: 90_000,
+          }),
+          call({
+            id: "root",
+            observation_type: "SPAN",
+            model: "agent-task",
+            latency_ms: 300_000,
+          }),
+        ],
+      }),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Reasoning: 7,500 tok");
+    expect(out).toContain("max 7,000 in one call (observation gen-2)");
+    expect(out).toContain("Slowest call: 6.5s (observation gen-2)");
+    // Model time sums generations only (2.0s + 6.5s): the 90s tool and the
+    // 300s root span stay in the per-call list below but are not model time.
+    expect(out).toContain("Model time: 8.5s");
+  });
+
+  it("omits the rollup lines when nothing reported them", async () => {
+    const { run } = await import("../src/commands/traces-show.ts");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({
+        ...makeTraceDetail(),
+        calls: [
+          call({ id: "gen-1", raw_usage: { input: 5, output: 5 }, latency_ms: null }),
+        ],
+      }),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    // Unknown reasoning (no call sent the dimension) and no latency → no
+    // lines at all, never a false zero.
+    expect(out).not.toContain("Reasoning:");
+    expect(out).not.toContain("Slowest call:");
+    expect(out).not.toContain("Model time:");
+  });
+});

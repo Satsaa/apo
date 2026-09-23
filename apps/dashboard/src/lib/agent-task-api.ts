@@ -131,7 +131,18 @@ export interface AgentTaskRunSummary {
   total_cost: number | null;
   unpriced_call_count?: number;
   generation_execution?: GenerationExecutionSummary | null;
+  generation_usage?: GenerationUsageSummary | null;
   total_tokens: number | null;
+  /** Issue #309 reasoning + timing rollups. Null reasoning = no call in the
+   * trace reported the reasoning usage dimension (unknown, NOT zero). The
+   * `*_call_id` refs point at the winning call's span for deep links into
+   * the trace (`/traces/{trace_run_id}?observation={call_id}`). */
+  total_reasoning_tokens?: number | null;
+  max_call_reasoning_tokens?: number | null;
+  max_call_reasoning_call_id?: string | null;
+  max_call_latency_ms?: number | null;
+  max_call_latency_call_id?: string | null;
+  total_model_time_ms?: number | null;
   total_checks: number;
   passed_checks: number;
   failed_checks: number;
@@ -151,6 +162,23 @@ export interface GenerationExecutionSummary {
   error_finish_reasons: Record<string, number>;
 }
 
+/**
+ * Model time and reasoning across a run's generations (issue #309). Latency
+ * includes errored generations; reasoning skips them and is null when no
+ * generation reported the dimension, which means unknown rather than zero.
+ */
+export interface GenerationUsageSummary {
+  generations: number;
+  model_time_ms: number | null;
+  slowest_call_ms: number | null;
+  slowest_call_id: string | null;
+  reasoning_tokens: number | null;
+  /** Fewer than `generations` means `reasoning_tokens` is a partial sum. */
+  reasoning_calls: number;
+  max_call_reasoning_tokens: number | null;
+  max_reasoning_call_id: string | null;
+}
+
 export type EvaluatorType = "llm" | "code" | "agent" | "regex";
 
 /** typed catalog selection stored on a source-owned Schedule. */
@@ -166,8 +194,45 @@ export interface CheckLocation {
   column?: number;
 }
 
+/** One investigation step of an agentic-judge (t.agent) session. */
+export interface AgentJudgeStep {
+  index: number;
+  tool_calls?: {
+    name: string;
+    input?: string;
+    result?: string | { kind: string; [k: string]: unknown };
+    result_sha256?: string;
+    result_bytes?: number;
+  }[];
+  text?: string;
+  tokens?: { input?: number; output?: number; cost?: number };
+}
+
+/** Transcript-shaped record of one `t.agent` session. */
+export interface AgentJudgeSession {
+  tools?: string[];
+  briefing?: { system?: string; rubric?: string };
+  steps?: AgentJudgeStep[];
+  outcome: "verdict" | "budget_exhausted" | "error";
+  evidence?: { step: number; tool: string; result_sha256: string; result_bytes: number }[];
+  usage?: { steps?: number; input_tokens?: number; output_tokens?: number };
+}
+
+export interface SecondJudgeEvidence {
+  model: string;
+  choice?: "pass" | "fail";
+  passProbability?: number;
+  confidence?: number;
+  inputTokens?: number;
+  costUsd?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
 export interface JudgeMetadata {
   model?: string;
+  /** Agentic session transcript; only with evaluator_type "agent". */
+  session?: AgentJudgeSession;
   prompt?: {
     system?: string;
     user?: string;
@@ -177,6 +242,8 @@ export interface JudgeMetadata {
   cost?: number;
   latency_ms?: number;
   temperature?: number;
+  /** Opt-in second grader (typed-decision model) evidence; never affects the verdict. */
+  secondJudge?: SecondJudgeEvidence;
 }
 
 export interface CheckAssertionResult {
@@ -319,6 +386,11 @@ export interface AgentTaskBatchRunSummary {
   /** non-zero means total_cost is a partial sum (issue #147). */
   unpriced_call_count?: number;
   total_tokens: number | null;
+  /** Issue #309: sums of the children's generation usage. Null when every
+   * child is unknown (no run reported the reasoning dimension / recorded a
+   * latency) — unknown, NOT zero. */
+  total_reasoning_tokens?: number | null;
+  total_model_time_ms?: number | null;
   /** derived configuration summary (uniform/mixed/partial/unknown). */
   configuration: AgentTaskBatchRunConfigurationSummary;
 }

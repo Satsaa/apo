@@ -713,4 +713,12 @@ _TASK_ENV_PROVIDER_VARS = (
     "CLAUDE_MODEL",
     "AGENT_TASK_JUDGE_MODEL",
     "AGENT_TASK_OPENROUTER_MODEL",
+    # Second-grader decision model (Jev via OpenRouter /alpha/decisions).
+    # Opt-in evidence-only — see checks/second-judge.ts in the SDK.
+    "APO_SECOND_JUDGE_MODEL",
+    # Second-grader connection overrides for proxied primary judges: the
+    # decisions endpoint and its key can point at OpenRouter while the
+    # primary judge is routed through LiteLLM or another gateway.
+    "APO_SECOND_JUDGE_BASE_URL",
+    "APO_SECOND_JUDGE_API_KEY",
 )

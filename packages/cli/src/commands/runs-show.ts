@@ -3,9 +3,9 @@ import { resolveConfig } from "../lib/config.ts";
 import { bold, dim, formatCost, formatJson, formatTime, passFail, yellow } from "../lib/format.ts";
 import { apiGet } from "../lib/api.ts";
 import type { CheckResult, DeliverableSummary } from "../lib/agent-task-types.ts";
-import { formatChecks, NO_CHECKS_REGISTERED_MESSAGE } from "../lib/checks-format.ts";
+import { formatChecks, NO_CHECKS_REGISTERED_MESSAGE, secondJudgeSummary } from "../lib/checks-format.ts";
 import { conciseChecks, conciseDeliverables } from "../lib/runs-truncate.ts";
-import { resolveRunIdByPrefix, resolveLatestRunId } from "../lib/runs-resolve.ts";
+import { resolveRunId, resolveLatestRunId } from "../lib/runs-resolve.ts";
 import { reportCommandError } from "../lib/command-error.ts";
 
 type RunDetail = {
@@ -23,7 +23,16 @@ type RunDetail = {
   total_cost: number | null;
   unpriced_call_count?: number;
   generation_execution?: GenerationExecution | null;
+  generation_usage?: GenerationUsage | null;
   total_tokens: number | null;
+  /** Issue #309: reasoning + per-call timing rollups. Null reasoning = no
+   * call reported the reasoning usage dimension (unknown, not zero). */
+  total_reasoning_tokens?: number | null;
+  max_call_reasoning_tokens?: number | null;
+  max_call_reasoning_call_id?: string | null;
+  max_call_latency_ms?: number | null;
+  max_call_latency_call_id?: string | null;
+  total_model_time_ms?: number | null;
   total_checks: number;
   passed_checks: number;
   failed_checks: number;
@@ -50,6 +59,17 @@ type GenerationExecution = {
   total: number;
   errored: number;
   error_finish_reasons: Record<string, number>;
+};
+
+type GenerationUsage = {
+  generations: number;
+  model_time_ms: number | null;
+  slowest_call_ms: number | null;
+  slowest_call_id: string | null;
+  reasoning_tokens: number | null;
+  reasoning_calls: number;
+  max_call_reasoning_tokens: number | null;
+  max_reasoning_call_id: string | null;
 };
 
 export async function run(argv: string[]): Promise<number> {
@@ -83,26 +103,10 @@ export async function run(argv: string[]): Promise<number> {
       return reportCommandError(error, config.backendUrl);
     }
   } else {
-    resolvedRunId = input;
-    if (input.length < 32) {
-      try {
-        resolvedRunId = await resolveRunIdByPrefix(
-          config.backendUrl,
-          input,
-          config,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("404")) {
-          console.error(`Run not found: ${input}`);
-        } else if (message.startsWith("Backend error") || message.includes("timed out") || message.includes("Cannot connect") || message.includes("matches multiple")) {
-          console.error(message);
-        } else {
-          console.error(`Cannot connect to backend at ${config.backendUrl}`);
-          console.error(dim(message));
-        }
-        return 2;
-      }
+    try {
+      resolvedRunId = await resolveRunId(config.backendUrl, input, config);
+    } catch (error) {
+      return reportCommandError(error, config.backendUrl);
     }
   }
 
@@ -203,6 +207,29 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
       `  Tokens:   ${run.total_tokens.toLocaleString()}${formatErroredGenerationSuffix(run.generation_execution)}`,
     );
   }
+  if (run.total_reasoning_tokens != null) {
+    const maxPart =
+      run.max_call_reasoning_tokens != null
+        ? dim(` · max ${run.max_call_reasoning_tokens.toLocaleString()} in one call${callSuffix(run.max_call_reasoning_call_id)}`)
+        : "";
+    console.log(
+      `  Reasoning: ${run.total_reasoning_tokens.toLocaleString()} tok${maxPart}${formatErroredGenerationSuffix(run.generation_execution)}`,
+    );
+  } else if (run.total_tokens != null && run.total_tokens > 0) {
+    // Unknown, not zero: the provider never reported the reasoning
+    // dimension, which reads differently from "the model didn't think".
+    console.log(dim("  Reasoning: not reported (provider did not send reasoning usage)"));
+  }
+  if (run.max_call_latency_ms != null) {
+    console.log(
+      `  Slowest call: ${formatMs(run.max_call_latency_ms)}${callSuffix(run.max_call_latency_call_id)}`,
+    );
+  }
+  if (run.total_model_time_ms != null) {
+    console.log(
+      `  Model time: ${formatMs(run.total_model_time_ms)} ${dim("(sum of call latencies — excludes tool/harness time)")}`,
+    );
+  }
   if (run.trace_run_id) {
     console.log(`  Trace:    ${run.trace_run_id} ${dim("(apo traces show " + run.trace_run_id + ")")}`);
   }
@@ -213,6 +240,8 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
   if (run.checks_json && run.checks_json.length > 0) {
     console.log(bold("\n  Checks:"));
     console.log(formatChecks(run.checks_json, verbose));
+    const sjSummary = secondJudgeSummary(run.checks_json);
+    if (sjSummary) console.log(dim(`\n  ${sjSummary}`));
   } else if (run.pass_result === false) {
     // Issue #8: a failed run with no checks is a registration bug, not a real
     // failure. The backend also stores this on error_message (see backend
@@ -278,12 +307,24 @@ function formatHeartbeatLine(run: RunDetail): string | null {
 }
 
 function formatAge(ms: number): string {
+  return formatMs(Math.max(0, ms));
+}
+
+/** Milliseconds as a compact duration — `45s`, `4m 12s`, `1h 03m`. */
+function formatMs(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/** Dimmed pointer to the observation behind a max metric, so the winning
+ * call can be found in the trace without a dashboard. */
+function callSuffix(callId: string | null | undefined): string {
+  if (!callId) return "";
+  return dim(` (observation ${callId})`);
 }
 
 function printTranscript(transcript: Record<string, unknown>): void {  const turns = transcript.turns ?? transcript.messages ?? transcript;

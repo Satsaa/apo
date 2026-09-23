@@ -28,6 +28,7 @@ from ..models import (
     AgentTaskRunSummary,
     CreateAgentTaskBatchRunRequest,
     GenerationExecutionSummary,
+    GenerationUsageSummary,
     LoggedCallDB,
     ReportAgentTaskRunResultRequest,
     RunDB,
@@ -194,7 +195,18 @@ def _build_task_run_detail(
             if task_run.generation_execution_json is not None
             else None
         ),
+        generation_usage=(
+            GenerationUsageSummary.model_validate(task_run.generation_usage_json)
+            if task_run.generation_usage_json is not None
+            else None
+        ),
         total_tokens=task_run.total_tokens,
+        total_reasoning_tokens=task_run.total_reasoning_tokens,
+        max_call_reasoning_tokens=task_run.max_call_reasoning_tokens,
+        max_call_reasoning_call_id=task_run.max_call_reasoning_call_id,
+        max_call_latency_ms=task_run.max_call_latency_ms,
+        max_call_latency_call_id=task_run.max_call_latency_call_id,
+        total_model_time_ms=task_run.total_model_time_ms,
         total_checks=task_run.total_checks,
         passed_checks=task_run.passed_checks,
         failed_checks=task_run.failed_checks,

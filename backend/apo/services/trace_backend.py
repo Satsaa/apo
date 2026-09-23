@@ -16,12 +16,98 @@ task runner or the trace UI needing to know which backend is active.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlmodel import Session, select
 
 from ..models.db import AgentTaskRunDB, LoggedCallDB, OtlpSpanDB, RunDB
 from .trace_ownership import mark_failed, mark_persisted
+
+
+# ---------------------------------------------------------------------------
+# Reasoning / timing rollups (issue #309)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GenerationRollups:
+    """The issue #309 per-run rollups, computed and applied as one unit."""
+
+    total_reasoning_tokens: int | None = None
+    max_call_reasoning_tokens: int | None = None
+    max_call_reasoning_call_id: str | None = None
+    max_call_latency_ms: float | None = None
+    max_call_latency_call_id: str | None = None
+    total_model_time_ms: float | None = None
+
+
+def compute_generation_rollups(
+    calls: Sequence[LoggedCallDB], errored_span_ids: set[str]
+) -> GenerationRollups:
+    """Derive the reasoning/timing rollups from a run's observations.
+
+    Model-call facts: only ``GENERATION`` observations count. Tool and
+    structural rows carry latencies too (the agent-task root span's latency
+    is the run's whole wall clock), and counting those would double-count
+    the run and let a tool win "slowest call". Usage reasoning additionally
+    skips errored generations (a provider error omits the final usage
+    event, so its projected usage is not a measurement); latency keeps
+    them — a generation that failed after four minutes still spent four
+    minutes in the model. All-unreported reasoning stays ``None``
+    (unknown, not zero).
+    """
+    total_reasoning: int | None = None
+    max_reasoning: int | None = None
+    max_reasoning_call_id: str | None = None
+    max_latency_ms: float | None = None
+    max_latency_call_id: str | None = None
+    model_time_ms = 0.0
+    saw_latency = False
+    for call in calls:
+        if call.observation_type != "GENERATION":
+            continue
+        if call.latency_ms is not None:
+            saw_latency = True
+            model_time_ms += call.latency_ms
+            if max_latency_ms is None or call.latency_ms > max_latency_ms:
+                max_latency_ms = call.latency_ms
+                max_latency_call_id = call.id
+        if call.id in errored_span_ids:
+            continue
+        # The normalizer only emits ints, but hand-written rows exist —
+        # coerce instead of letting a stray string crash finalize.
+        reasoning = (call.raw_usage or {}).get("reasoning")
+        try:
+            tokens = int(reasoning) if reasoning is not None else None
+        except (TypeError, ValueError):
+            tokens = None
+        if tokens is not None:
+            total_reasoning = (total_reasoning or 0) + tokens
+            if max_reasoning is None or tokens > max_reasoning:
+                max_reasoning = tokens
+                max_reasoning_call_id = call.id
+    return GenerationRollups(
+        total_reasoning_tokens=total_reasoning,
+        max_call_reasoning_tokens=max_reasoning,
+        max_call_reasoning_call_id=max_reasoning_call_id,
+        max_call_latency_ms=max_latency_ms,
+        max_call_latency_call_id=max_latency_call_id,
+        total_model_time_ms=model_time_ms if saw_latency else None,
+    )
+
+
+def apply_generation_rollups(
+    task_run: AgentTaskRunDB, rollups: GenerationRollups
+) -> None:
+    """Write the rollups onto the task run. Touches ONLY the issue #309
+    columns — callers that also recompute cost/tokens do that themselves."""
+    task_run.total_reasoning_tokens = rollups.total_reasoning_tokens
+    task_run.max_call_reasoning_tokens = rollups.max_call_reasoning_tokens
+    task_run.max_call_reasoning_call_id = rollups.max_call_reasoning_call_id
+    task_run.max_call_latency_ms = rollups.max_call_latency_ms
+    task_run.max_call_latency_call_id = rollups.max_call_latency_call_id
+    task_run.total_model_time_ms = rollups.total_model_time_ms
 
 
 # ---------------------------------------------------------------------------
@@ -36,8 +122,8 @@ class TraceBackend(Protocol):
     present, linking it back to the task run, backfilling trace-level I/O) and
     the cost/token roll-up. They mutate ``task_run`` bookkeeping fields in
     place: ``trace_persistence_status``/``trace_error_message`` for
-    :meth:`confirm_and_link` and ``total_cost``/``total_tokens`` for
-    :meth:`aggregate_costs`.
+    :meth:`confirm_and_link` and ``total_cost``/``total_tokens`` plus the
+    reasoning/timing rollups for :meth:`aggregate_costs`.
     """
 
     def confirm_and_link(
@@ -118,6 +204,30 @@ class NativeTraceBackend:
     def aggregate_costs(
         self, session: Session, task_run: AgentTaskRunDB, project: str
     ) -> None:
+        """Sum usage, cost, and per-call timing extremes across the trace.
+
+        ``project`` scopes the observation set so a cross-project trace id
+        collision cannot inflate another run's totals.
+
+        Sets ``task_run.total_cost`` / ``total_tokens``, the bounded
+        Generation Execution Summary, and the reasoning/timing rollups
+        (issue #309): ``total_reasoning_tokens`` /
+        ``max_call_reasoning_tokens`` + ``max_call_reasoning_call_id``,
+        ``max_call_latency_ms`` + ``max_call_latency_call_id``, and
+        ``total_model_time_ms``. Errored generations are excluded from
+        usage totals, which consumers must present as partial. Timing
+        rollups deliberately keep errored calls — a generation that failed
+        after four minutes still spent four minutes in the model, and
+        "slowest call" is exactly where that surfaces. Reasoning totals
+        stay null when no call reported the ``reasoning`` usage dimension
+        (unknown, not zero). The reasoning/timing rollups are restricted
+        to ``GENERATION`` observations: ``logged_calls`` also holds
+        TOOL/structural rows, and the agent-task root span's latency is
+        the whole run's wall clock — counting those would double-count
+        the run and let a tool win "slowest call". Usage totals stay over
+        all observations because costed spans can project as plain SPANs
+        (issue #41). No-op when the task run has no trace.
+        """
         if not task_run.trace_run_id:
             return
         calls = session.exec(
@@ -132,17 +242,28 @@ class NativeTraceBackend:
                 OtlpSpanDB.project_id == project,
             )
         ).all()
-        generation_execution, errored_span_ids = _generation_execution(calls, spans)
+        generation_execution, errored_span_ids = generation_execution_facts(calls, spans)
         task_run.generation_execution_json = generation_execution
+        # Both #309 storages stay populated: the v46 JSON summary and the
+        # v47 discrete rollup columns (readers may use either).
+        task_run.generation_usage_json = _generation_usage(calls, errored_span_ids)
+        apply_generation_rollups(
+            task_run, compute_generation_rollups(calls, errored_span_ids)
+        )
         total_cost = 0.0
         total_tokens = 0
         unpriced_count = 0
         for call in calls:
             # A provider error often omits the final streamed usage event and
             # therefore projects as a plausible zero. Exclude the observation
-            # instead of treating that zero as a complete measurement.
+            # from usage totals instead of treating that zero as a complete
+            # measurement.
             if call.id in errored_span_ids:
                 continue
+            # Usage rollups stay over ALL observations, not just GENERATION:
+            # issue #41 lands costed spans that project as plain SPANs
+            # (e.g. ``agent-llm-call`` without gen_ai attrs) after finalize,
+            # and they must still refresh the totals.
             # ``cost`` is the single effective total (micro-USD int);
             # fall back to ``provided_cost`` only when cost is unset.
             effective = call.cost if call.cost is not None else call.provided_cost
@@ -164,7 +285,7 @@ class NativeTraceBackend:
         task_run.unpriced_call_count = unpriced_count
 
 
-def _generation_execution(
+def generation_execution_facts(
     calls: Sequence[LoggedCallDB], spans: Sequence[OtlpSpanDB]
 ) -> tuple[dict[str, object] | None, set[str]]:
     """Summarize canonical Generation Observations and identify error rows.
@@ -205,6 +326,45 @@ def _generation_execution(
         },
         errored_span_ids,
     )
+
+
+def _generation_usage(
+    calls: Sequence[LoggedCallDB], errored_span_ids: set[str]
+) -> dict[str, object] | None:
+    """Roll model time and reasoning up from the run's generations.
+
+    An average hides the one long call a change introduced, so the summary
+    keeps the slowest and the most-reasoning call alongside the totals, with
+    their ids so a reader can open that call.
+    """
+    generations = [c for c in calls if c.observation_type == "GENERATION"]
+    if not generations:
+        return None
+
+    timed = [c for c in generations if c.latency_ms is not None]
+    slowest = max(timed, key=lambda c: c.latency_ms or 0.0, default=None)
+
+    reasoning: list[tuple[LoggedCallDB, int]] = []
+    for call in generations:
+        if call.id in errored_span_ids:
+            continue
+        value = (call.raw_usage or {}).get("reasoning")
+        if isinstance(value, int) and not isinstance(value, bool):
+            reasoning.append((call, value))
+    most = max(reasoning, key=lambda pair: pair[1], default=None)
+
+    return {
+        "generations": len(generations),
+        "model_time_ms": (
+            round(sum(c.latency_ms or 0.0 for c in timed), 3) if timed else None
+        ),
+        "slowest_call_ms": slowest.latency_ms if slowest else None,
+        "slowest_call_id": slowest.id if slowest else None,
+        "reasoning_tokens": sum(v for _, v in reasoning) if reasoning else None,
+        "reasoning_calls": len(reasoning),
+        "max_call_reasoning_tokens": most[1] if most else None,
+        "max_reasoning_call_id": most[0].id if most else None,
+    }
 
 
 def _finish_reasons(attributes: dict[str, object]) -> list[str]:

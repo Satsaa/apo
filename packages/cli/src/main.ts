@@ -143,7 +143,7 @@ const commands: Record<string, CommandEntry> = {
   },
   "task run": {
     handler: loadCommand("task-run"),
-    help: "Run a task",
+    help: "Run a task. With APO_SECOND_JUDGE_MODEL set, judged checks also get a second judge: ✓✗ marks per check + a split count after the checks",
     args: [
       ["<task-id | path>", "Task id or filesystem path"],
     ],
@@ -208,7 +208,7 @@ const commands: Record<string, CommandEntry> = {
   },
   "runs show": {
     handler: loadCommand("runs-show"),
-    help: "Show run details (checks, failures, cost) from backend",
+    help: "Show run details (checks, failures, cost, reasoning, timing) from backend. Reasoning totals and model time (sum of generation latencies) come with the peak/slowest single call. Checks judged with a second judge carry ✓✗ marks and a split count (APO_SECOND_JUDGE_MODEL)",
     args: [
       ["[run-id]", "Run ID, unique prefix, or 'last' (default: latest run)"],
     ],
@@ -246,7 +246,7 @@ const commands: Record<string, CommandEntry> = {
   },
   "runs rejudge": {
     handler: loadCommand("runs-rejudge"),
-    help: "Re-judge a completed run against its stored deliverables — without re-running the agent",
+    help: "Re-judge a completed run against its stored deliverables — without re-running the agent. Judged checks carry second-judge ✓✗ marks when APO_SECOND_JUDGE_MODEL is set",
     args: [
       ["<run-id>", "Run ID, unique prefix, or 'last'"],
     ],
@@ -362,19 +362,25 @@ const commands: Record<string, CommandEntry> = {
   },
   "traces show": {
     handler: loadCommand("traces-show"),
-    help: "Show trace call details (timing, cost, tokens)",
+    help: "Show trace call details (timing, cost, tokens, reasoning)",
     args: [
       ["<trace-id>", "Trace ID or unique prefix"],
     ],
     options: [
       ["--verbose", "Show per-call type, raw span attributes, input/output/messages"],
       ["--errors-only", "Show only error/warning calls"],
+      ["--full", "Show messages/input/output without truncation (implies --verbose)"],
+      ["--max-chars <n>", "Cap messages/input/output at n chars (implies --verbose)"],
+      ["--call <id>", "Show only this call (id or unique prefix), content untruncated"],
     ],
     examples: [
       "apo traces show abc123",
       "apo traces show abc123 --errors-only",
+      "apo traces show abc123 --full",
+      "apo traces show abc123 --max-chars 2000",
+      "apo traces show abc123 --call c1f2",
     ],
-    note: "Accepts trace-id prefixes. Requires backend auth. Supports --json. Header shows the projection's evidence capabilities; --verbose adds each call's resolved observation_type and raw OTLP span attributes.",
+    note: "Accepts trace-id prefixes. Requires backend auth. Header shows the projection's evidence capabilities. --verbose adds each call's id, resolved observation_type, raw OTLP span attributes, and content previews (300 chars per message, 500 for input/output). --full lifts those caps, --max-chars resizes them, --call prints one generation with messages/input/output in full — all three imply --verbose; span attributes and tool results stay compact, and --max-chars overrides --call's no-cap default. --json prints the full raw trace, messages and span attributes included, never filtered by --call.",
   },
   "batch list": {
     handler: loadCommand("batch-list"),

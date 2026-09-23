@@ -6,12 +6,14 @@ import {
   ChevronRight,
   Coins,
   Cpu,
+  Scale,
   Timer,
 } from "lucide-react";
 import { ExpandableJson } from "@/components/ExpandableJson";
 import { Markdown } from "@/components/trace-detail/Markdown";
-import type { JudgeMetadata } from "@/lib/agent-task-api";
+import type { JudgeMetadata, SecondJudgeEvidence } from "@/lib/agent-task-api";
 import { formatTokenBreakdown } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 function formatLatency(ms?: number): string {
   if (ms == null) return "—";
@@ -26,7 +28,7 @@ function formatTokens(tokens?: { input: number; output: number }): string | null
 
 //─ Judge details (LLM evaluator metadata)──────────────────────────────
 
-export function JudgeStrip({ judge }: { judge: JudgeMetadata }) {
+export function JudgeStrip({ judge, checkPass }: { judge: JudgeMetadata; checkPass?: boolean }) {
   const [showPrompt, setShowPrompt] = useState(false);
   const [showResponse, setShowResponse] = useState(false);
 
@@ -80,6 +82,10 @@ export function JudgeStrip({ judge }: { judge: JudgeMetadata }) {
           <span>temp <span className="text-foreground">{judge.temperature}</span></span>
         )}
       </div>
+
+      {judge.secondJudge && (
+        <SecondJudgeRow second={judge.secondJudge} checkPass={checkPass} />
+      )}
 
       {(hasPrompt || hasResponse) && (
         <div className="flex items-center gap-2">
@@ -138,6 +144,87 @@ export function JudgeStrip({ judge }: { judge: JudgeMetadata }) {
             {judge.response ?? ""}
           </Markdown>
         )
+      )}
+    </div>
+  );
+}
+
+//─ Second judge (typed-decision second grader)─────────────────────────
+
+function ProbBar({ value, tone }: { value: number; tone: "verdict" | "conf" }) {
+  return (
+    <span className="inline-flex h-1.5 w-16 overflow-hidden bg-muted align-middle">
+      <span
+        className={cn("h-full", tone === "verdict" ? "bg-foreground/70" : "bg-muted-foreground")}
+        style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }}
+      />
+    </span>
+  );
+}
+
+/**
+ * The second judge's evidence as facts: verdict, probability distribution,
+ * confidence, latency, cost. What a decision-model score *is* — a choice
+ * over a distribution — rendered instead of described.
+ */
+function SecondJudgeRow({
+  second,
+  checkPass,
+}: {
+  second: SecondJudgeEvidence;
+  checkPass?: boolean;
+}) {
+  // The second grader never changes the verdict — agreement corroborates
+  // the check, disagreement flags it for review.
+  const agrees =
+    second.choice != null && checkPass != null && (second.choice === "pass") === checkPass;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-1.5 text-[11px] text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <Scale className="h-3 w-3" />
+        <span className="uppercase tracking-wider">Second judge</span>
+      </span>
+      <span className="font-mono">{second.model}</span>
+      {second.choice ? (
+        <>
+          {checkPass != null && (
+            <span className={cn("font-medium", agrees ? "text-success" : "text-warning")}>
+              {agrees ? "agrees" : "disagrees"}
+            </span>
+          )}
+          <span>
+            verdict <span className="text-foreground">{second.choice}</span>
+          </span>
+          {second.passProbability != null && (
+            <span className="inline-flex items-center gap-1.5">
+              p(pass){" "}
+              <ProbBar value={second.passProbability} tone="verdict" />{" "}
+              <span className="text-foreground">{second.passProbability.toFixed(2)}</span>
+            </span>
+          )}
+          {second.confidence != null && (
+            <span className="inline-flex items-center gap-1.5">
+              confidence{" "}
+              <ProbBar value={second.confidence} tone="conf" />{" "}
+              <span className="text-foreground">{second.confidence.toFixed(2)}</span>
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="text-destructive">{second.error ?? "no verdict"}</span>
+      )}
+      {second.latencyMs != null && (
+        <span className="inline-flex items-center gap-1.5">
+          <Timer className="h-3 w-3" />
+          <span>{formatLatency(second.latencyMs)}</span>
+        </span>
+      )}
+      {second.costUsd != null && (
+        <span className="inline-flex items-center gap-1.5">
+          <Coins className="h-3 w-3" />
+          <span>${second.costUsd.toFixed(6)}</span>
+        </span>
       )}
     </div>
   );

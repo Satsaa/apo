@@ -13,6 +13,7 @@ import { saveCorrection } from "@/lib/traces-api";
 import { extractOutputText } from "./call-detail-utils";
 import { extractCallContext } from "./tool-utils";
 import { useCallPayload } from "./use-call-payload";
+import { JudgmentBrief } from "./JudgmentBrief";
 
 type CallTab = "preview" | "context" | "metadata";
 const VALID_CALL_TABS = new Set<string>(["preview", "context", "metadata"]);
@@ -118,6 +119,10 @@ export function CallDetailView({ call: slimCall }: { call: LoggedCall }) {
           )}
         </div>
       )}
+
+      {/* Judgment brief: judge/t.agent roots get a verdict card above the
+          tabs; the raw JSON tabs remain for deep dives. */}
+      <JudgmentBrief call={call} allCalls={run?.calls ?? []} loading={payloadLoading} />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <Tabs value={section} onValueChange={(v) => setDetailTab(v)} className="flex flex-1 flex-col overflow-hidden">

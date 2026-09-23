@@ -26,6 +26,8 @@ import TerminalOutput from '../../../components/demos/TerminalOutput.astro';
     { text: "  Source:   cli · sami · apo task run" },
     { text: "  Cost:     $0.003400" },
     { text: "  Tokens:   1,247" },
+    { text: "  Model time: 12.4s over 3 generations · slowest 9.8s (8c68d098872c5aab)" },
+    { text: "  Reasoning: 612 tokens · largest call 540 (2e1e24fa23cfff6c)" },
     { text: "  Trace:    f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6 (apo traces show f1a2b3c4…)", tone: "default" },
     { text: "" },
     { text: "  Checks:", tone: "default" },
@@ -87,7 +89,11 @@ Every field of the run record: identity (`Run`, `Task`, `Path`, `Batch`, `Adapte
 
 The second sample is a run with **no verdict**: most of its generations ended in error, so apo refused to turn the checks into a PASS/FAIL signal (see [Verdict validity](/concepts/tests/#verdict-validity)). The `Generations` row only appears when generations errored; `Result` shows `-` because there is no verdict to show. Cost and token totals are marked `partial`, errored generations are excluded from both, and unpriced calls are excluded from cost.
 
+`Model time` is the sum of the run's generation latencies (tool and harness time are not counted, so it is usually well under the run's duration), with the slowest single call. `Reasoning` sums the reasoning tokens the provider reported, with the largest single call. Both name the call (its span id, which `apo traces show --json` lists), so a change that makes one call slow or verbose shows as a number instead of an average. Reasoning is marked `partial` when only some generations reported it, and the row is left out when none did: a provider that doesn't report reasoning is unknown, not zero. Errored generations count toward model time but not toward reasoning. Runs aggregated before this was recorded show neither row.
+
 With `--verbose`, passing checks are listed with their matchers, and judged checks include the judge's model, prompt, and response, so you can see exactly what the judge was asked and what it said.
+
+When a [second judge](/concepts/tests/#the-second-judge) ran (`APO_SECOND_JUDGE_MODEL`), contested checks carry its verdict inline (`✓✗ 0.99` — the number is its confidence), a one-line takeaway underneath, and a fact line after the checks (`Second judge: 12 corroborated · judges split on 1`). Without a second judge the output is unchanged.
 
 ## Corrected tests
 

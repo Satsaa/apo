@@ -52,6 +52,10 @@ export type AgentTaskTraceClientConfig = {
 interface ActiveSpan {
   span: Span;
   startedAt: number;
+  /** Wall-clock start (epoch ms), so an explicit `latency_ms` at end time
+   * can be encoded into the span's end timestamp — the backend projects
+   * latency from span start/end times, not from the `latency_ms` attr. */
+  startWallMs: number;
   model: string;
   observationType?: string;
 }
@@ -139,6 +143,7 @@ export function createOtelAgentTaskTraceClient(
     activeSpans.set(spanId, {
       span,
       startedAt: monotonicNowMs(),
+      startWallMs: Date.now(),
       model: params.model || "unknown",
       observationType: params.observation_type,
     });
@@ -164,6 +169,18 @@ export function createOtelAgentTaskTraceClient(
           : { value: params.output };
         active.span.setAttribute("gen_ai.tool.call.result", JSON.stringify(payload));
       } else if (params.output.text) {
+        // gen_ai.output.messages has never mapped at ingestion (only tool
+        // results do); gen_ai.response.text is on the normalizer's fallback
+        // chain and demonstrably lands — set both so step outputs survive.
+        active.span.setAttribute("gen_ai.response.text", String(params.output.text));
+        // A structured verdict (judge spans) rides the tool-result channel:
+        // it is the one output channel the trace view renders as a JSON tree.
+        if (params.output.verdict !== undefined) {
+          active.span.setAttribute(
+            "gen_ai.tool.call.result",
+            JSON.stringify(params.output.verdict),
+          );
+        }
         // Use gen_ai.output.messages so the normalizer routes it to the call's
         // structured output field (rendered as chat bubbles + "Correct" button).
         active.span.setAttribute("gen_ai.output.messages", JSON.stringify([{
@@ -190,6 +207,15 @@ export function createOtelAgentTaskTraceClient(
     if (params.completion_tokens !== undefined) {
       active.span.setAttribute("gen_ai.usage.output_tokens", params.completion_tokens);
     }
+    if (params.reasoning_tokens !== undefined) {
+      // The OTel GenAI reasoning attribute the backend's usage normalizer
+      // maps onto the canonical `reasoning` dimension. Absent attribute =
+      // unreported, which downstream must render as unknown, not zero.
+      active.span.setAttribute(
+        "gen_ai.usage.reasoning.output_tokens",
+        params.reasoning_tokens,
+      );
+    }
     if (params.status_message) {
       active.span.setAttribute("apo.status_message", params.status_message);
     }
@@ -200,7 +226,11 @@ export function createOtelAgentTaskTraceClient(
       active.span.setAttribute("apo.metadata", JSON.stringify(params.metadata));
     }
 
-    active.span.end();
+    // End with a timestamp that encodes the recorded latency. A caller that
+    // creates and ends a span back-to-back (after awaiting real work) would
+    // otherwise project a sub-millisecond duration — the backend derives
+    // latency from span start/end times, so the truth has to live there.
+    active.span.end(new Date(active.startWallMs + latency));
     activeSpans.delete(params.id);
   }
 
@@ -252,6 +282,7 @@ export function createOtelAgentTaskTraceClient(
       activeSpans.set(rootSpanId, {
         span: rootSpan,
         startedAt: monotonicNowMs(),
+        startWallMs: Date.now(),
         model: "trace",
       });
 

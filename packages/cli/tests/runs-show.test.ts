@@ -344,6 +344,68 @@ describe("runs show command", () => {
     expect(out).toMatch(/Tokens:.*partial/);
   });
 
+  it("prints model time and reasoning with the call that dominates each", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        total_tokens: 21_000,
+        total_model_time_ms: 58_538,
+        max_call_latency_ms: 7_419,
+        max_call_latency_call_id: "8c68d098872c5aab",
+        total_reasoning_tokens: 5_492,
+        max_call_reasoning_tokens: 1_054,
+        max_call_reasoning_call_id: "2e1e24fa23cfff6c",
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Reasoning: 5,492 tok · max 1,054 in one call (observation 2e1e24fa23cfff6c)");
+    expect(out).toContain("Slowest call: 7s (observation 8c68d098872c5aab)");
+    expect(out).toContain("Model time: 59s");
+    expect(out).not.toContain("not reported");
+  });
+
+  it("marks reasoning unknown when the provider never reported it", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        total_tokens: 4_000,
+        total_model_time_ms: 900,
+        total_reasoning_tokens: null,
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    // Unknown, not zero: "not reported" reads differently from "didn't think".
+    expect(out).toContain("Reasoning: not reported (provider did not send reasoning usage)");
+  });
+
+  it("omits the reasoning line when no generation reported reasoning", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        total_tokens: null,
+        total_model_time_ms: 3_000,
+        max_call_latency_ms: 2_000,
+        max_call_latency_call_id: "a",
+        total_reasoning_tokens: null,
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Model time: 3s");
+    expect(out).not.toContain("Reasoning:");
+  });
+
   it("returns exit code 1 with --exit-status on failed run", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       mockResponse(makeRun({ pass_result: false })),
@@ -465,6 +527,49 @@ describe("runs show command", () => {
   });
 });
 
+// Issue #298: canonical run ids (run_ + 24 hex = 28 chars) fell under the
+// old "< 32 chars means prefix" threshold, so `runs show <full-id>` resolved
+// through the 1000-run listing window and failed for any run outside it.
+describe("runs show full canonical id (issue #298)", () => {
+  const CANONICAL_ID = "run_7e99888dfb3dd44e7f0fb197";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fetches a 28-char canonical id directly — no listing request first", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(mockResponse(makeRun({ id: CANONICAL_ID })));
+    const { logs, restore } = captureLog();
+
+    const code = await run([CANONICAL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `http://backend.test/v1/agent-task-runs/${CANONICAL_ID}`,
+    );
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain(CANONICAL_ID);
+  });
+
+  it("explains a prefix miss instead of reporting a run the backend never saw", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse([]));
+    const { errors, restore } = captureError();
+
+    const code = await run(["run_deadbee", "--backend", "http://backend.test"]);
+    restore();
+
+    expect(code).toBe(2);
+    const out = stripAnsi(errors.join("\n"));
+    expect(out).toContain("run_deadbee");
+    expect(out).toMatch(/full run id/i);
+    expect(out).not.toContain("Backend error");
+  });
+});
+
 describe("runs show heartbeat visibility (issue #176)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -529,5 +634,97 @@ describe("runs show heartbeat visibility (issue #176)", () => {
 
     const out = stripAnsi(logs.join("\n"));
     expect(out).not.toContain("Last beat:");
+  });
+});
+
+// Issue #309: run-level reasoning and per-call timing rollups — the summary
+// must surface "one call thought for 4 minutes" without opening traces.
+describe("runs show reasoning and timing rollups (issue #309)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prints reasoning total, the deepest call, slowest call, and model time", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(
+        makeRun({
+          total_reasoning_tokens: 45_678,
+          max_call_reasoning_tokens: 12_345,
+          max_call_reasoning_call_id: "abcdef0123456789",
+          max_call_latency_ms: 252_000,
+          max_call_latency_call_id: "fedcba9876543210",
+          total_model_time_ms: 750_000,
+        }),
+      ),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toMatch(/Reasoning: 45,678 tok/);
+    expect(out).toContain("max 12,345 in one call");
+    expect(out).toContain("observation abcdef0123456789");
+    expect(out).toMatch(/Slowest call: 4m 12s/);
+    expect(out).toContain("observation fedcba9876543210");
+    expect(out).toMatch(/Model time: 12m 30s/);
+    expect(out).toContain("excludes tool/harness time");
+  });
+
+  it("prints unknown reasoning explicitly — never as zero", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(
+        makeRun({
+          total_reasoning_tokens: null,
+          total_tokens: 5_000,
+        }),
+      ),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Reasoning: not reported");
+    expect(out).not.toMatch(/Reasoning: 0/);
+  });
+
+  it("prints a reported zero reasoning total without the unknown notice", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(
+        makeRun({
+          total_reasoning_tokens: 0,
+          max_call_reasoning_tokens: 0,
+          max_call_reasoning_call_id: "0000000000000001",
+        }),
+      ),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toMatch(/Reasoning: 0 tok/);
+    expect(out).not.toContain("not reported");
+  });
+
+  it("omits the timing lines for legacy payloads without them", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun()),
+    );
+    const { logs, restore } = captureLog();
+
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    // Tokens are present without any reasoning datum → the explicit
+    // unknown line, but no timing lines at all.
+    expect(out).toContain("Reasoning: not reported");
+    expect(out).not.toContain("Slowest call:");
+    expect(out).not.toContain("Model time:");
   });
 });
