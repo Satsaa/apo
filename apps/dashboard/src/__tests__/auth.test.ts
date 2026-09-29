@@ -1,42 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-interface CookieConfig {
-  sessionToken: {
-    name: string;
-    options: {
-      httpOnly: boolean;
-      sameSite: string;
-      path: string;
-      secure: boolean;
-    };
-  };
-}
+import type { NextAuthConfig, User, Account } from "next-auth";
+import type { OIDCConfig } from "next-auth/providers";
 
-interface OidcProviderConfig {
-  id: string;
-  type: string;
-  issuer: string;
-  clientId: string;
-  clientSecret?: string;
-  checks: string[];
-  client?: { token_endpoint_auth_method?: string };
-  profile: (
-    profile: Record<string, unknown>,
-    tokens: { id_token?: string; access_token?: string },
-  ) => Promise<Record<string, unknown>>;
-}
-
-interface NextAuthConfig {
-  cookies: CookieConfig;
-  providers: Array<Record<string, unknown> | OidcProviderConfig>;
-  callbacks: {
-    signIn: (args: {
-      user: Record<string, unknown>;
-      account: { provider: string } | null;
-    }) => Promise<boolean | string>;
-  };
-  [key: string]: unknown;
-}
+const verifiedUser = {
+  id: "apo-user",
+  email: "verified@example.test",
+  name: "Verified",
+  is_admin: true,
+} satisfies User;
+const oidcAccount = {
+  provider: "oidc",
+  type: "oidc",
+  providerAccountId: verifiedUser.id,
+} satisfies Account;
 
 async function importAuthAndCaptureConfig(): Promise<NextAuthConfig> {
   let capturedConfig: NextAuthConfig | null = null;
@@ -60,13 +37,21 @@ async function importAuthAndCaptureConfig(): Promise<NextAuthConfig> {
   }));
 
   await import("@/auth");
-  return capturedConfig!;
+  if (!capturedConfig) throw new Error("NextAuth configuration was not captured");
+  return capturedConfig;
 }
 
 const OIDC_ENV = ["AUTH_OIDC_ISSUER", "AUTH_OIDC_CLIENT_ID", "AUTH_OIDC_CLIENT_SECRET"] as const;
 
-function findOidc(config: NextAuthConfig): OidcProviderConfig | undefined {
-  return config.providers.find((p) => p.id === "oidc") as OidcProviderConfig | undefined;
+function findOidc(config: NextAuthConfig) {
+  return config.providers.find(
+    (p): p is OIDCConfig<Record<string, unknown>> => typeof p !== "function" && p.type === "oidc",
+  );
+}
+
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("Expected configured auth callback or provider");
+  return value;
 }
 
 describe("auth.ts single sign-on provider", () => {
@@ -102,7 +87,7 @@ describe("auth.ts single sign-on provider", () => {
     process.env.AUTH_OIDC_ISSUER = "https://auth.example.test/";
     process.env.AUTH_OIDC_CLIENT_ID = "apo";
     const config = await importAuthAndCaptureConfig();
-    const oidc = findOidc(config)!;
+    const oidc = required(findOidc(config));
     expect(oidc.issuer).toBe("https://auth.example.test");
     expect(oidc.clientSecret).toBeUndefined();
     expect(oidc.client?.token_endpoint_auth_method).toBe("none");
@@ -113,7 +98,7 @@ describe("auth.ts single sign-on provider", () => {
     process.env.AUTH_OIDC_ISSUER = "https://auth.example.test";
     process.env.AUTH_OIDC_CLIENT_ID = "apo";
     process.env.AUTH_OIDC_CLIENT_SECRET = "s3cret";
-    const oidc = findOidc(await importAuthAndCaptureConfig())!;
+    const oidc = required(findOidc(await importAuthAndCaptureConfig()));
     expect(oidc.clientSecret).toBe("s3cret");
     expect(oidc.client).toBeUndefined();
   });
@@ -133,9 +118,9 @@ describe("auth.ts single sign-on provider", () => {
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
-    const oidc = findOidc(await importAuthAndCaptureConfig())!;
+    const oidc = required(findOidc(await importAuthAndCaptureConfig()));
 
-    const user = await oidc.profile(
+    const user = await required(oidc.profile)(
       { sub: "x", email: "claimed@example.test", name: "Claimed", roles: ["agentio_super_admin"] },
       { id_token: "id.t", access_token: "at" },
     );
@@ -161,12 +146,12 @@ describe("auth.ts single sign-on provider", () => {
       vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => ({}) }),
     );
     const config = await importAuthAndCaptureConfig();
-    const oidc = findOidc(config)!;
+    const oidc = required(findOidc(config));
 
-    const user = await oidc.profile({ sub: "x" }, { id_token: "id.t", access_token: "at" });
+    const user = await required(oidc.profile)({ sub: "x" }, { id_token: "id.t", access_token: "at" });
     expect(user.sso_error).toBe("forbidden");
     await expect(
-      config.callbacks.signIn({ user, account: { provider: "oidc" } }),
+      required(config.callbacks?.signIn)({ user, account: oidcAccount }),
     ).resolves.toBe("/login?sso_error=forbidden");
   });
 
@@ -175,12 +160,49 @@ describe("auth.ts single sign-on provider", () => {
     process.env.AUTH_OIDC_CLIENT_ID = "apo";
     const config = await importAuthAndCaptureConfig();
     await expect(
-      config.callbacks.signIn({ user: { id: "" }, account: { provider: "oidc" } }),
+      required(config.callbacks?.signIn)({ user: { ...verifiedUser, id: "authjs-generated-id" }, account: { ...oidcAccount, providerAccountId: "" } }),
     ).resolves.toBe("/login?sso_error=failed");
     await expect(
-      config.callbacks.signIn({ user: { id: "u-1" }, account: { provider: "credentials" } }),
+      required(config.callbacks?.signIn)({ user: verifiedUser, account: { provider: "credentials", type: "credentials", providerAccountId: verifiedUser.id } }),
     ).resolves.toBe(true);
   });
+
+  it("preserves the verified apo identity when Auth.js replaces the OAuth user id", async () => {
+    const config = await importAuthAndCaptureConfig();
+    const jwt = required(config.callbacks?.jwt);
+    // Auth.js getUserAndAccount replaces profile.id; defaultToken.sub uses
+    // that replacement. The backend exchange id survives in providerAccountId.
+    const user = { ...verifiedUser, id: "authjs-generated-id", sso_expires_at: 1234 };
+    const token = required(await jwt({
+      token: { ...user, sub: user.id },
+      user,
+      account: { ...oidcAccount, access_token: "access-token", id_token: "id-token" },
+      trigger: "signIn",
+    }) ?? undefined);
+    expect(token.sub, "Backend lookup must use the verified apo database id").toBe(verifiedUser.id);
+    expect(token.id, "Dashboard and backend must agree on the signed-in identity").toBe(verifiedUser.id);
+    expect(token.oidc_access_token).toBe("access-token");
+    expect(token.oidc_expires_at).toBe(user.sso_expires_at);
+
+    // On session refresh Auth.js supplies neither user nor account.
+    const refresh = { token } as Parameters<typeof jwt>[0];
+    expect(await jwt(refresh), "Refreshing the cookie must retain the apo identity").toEqual(token);
+  });
+
+  it("keeps credential sign-ins on their backend-issued user id", async () => {
+    const config = await importAuthAndCaptureConfig();
+    const jwt = required(config.callbacks?.jwt);
+    const token = await jwt({
+      token: { ...verifiedUser, sub: verifiedUser.id },
+      user: verifiedUser,
+      account: { provider: "credentials", type: "credentials", providerAccountId: "unused" },
+      trigger: "signIn",
+    });
+    expect(token?.sub).toBe(verifiedUser.id);
+    expect(token?.id).toBe(verifiedUser.id);
+    expect(token?.auth_provider).toBeUndefined();
+  });
+
 });
 
 describe("auth.ts cookie configuration", () => {
@@ -206,31 +228,31 @@ describe("auth.ts cookie configuration", () => {
     process.env.NEXTAUTH_URL = "https://optimizer.example.com";
     const config = await importAuthAndCaptureConfig();
 
-    const cookie = config.cookies.sessionToken;
+    const cookie = required(config.cookies?.sessionToken);
     expect(cookie.name).toBe("__Secure-authjs.session-token");
-    expect(cookie.options.secure).toBe(true);
-    expect(cookie.options.httpOnly).toBe(true);
-    expect(cookie.options.sameSite).toBe("lax");
-    expect(cookie.options.path).toBe("/");
+    expect(required(cookie.options).secure).toBe(true);
+    expect(required(cookie.options).httpOnly).toBe(true);
+    expect(required(cookie.options).sameSite).toBe("lax");
+    expect(required(cookie.options).path).toBe("/");
   });
 
   it("uses plain cookie name with secure=false when NEXTAUTH_URL is http", async () => {
     process.env.NEXTAUTH_URL = "http://localhost:3000";
     const config = await importAuthAndCaptureConfig();
 
-    const cookie = config.cookies.sessionToken;
+    const cookie = required(config.cookies?.sessionToken);
     expect(cookie.name).toBe("authjs.session-token");
-    expect(cookie.options.secure).toBe(false);
-    expect(cookie.options.httpOnly).toBe(true);
-    expect(cookie.options.sameSite).toBe("lax");
+    expect(required(cookie.options).secure).toBe(false);
+    expect(required(cookie.options).httpOnly).toBe(true);
+    expect(required(cookie.options).sameSite).toBe("lax");
   });
 
   it("defaults to http mode (plain cookie, secure=false) when NEXTAUTH_URL is unset", async () => {
     delete process.env.NEXTAUTH_URL;
     const config = await importAuthAndCaptureConfig();
 
-    const cookie = config.cookies.sessionToken;
+    const cookie = required(config.cookies?.sessionToken);
     expect(cookie.name).toBe("authjs.session-token");
-    expect(cookie.options.secure).toBe(false);
+    expect(required(cookie.options).secure).toBe(false);
   });
 });
