@@ -184,7 +184,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async signIn({ user, account }) {
       // A refused SSO exchange never becomes a session; the login page
       // explains the refusal from the code.
-      if (account?.provider === "oidc" && (user.sso_error || !user.id)) {
+      if (account?.provider === "oidc" && (user.sso_error || !account.providerAccountId)) {
         return `/login?sso_error=${user.sso_error ?? "failed"}`
       }
       return true
@@ -197,6 +197,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.is_admin = user.is_admin
       }
       if (account?.provider === "oidc" && user) {
+        // Auth.js replaces profile.id with a random user.id and preserves the
+        // backend exchange's identity as account.providerAccountId instead.
+        // Both the dashboard (id) and backend (sub) need that apo identity.
+        token.id = account.providerAccountId
+        token.sub = account.providerAccountId
         token.auth_provider = "oidc"
         token.oidc_id_token = account.id_token
         token.oidc_access_token = account.access_token
