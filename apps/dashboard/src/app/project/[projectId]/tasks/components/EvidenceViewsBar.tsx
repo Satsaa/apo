@@ -110,14 +110,14 @@ export function EvidenceViewsBar({
           <button
             type="button"
             onClick={onClearSelection}
-            className="underline-offset-2 hover:text-foreground/70 hover:underline"
+            className="py-1 underline-offset-2 hover:text-foreground/70 hover:underline"
           >
             <span className="font-medium text-foreground/70">{selectedCount}</span> selected
           </button>
           <div className="h-4 w-px bg-border" />
         </>
       )}
-      <button type="button" onClick={onToggleExpandAll} className="hover:text-foreground/70">
+      <button type="button" onClick={onToggleExpandAll} className="py-1 hover:text-foreground/70">
         {allExpanded ? "Collapse all" : "Expand all"}
       </button>
     </div>
@@ -171,7 +171,7 @@ export function EvidenceViewsBar({
                     type="button"
                     aria-label={`Close ${v.label} tab`}
                     onClick={() => onClose(v.id)}
-                    className="grid place-items-center border-l border-foreground/10 px-1.5 text-muted-foreground/50 hover:bg-destructive/20 hover:text-destructive"
+                    className="grid place-items-center border-l border-foreground/10 px-2.5 text-muted-foreground/50 hover:bg-destructive/20 hover:text-destructive"
                     title="Close tab"
                   >
                     <X className="h-3 w-3" />

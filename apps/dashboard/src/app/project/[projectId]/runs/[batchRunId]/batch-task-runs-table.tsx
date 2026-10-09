@@ -43,7 +43,9 @@ export function BatchTaskRunsTable({
 
   return (
     <div className="flex flex-col">
-      <Table density="compact" className="min-w-[560px]">
+      {/* Phones show Task run + Started only (the row hides the rest below
+          sm), so the table must not force its desktop min-width there. */}
+      <Table density="compact" className="min-w-0 sm:min-w-[560px]">
         <TaskRunListHeader />
         <TableBody>
           {visibleRuns.map((run) => (

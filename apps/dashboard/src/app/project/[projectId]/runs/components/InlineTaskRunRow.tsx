@@ -83,7 +83,7 @@ export function InlineTaskRunRow({
 
       <TableCell aria-hidden className="hidden xl:table-cell" />
 
-      <TableCell>
+      <TableCell className="hidden sm:table-cell">
         <span
           className="truncate font-mono text-[12px] tabular-nums text-muted-foreground"
           title={formatRunExecutionFull(run.run_configuration)}
@@ -96,7 +96,7 @@ export function InlineTaskRunRow({
         <HostLabelsCell labels={providerLabels(run.model_providers)} />
       </TableCell>
 
-      <TableCell className="text-right">
+      <TableCell className="hidden text-right sm:table-cell">
         <div className="flex items-center justify-end gap-2 font-mono text-[12px] tabular-nums">
           {isInactive || run.total_checks === 0 ? (
             <span className="text-muted-foreground">&mdash;</span>
@@ -130,7 +130,7 @@ export function InlineTaskRunRow({
         )}
       </TableCell>
 
-      <TableCell className="text-right">
+      <TableCell className="hidden text-right sm:table-cell">
         <div className="inline-flex items-center justify-end gap-1.5 font-mono text-[12px] tabular-nums text-foreground">
           <Clock className="h-3 w-3 text-muted-foreground/50" />
           {formatDuration(run.started_at, run.completed_at, status === "running")}

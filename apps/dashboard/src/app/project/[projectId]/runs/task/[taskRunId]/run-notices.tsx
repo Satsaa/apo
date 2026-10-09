@@ -42,7 +42,7 @@ export function RunNotices({
             type="button"
             aria-expanded={corrOpen}
             onClick={() => setOpen(corrOpen ? null : "corrections")}
-            className="inline-flex items-center gap-1.5 border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning transition-colors hover:bg-warning/20"
+            className="inline-flex items-center gap-1.5 border border-warning/40 bg-warning/10 px-2 py-1 text-warning transition-colors hover:bg-warning/20"
           >
             ⚑ {correctedChecks.length} check{correctedChecks.length === 1 ? "" : "s"} corrected
             <span className="text-warning/60">{corrOpen ? "▾" : "▸"}</span>
@@ -54,7 +54,7 @@ export function RunNotices({
             aria-expanded={driftOpen}
             onClick={() => setOpen(driftOpen ? null : "drift")}
             className={cn(
-              "inline-flex items-center gap-1.5 border px-2 py-0.5 transition-colors",
+              "inline-flex items-center gap-1.5 border px-2 py-1 transition-colors",
               driftLoud
                 ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"
                 : "border-border bg-muted/40 text-muted-foreground hover:text-foreground",

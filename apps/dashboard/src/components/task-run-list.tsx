@@ -20,9 +20,10 @@ import {
 
 // Column widths shared by the header and every row (table-fixed layout —
 // the task-run column absorbs the remaining width). Batch and Execution
-// only exist as columns from xl up; below that the five visible columns
-// fit without a scrollbar (the traces and runs tables hide columns the
-// same way).
+// only exist as columns from xl up. Phones (<sm) drop Trigger, Judges and
+// Duration too — the run identity, its Started cell with row actions, and
+// the status label inside the first column are the scan-essentials; the
+// rest lives one tap away on the run page.
 const COL = {
   trigger: 170,
   batch: 90,
@@ -176,7 +177,7 @@ export function TaskRunRow({
         </div>
       </TableCell>
 
-      <TableCell className="max-w-[190px]" style={{ width: COL.trigger }}>
+      <TableCell className="hidden max-w-[190px] sm:table-cell" style={{ width: COL.trigger }}>
         <TriggerBadge trigger={run.trigger} />
       </TableCell>
 
@@ -200,14 +201,14 @@ export function TaskRunRow({
         </span>
       </TableCell>
 
-      <TableCell className="text-right" style={{ width: COL.judges }}>
+      <TableCell className="hidden text-right sm:table-cell" style={{ width: COL.judges }}>
         <JudgesCounts run={run} />
         <div className="mt-1">
           <TaskRunPassBar value={passRate} muted={!isDone} />
         </div>
       </TableCell>
 
-      <TableCell className="text-right" style={{ width: COL.duration }}>
+      <TableCell className="hidden text-right sm:table-cell" style={{ width: COL.duration }}>
         <RunDuration run={run} />
         <div className="mt-0.5"><RunCost run={run} /></div>
         <div className="mt-0.5"><RunTokens run={run} /></div>
@@ -260,12 +261,12 @@ export function TaskRunListHeader() {
     <TableHeader>
       <TableRow className="border-border hover:bg-transparent">
         <TableHead className="pl-6">Task run</TableHead>
-        <TableHead style={{ width: COL.trigger }}>Trigger</TableHead>
+        <TableHead className="hidden sm:table-cell" style={{ width: COL.trigger }}>Trigger</TableHead>
         <TableHead className="hidden xl:table-cell" style={{ width: COL.batch }}>Batch</TableHead>
         <TableHead className="hidden xl:table-cell" style={{ width: COL.hosts }}>Hosts</TableHead>
         <TableHead className="hidden xl:table-cell" style={{ width: COL.execution }}>Execution</TableHead>
-        <TableHead className="text-right" style={{ width: COL.judges }}>Judges</TableHead>
-        <TableHead className="text-right" style={{ width: COL.duration }}>Duration</TableHead>
+        <TableHead className="hidden text-right sm:table-cell" style={{ width: COL.judges }}>Judges</TableHead>
+        <TableHead className="hidden text-right sm:table-cell" style={{ width: COL.duration }}>Duration</TableHead>
         <TableHead className="pr-6 text-right" style={{ width: COL.started }}>Started</TableHead>
       </TableRow>
     </TableHeader>

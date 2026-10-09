@@ -313,7 +313,10 @@ export function RunsClient({
                 <TableHead style={{ width: COL.chevron }} />
                 <TableHead>Run</TableHead>
                 <TableHead style={{ width: COL.source }} className="hidden xl:table-cell">Source</TableHead>
-                <TableHead style={{ width: COL.execution }}>
+                {/* Phones (<sm) keep only Run and Created — Created carries the
+                    compare/delete actions, and Execution's model filter is
+                    desktop-only; the batch detail page shows the rest. */}
+                <TableHead style={{ width: COL.execution }} className="hidden sm:table-cell">
                   <span className="inline-flex items-center gap-1">
                     Execution
                     <RunsModelFilter
@@ -336,8 +339,8 @@ export function RunsClient({
                     />
                   </span>
                 </TableHead>
-                <TableHead style={{ width: COL.tasks }} className="text-right">Tasks {"\u00b7"} Pass rate</TableHead>
-                <TableHead style={{ width: COL.duration }} className="text-right">Duration</TableHead>
+                <TableHead style={{ width: COL.tasks }} className="hidden text-right sm:table-cell">Tasks {"\u00b7"} Pass rate</TableHead>
+                <TableHead style={{ width: COL.duration }} className="hidden text-right sm:table-cell">Duration</TableHead>
                 <TableHead style={{ width: COL.created }} className="text-right">Created</TableHead>
               </TableRow>
             </TableHeader>

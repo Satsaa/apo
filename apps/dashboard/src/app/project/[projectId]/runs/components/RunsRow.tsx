@@ -235,7 +235,7 @@ export function RunsRow({
           </div>
         </TableCell>
 
-        <TableCell>
+        <TableCell className="hidden sm:table-cell">
           <span className="truncate font-mono text-[12px] tabular-nums text-muted-foreground" title={formatBatchExecution(batch.configuration)}>
             {formatBatchExecution(batch.configuration)}
           </span>
@@ -255,7 +255,7 @@ export function RunsRow({
           />
         </TableCell>
 
-        <TableCell className="text-right">
+        <TableCell className="hidden text-right sm:table-cell">
           <div className="flex items-center justify-end gap-2 font-mono text-[13px] tabular-nums">
             <span className={cn(
               "tabular-nums",
@@ -280,7 +280,7 @@ export function RunsRow({
           </div>
         </TableCell>
 
-        <TableCell className="text-right">
+        <TableCell className="hidden text-right sm:table-cell">
           <div className="inline-flex items-center justify-end gap-1.5 font-mono text-[13px] tabular-nums text-foreground">
             <Clock className="h-3 w-3 text-muted-foreground/50" />
             {formatDuration(batch.started_at, batch.completed_at, isRunning)}

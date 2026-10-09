@@ -159,7 +159,7 @@ export function TaskFolderSelect({
                 onClick={() =>
                   setExpanded(allExpanded ? new Set() : new Set(allFolderIds))
                 }
-                className="hover:text-foreground/70"
+                className="py-1 hover:text-foreground/70"
               >
                 {allExpanded ? "Collapse all" : "Expand all"}
               </button>
