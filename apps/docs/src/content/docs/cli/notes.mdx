@@ -45,13 +45,13 @@ Folder and task notes appear once above the checks. A test's notes appear under 
     { text: "  Checks:" },
     { text: "    FAIL C-021 — Identifies mixed-motive theory of liability", tone: "danger" },
     { text: "      note · Audited 2026-10-12 against the case file and the law: sound. Misses are real gaps." },
-    { text: "             (sami@company.test · 2026-10-12 · note_9a7b… · task changed since)" },
+    { text: "             (sami@company.test · 2026-10-12 · note_9a7b… · different task revision)" },
   ]}
 />
 
-Task and test notes record the definition of the task (its eval file) current when they were written. On a run of a different definition the note is marked **`task changed since`**: it may still hold, but the eval changed after it was written, so check it before relying on it. Editing a note's text re-anchors it to the current definition. Folder notes are not anchored.
+Task and test notes record the definition of the task (its eval file) current when they were written. On a run of a different definition the note is marked **`different task revision`**: it may still hold, but the task differs from the one the note describes, so check it before relying on it. Editing a note's text re-anchors it to the current definition. Folder notes are not anchored.
 
-With `--json`, the run detail carries the same notes as `task_notes`, each with `task_changed_since`.
+With `--json`, the run detail carries the same notes as `task_notes`, each with `task_definition_revision_matches_run`.
 
 ## Writing a useful note
 

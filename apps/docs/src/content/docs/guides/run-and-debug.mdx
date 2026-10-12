@@ -101,10 +101,14 @@ Once you've found the cause, the fix depends on **who was wrong**: inspect the e
 
 Whichever it was, if the investigation established something the next person would otherwise re-derive (the criterion was audited and is sound, the judge misreads one kind of answer, a model normally scores in a known range), write it down as a [note](/cli/notes/) with its evidence. `apo runs show` prints the notes that apply to a run, so the next look at the same failure starts from what you found:
 
-```bash
-apo notes add extract-parties --test "parties-are-complete" \
-  "Audited 2026-10-12: the fixture names 4 parties and the rubric wants all 4; misses are real (run_de89cab)."
-```
+<TerminalDemo
+  command={'apo notes add extract-parties --test "parties-are-complete" "Audited 2026-10-12: the fixture names 4 parties and the rubric wants all 4; misses are real (run_de89cab)."'}
+  lines={[
+    { text: "Noted on extract-parties:", tone: "bold" },
+    { text: "  test parties-are-complete · Audited 2026-10-12: the fixture names 4 parties and the rubric wants all 4; misses are real (run_de89cab)." },
+    { text: "    (sami@company.test · 2026-10-12 · note_9a7b…)", tone: "dim" },
+  ]}
+/>
 
 The `Trace:` id in the breakdown is that run's one trace, there's never ambiguity about which trace belongs to a run. See [Mental model](/concepts/mental-model/) for the one-trace-per-run rule.
 

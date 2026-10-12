@@ -875,12 +875,13 @@ class TaskNote(SQLModel):
     created_via: Literal["session", "api_key", "open_dev"]
     created_at: datetime
     updated_by_user_id: str | None
+    updated_by_label: str | None
+    updated_via: Literal["session", "api_key", "open_dev"]
     updated_at: datetime
     archived_at: datetime | None
-    # Set only when Notes are read for a Run: whether the Note was written
-    # against a different Task Definition Revision than the Run pinned. None
-    # when either side is unknown (Folder Notes, Runs without a revision).
-    task_changed_since: bool | None = None
+    # Set only when Notes are read for a Run. None when either side is unknown
+    # (Folder Notes, Runs without a revision).
+    task_definition_revision_matches_run: bool | None = None
 
 
 class TaskNoteList(SQLModel):

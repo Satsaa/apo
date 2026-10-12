@@ -28,11 +28,13 @@ export type TaskNote = {
   created_via: "session" | "api_key" | "open_dev";
   created_at: string;
   updated_by_user_id: string | null;
+  updated_by_label: string | null;
+  updated_via: "session" | "api_key" | "open_dev";
   updated_at: string;
   archived_at: string | null;
-  /** Set when read for a Run: written against a different definition of the
-   * Task than the Run pinned. Null/absent when either side is unknown. */
-  task_changed_since?: boolean | null;
+  /** Set when read for a Run: whether the Note's Task Definition Revision
+   * matches the Run's. Null/absent when either side is unknown. */
+  task_definition_revision_matches_run?: boolean | null;
 };
 
 export type TaskNoteList = { notes: TaskNote[] };
@@ -99,9 +101,11 @@ export function formatNote(note: TaskNote, opts: { indent: string; label: string
   const continuation = `${opts.indent}  `;
   for (const line of rest) lines.push(`${continuation}${line}`);
 
-  const who = note.created_by_label ?? note.created_by_user_id ?? note.created_via;
-  const meta = [who, note.updated_at.slice(0, 10), note.id];
-  if (note.task_changed_since) meta.push("task changed since");
+  const creator = note.created_by_label ?? note.created_by_user_id ?? note.created_via;
+  const updater = note.updated_by_label ?? note.updated_by_user_id ?? note.updated_via;
+  const attribution = creator === updater ? creator : `created by ${creator} · updated by ${updater}`;
+  const meta = [attribution, note.updated_at.slice(0, 10), note.id];
+  if (note.task_definition_revision_matches_run === false) meta.push("different task revision");
   if (note.archived_at) meta.push("archived");
   lines.push(dim(`${continuation}(${meta.join(" · ")})`));
   return lines;

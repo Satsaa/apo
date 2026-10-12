@@ -830,8 +830,8 @@ class AgentTaskNoteDB(SQLModel, table=True):
     Exactly one scope is set: ``folder`` (a path prefix, whole segments),
     ``task_id``, or ``task_id`` + ``test_id``. Notes never touch a verdict.
     ``task_definition_revision_id`` anchors Task and Test Notes to the
-    definition current when they were written, so readers can tell when
-    the Task has changed since.
+    definition current when they were written, so readers can tell whether
+    it matches the Task revision used by a Run.
     """
 
     __tablename__: ClassVar[str] = "agent_task_notes"
@@ -856,6 +856,8 @@ class AgentTaskNoteDB(SQLModel, table=True):
         sa_column=Column(UTCDateTime, server_default=func.now()),
     )
     updated_by_user_id: str | None = None
+    updated_via: str = "session"  # session | api_key | open_dev
+    updated_api_key_id: str | None = None
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(UTCDateTime, server_default=func.now()),

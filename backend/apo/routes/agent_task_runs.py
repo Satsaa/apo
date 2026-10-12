@@ -53,6 +53,7 @@ from ..services.agent_task_deliverables import derive_deliverables_json
 from ..services.judgments import count_judgments
 from ..services.judge_span_links import annotate_judge_span_ids
 from ..services.test_result_corrections import projected_check_report
+from ..services.task_notes import notes_for_run
 from ..services.agent_task_outcome import classify_run_outcome
 from ..services.agent_task_run_access import require_task_run_access
 from ..services.lifecycle import TASK_RUN_TERMINAL, is_batch_run_terminal
@@ -1001,8 +1002,6 @@ async def get_agent_task_run(
         deliverables_json=await derive_deliverables_json(session, task_run),
     )
     if batch is not None:
-        from apo.services.task_notes import notes_for_run
-
         detail.task_notes = notes_for_run(session, project=batch.project, task_run=task_run)
     return detail
 

@@ -3,7 +3,7 @@
  *
  * 1. notesForRun splits Folder/Task Notes from Test Notes keyed by test id.
  * 2. The Notes panel shows Folder and Task Notes with scope label,
- *    attribution, the "Task changed since" marker, and plain-text bodies.
+ *    attribution, the "Different task revision" marker, and plain-text bodies.
  * 3. A Test Note renders inside its check — passing checks too — and only
  *    there.
  * 4. No Notes (absent or empty) → nothing renders.
@@ -31,7 +31,7 @@ import type { CheckResult, TaskNote } from "@/lib/agent-task-api";
 import { ChecksList } from "./checks-list";
 import { ExpandableCheckItem } from "./expandable-check-item";
 import { TaskNotesPanel } from "./task-notes";
-import { notesForRun } from "./task-notes-model";
+import { noteAttribution, notesForRun } from "./task-notes-model";
 
 function note(overrides: Partial<TaskNote> = {}): TaskNote {
   return {
@@ -47,9 +47,11 @@ function note(overrides: Partial<TaskNote> = {}): TaskNote {
     created_via: "session",
     created_at: "2026-10-10T09:00:00Z",
     updated_by_user_id: "u1",
+    updated_by_label: "sami",
+    updated_via: "session",
     updated_at: "2026-10-12T09:00:00Z",
     archived_at: null,
-    task_changed_since: false,
+    task_definition_revision_matches_run: true,
     ...overrides,
   };
 }
@@ -62,9 +64,10 @@ const folderNote = note({
   task_definition_revision_id: null,
   body: "DeepSeek judge returns FAIL under PASS reasoning\nabout 1 draw in 5",
   created_by_label: "ci-agent",
+  updated_by_label: "ci-agent",
   updated_at: "2026-10-01T00:00:00Z",
 });
-const taskNote = note({ id: "note_task", task_changed_since: true });
+const taskNote = note({ id: "note_task", task_definition_revision_matches_run: false });
 const testNote = note({
   id: "note_test",
   scope: "test",
@@ -91,6 +94,16 @@ describe("notesForRun", () => {
   });
 });
 
+describe("noteAttribution", () => {
+  it("distinguishes the creator from the editor of the current text", () => {
+    expect(
+      noteAttribution(
+        note({ updated_by_user_id: "u2", updated_by_label: "alex", updated_via: "session" }),
+      ),
+    ).toBe("created by sami · updated by alex · 2026-10-12");
+  });
+});
+
 describe("TaskNotesPanel", () => {
   it("renders Folder and Task Notes with attribution and the changed-since marker", () => {
     render(<TaskNotesPanel notes={[folderNote, taskNote]} />);
@@ -100,7 +113,7 @@ describe("TaskNotesPanel", () => {
     expect(panel).toHaveTextContent("ci-agent · 2026-10-01");
     expect(panel).toHaveTextContent("Task");
     expect(panel).toHaveTextContent("sami · 2026-10-12");
-    expect(screen.getAllByText("Task changed since")).toHaveLength(1);
+    expect(screen.getAllByText("Different task revision")).toHaveLength(1);
 
     // Plain text with line breaks kept, not rendered markup.
     const body = screen.getByText(/DeepSeek judge returns FAIL/);

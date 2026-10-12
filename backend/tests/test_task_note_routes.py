@@ -305,6 +305,30 @@ class TestAuth:
         assert note["created_by_label"] == "u1@test.com"
         assert _list(keyed, task_id=TASK)[0]["created_by_label"] == "u1@test.com"
 
+    def test_edit_attributes_the_current_text_to_its_editor(
+        self, make_authed_client: Any, session: Session
+    ) -> None:
+        _seed_project(session)
+        session.add(UserDB(id="u2", email="u2@test.com", name="U2", password_hash="x"))
+        session.flush()
+        session.add(
+            ProjectMembershipDB(
+                project_id="p1", user_id="u2", role="member", created_at=NOW, updated_at=NOW
+            )
+        )
+        session.commit()
+        creator = make_authed_client("u1", session)
+        editor = make_authed_client("u2", session)
+        note = _add(creator, task_id=TASK).json()
+
+        edited = editor.patch(f"/v1/task-notes/{note['id']}", json={"body": "re-checked by u2"})
+
+        assert edited.status_code == 200
+        assert edited.json()["created_by_label"] == "u1@test.com"
+        assert edited.json()["updated_by_label"] == "u2@test.com"
+        assert edited.json()["updated_via"] == "session"
+        assert _list(editor, task_id=TASK)[0]["updated_by_label"] == "u2@test.com"
+
     def test_ingest_key_cannot_write(self, make_api_key_client: Any, session: Session) -> None:
         _seed_project(session)
         ingest = make_api_key_client("u1", "p1", session, scope="ingest")
@@ -367,11 +391,11 @@ class TestRunDetail:
         on_v1 = client.get("/v1/agent-task-runs/run-v1").json()["task_notes"]
         on_v2 = client.get("/v1/agent-task-runs/run-v2").json()["task_notes"]
 
-        assert [(n["body"], n["task_changed_since"]) for n in on_v1] == [
+        assert [(n["body"], n["task_definition_revision_matches_run"]) for n in on_v1] == [
             ("set-wide", None),
-            ("written on v1", False),
+            ("written on v1", True),
         ]
-        assert [n["task_changed_since"] for n in on_v2] == [None, True]
+        assert [n["task_definition_revision_matches_run"] for n in on_v2] == [None, False]
 
     def test_run_without_notes_has_an_empty_list(self, client: TestClient, session: Session) -> None:
         _seed_project(session)

@@ -104,7 +104,7 @@ The task defines correct behavior; a failing run means the **agent** (or its ada
 
 ## Notes: what the project already knows
 
-\`apo runs show\` prints the **notes** the project has written about the task: notes on the folder and the task above the checks, and a test's notes under that test when it fails. They record what earlier investigations established, such as a criterion that was audited and found sound, a judge that misreads one kind of answer, or the score range a model normally lands in. Read them before diagnosing a failure. A note marked \`task changed since\` was written against an earlier version of the eval file, so check that it still holds before relying on it.
+\`apo runs show\` prints the **notes** the project has written about the task: notes on the folder and the task above the checks, and a test's notes under that test when it fails. They record what earlier investigations established, such as a criterion that was audited and found sound, a judge that misreads one kind of answer, or the score range a model normally lands in. Read them before diagnosing a failure. A note marked \`different task revision\` was written against a different version of the eval file, so check that it still holds before relying on it.
 
 When you establish something the next person would otherwise have to re-derive, write it down:
 

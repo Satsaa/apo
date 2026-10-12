@@ -392,7 +392,7 @@ const commands: Record<string, CommandEntry> = {
       "apo notes add --folder harvey-lab \"The DeepSeek judge returns FAIL under reasoning that concludes PASS ~1 draw in 5; rejudge --samples 5 before correcting.\"",
       "cat finding.md | apo notes add harvey-lab/assess-legal-risk -",
     ],
-    note: "Write facts with their evidence (run ids, judgment ids, the document that settles it) and a date — not verdicts about models. Task and test notes record the task's current definition, so runs on a later definition show 'task changed since'. 3–4000 chars. Never prompts.",
+    note: "Write facts with their evidence (run ids, judgment ids, the document that settles it) and a date — not verdicts about models. Task and test notes record the task's current definition, so runs on another definition show 'different task revision'. 3–4000 chars. Never prompts.",
   },
   "notes edit": {
     handler: loadCommand("notes-edit"),

@@ -4,7 +4,7 @@ import { noteAttribution, noteScopeLabel } from "./task-notes-model";
 /**
  * Task Notes, read-only. Folder and Task Notes render once above
  * the checks; a Test's Notes render inside its check. A Note is knowledge,
- * not a verdict, so it stays gray — only the "Task changed since" marker
+ * not a verdict, so it stays gray — only the "Different task revision" marker
  * takes the warning tone, because it qualifies whether the Note still holds.
  * Bodies are plain text with line breaks preserved, never parsed as markup.
  */
@@ -46,12 +46,12 @@ function NoteEntry({ note, label }: { note: TaskNote; label: string }) {
       <p className="flex flex-wrap items-baseline gap-x-2">
         <span className="font-mono text-foreground">{label}</span>
         <span className="text-muted-foreground">{noteAttribution(note)}</span>
-        {note.task_changed_since === true && (
+        {note.task_definition_revision_matches_run === false && (
           <span
             className="border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning"
-            title="This Note was written against a different version of the Task's eval file than this run used"
+            title="This Note was written against a different Task Definition Revision than this run used"
           >
-            Task changed since
+            Different task revision
           </span>
         )}
       </p>

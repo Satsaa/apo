@@ -9,7 +9,7 @@ Report, a correction, or a Run scalar. Scope is one of
 
 Task and Test Notes are anchored to the Task Definition Revision current when
 they were written, so a reader viewing a Run pinned to a different revision can
-be told the Task changed since.
+be told the revisions differ without implying which one is newer.
 """
 
 from __future__ import annotations
@@ -39,11 +39,11 @@ class TaskNoteError(ValueError):
         self.kind = kind
 
 
-def normalize_folder(folder: str) -> str:
+def _normalize_folder(folder: str) -> str:
     return "/".join(segment for segment in folder.strip().split("/") if segment)
 
 
-def ancestor_folders(task_id: str) -> list[str]:
+def _ancestor_folders(task_id: str) -> list[str]:
     """Every folder a Task sits under, nearest last: ``a/b/t`` → ``a``, ``a/b``."""
     segments = task_id.split("/")[:-1]
     return ["/".join(segments[: i + 1]) for i in range(len(segments))]
@@ -76,12 +76,14 @@ def create_note(
         api_key_id=actor.api_key_id,
         created_at=now,
         updated_by_user_id=actor.user_id,
+        updated_via=actor.via,
+        updated_api_key_id=actor.api_key_id,
         updated_at=now,
     )
     session.add(note)
     session.commit()
     session.refresh(note)
-    return to_task_note(note, {actor.user_id: actor.label} if actor.user_id and actor.label else {})
+    return _to_task_note(note, {actor.user_id: actor.label} if actor.user_id and actor.label else {})
 
 
 def update_note(
@@ -105,11 +107,13 @@ def update_note(
     if archived is not None:
         note.archived_at = now if archived else None
     note.updated_by_user_id = actor.user_id
+    note.updated_via = actor.via
+    note.updated_api_key_id = actor.api_key_id
     note.updated_at = now
     session.add(note)
     session.commit()
     session.refresh(note)
-    return to_task_note(note, user_labels(session, _user_ids([note])))
+    return _to_task_note(note, user_labels(session, _user_ids([note])))
 
 
 def list_notes(
@@ -134,11 +138,11 @@ def list_notes(
         statement = statement.where(
             or_(
                 col(AgentTaskNoteDB.task_id) == task_id,
-                col(AgentTaskNoteDB.folder).in_(ancestor_folders(task_id)),
+                col(AgentTaskNoteDB.folder).in_(_ancestor_folders(task_id)),
             )
         )
     elif folder is not None:
-        prefix = normalize_folder(folder)
+        prefix = _normalize_folder(folder)
         if not prefix:
             raise TaskNoteError("invalid_folder", "folder must name at least one path segment")
         under = f"{_escape_like(prefix)}/%"
@@ -155,7 +159,7 @@ def list_notes(
     rows = list(session.exec(statement).all())
     rows.sort(key=_display_order)
     labels = user_labels(session, _user_ids(rows))
-    return [to_task_note(row, labels) for row in rows]
+    return [_to_task_note(row, labels) for row in rows]
 
 
 def notes_for_run(session: Session, *, project: str, task_run: AgentTaskRunDB) -> list[TaskNote]:
@@ -164,11 +168,13 @@ def notes_for_run(session: Session, *, project: str, task_run: AgentTaskRunDB) -
     run_revision = task_run.task_definition_revision_id
     for note in notes:
         if run_revision and note.task_definition_revision_id:
-            note.task_changed_since = note.task_definition_revision_id != run_revision
+            note.task_definition_revision_matches_run = (
+                note.task_definition_revision_id == run_revision
+            )
     return notes
 
 
-def to_task_note(row: AgentTaskNoteDB, labels: dict[str, str]) -> TaskNote:
+def _to_task_note(row: AgentTaskNoteDB, labels: dict[str, str]) -> TaskNote:
     return TaskNote(
         id=row.id,
         scope=cast(TaskNoteScope, row.scope),
@@ -182,6 +188,8 @@ def to_task_note(row: AgentTaskNoteDB, labels: dict[str, str]) -> TaskNote:
         created_via=cast(Literal["session", "api_key", "open_dev"], row.created_via),
         created_at=row.created_at,
         updated_by_user_id=row.updated_by_user_id,
+        updated_by_label=labels.get(row.updated_by_user_id) if row.updated_by_user_id else None,
+        updated_via=cast(Literal["session", "api_key", "open_dev"], row.updated_via),
         updated_at=row.updated_at,
         archived_at=row.archived_at,
     )
@@ -208,7 +216,7 @@ def _display_order(row: AgentTaskNoteDB) -> tuple[str, int, str, float]:
 def _resolve_target(
     folder: str | None, task_id: str | None, test_id: str | None
 ) -> tuple[TaskNoteScope, str | None, str | None, str | None]:
-    folder = normalize_folder(folder) if folder is not None else None
+    folder = _normalize_folder(folder) if folder is not None else None
     task_id = task_id.strip() if task_id is not None else None
     test_id = test_id.strip() if test_id is not None else None
 
@@ -264,4 +272,6 @@ def _user_ids(rows: Sequence[AgentTaskNoteDB]) -> set[str]:
     for row in rows:
         if row.created_by_user_id:
             ids.add(row.created_by_user_id)
+        if row.updated_by_user_id:
+            ids.add(row.updated_by_user_id)
     return ids

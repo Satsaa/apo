@@ -459,9 +459,9 @@ taught the project. They never change a verdict; corrections do that.
 Task and test notes record the task's Task Definition Revision when written
 (the catalog's pinned revision, else the latest run's). The run detail
 (`GET /v1/agent-task-runs/{id}`) embeds the notes that apply to the run's task
-as `task_notes`, each with `task_changed_since` computed against the run's
-pinned revision, so `apo runs show`, the dashboard run page and agents reading
-`--json` get them without another request. Writes go through
+as `task_notes`, each with `task_definition_revision_matches_run` computed
+against the run's pinned revision, so `apo runs show`, the dashboard run page
+and agents reading `--json` get them without another request. Writes go through
 `/v1/projects/{project}/task-notes` and `/v1/task-notes/{id}` and need a
 human-accountable credential (`services/human_actor.py`, shared with
 corrections).

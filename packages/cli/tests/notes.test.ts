@@ -1,7 +1,7 @@
 /**
  * Task Notes in the CLI: `apo notes add|list|edit|archive|restore`, and the
  * Notes `apo runs show` prints from the Run detail — Folder and Task Notes
- * above the Checks, a Test's Notes under it, marked when the Task changed since.
+ * above the Checks, a Test's Notes under it, marked when its Task revision differs.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +36,8 @@ function note(overrides: Partial<TaskNote> = {}): TaskNote {
     created_via: "api_key",
     created_at: "2026-10-12T09:00:00Z",
     updated_by_user_id: "u1",
+    updated_by_label: "u1@test.com",
+    updated_via: "api_key",
     updated_at: "2026-10-12T09:00:00Z",
     archived_at: null,
     ...overrides,
@@ -168,7 +170,16 @@ describe("notes edit / archive / restore", () => {
   it("patches the body, the archived flag on, and off", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse(note({ body: "re-checked" })))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          note({
+            body: "re-checked",
+            updated_by_user_id: "u2",
+            updated_by_label: "alex@test.com",
+            updated_via: "session",
+          }),
+        ),
+      )
       .mockResolvedValueOnce(jsonResponse(note({ archived_at: "2026-10-13T00:00:00Z" })))
       .mockResolvedValueOnce(jsonResponse(note()));
     const io = capture();
@@ -184,6 +195,9 @@ describe("notes edit / archive / restore", () => {
       ["PATCH", "/v1/task-notes/note_aaaa", { archived: true }],
       ["PATCH", "/v1/task-notes/note_aaaa", { archived: false }],
     ]);
+    expect(io.out.join("\n")).toContain(
+      "created by u1@test.com · updated by alex@test.com · 2026-10-12",
+    );
   });
 });
 
@@ -225,8 +239,8 @@ describe("runs show with Task Notes", () => {
         runDetail({
           task_notes: [
             note({ id: "note_f", scope: "folder", folder: "harvey-lab", task_id: null, body: "judge quirk", task_definition_revision_id: null }),
-            note({ id: "note_t", task_changed_since: false }),
-            note({ id: "note_c", scope: "test", test_id: "C-021", body: "audited: misses are real\nsee run_78226dd5", task_changed_since: true }),
+            note({ id: "note_t", task_definition_revision_matches_run: true }),
+            note({ id: "note_c", scope: "test", test_id: "C-021", body: "audited: misses are real\nsee run_78226dd5", task_definition_revision_matches_run: false }),
             note({ id: "note_p", scope: "test", test_id: "C-020", body: "passing-test note" }),
           ],
         }),
@@ -247,7 +261,7 @@ describe("runs show with Task Notes", () => {
     expect(text).toContain("task · Opus 5.5 scores 45-47/48");
 
     const failure = text.slice(text.indexOf("FAIL C-021"));
-    expect(failure).toMatch(/FAIL C-021\n {6}note · audited: misses are real\n {8}see run_78226dd5\n {8}\(u1@test\.com · 2026-10-12 · note_c · task changed since\)\n {6}no mixed-motive discussion/);
+    expect(failure).toMatch(/FAIL C-021\n {6}note · audited: misses are real\n {8}see run_78226dd5\n {8}\(u1@test\.com · 2026-10-12 · note_c · different task revision\)\n {6}no mixed-motive discussion/);
     // A passing Test's Note waits for --verbose.
     expect(text).not.toContain("passing-test note");
   });

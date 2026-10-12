@@ -428,11 +428,13 @@ export interface TaskNote {
   created_via: "session" | "api_key" | "open_dev";
   created_at: string;
   updated_by_user_id: string | null;
+  updated_by_label: string | null;
+  updated_via: "session" | "api_key" | "open_dev";
   updated_at: string;
   archived_at: string | null;
-  /** True when written against a different Task Definition Revision than
-   * this run pinned. Null/absent when either side is unknown. */
-  task_changed_since?: boolean | null;
+  /** Whether this Note's Task Definition Revision matches the one pinned by
+   * this run. Null/absent when either side is unknown. */
+  task_definition_revision_matches_run?: boolean | null;
 }
 
 export interface TaskDefinitionFileSummary {

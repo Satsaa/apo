@@ -4017,6 +4017,8 @@ def _migrate_task_notes_schema(conn: Connection) -> None:
             api_key_id {id_type},
             created_at {timestamp_type} NOT NULL,
             updated_by_user_id {id_type},
+            updated_via VARCHAR NOT NULL DEFAULT 'session',
+            updated_api_key_id {id_type},
             updated_at {timestamp_type} NOT NULL,
             archived_at {timestamp_type}
         )

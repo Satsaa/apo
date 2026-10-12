@@ -33,8 +33,10 @@ export function noteScopeLabel(note: TaskNote): string {
   return "Test";
 }
 
-/** "label · YYYY-MM-DD" — who wrote it and when it last changed. */
+/** Who created and last edited it, followed by the last-change date. */
 export function noteAttribution(note: TaskNote): string {
-  const who = note.created_by_label ?? note.created_by_user_id ?? "unknown";
-  return `${who} · ${note.updated_at.slice(0, 10)}`;
+  const creator = note.created_by_label ?? note.created_by_user_id ?? note.created_via;
+  const updater = note.updated_by_label ?? note.updated_by_user_id ?? note.updated_via;
+  const attribution = creator === updater ? creator : `created by ${creator} · updated by ${updater}`;
+  return `${attribution} · ${note.updated_at.slice(0, 10)}`;
 }
