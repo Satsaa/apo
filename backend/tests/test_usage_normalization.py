@@ -241,7 +241,7 @@ class TestInputIncludesCacheMarker:
     marker, an Anthropic model name picks the anthropic normalizer, which reads
     input as net of cache and prices every cached read at the full input rate."""
 
-    _ATTRS = {
+    _ATTRS: dict[str, int] = {
         "gen_ai.usage.input_tokens": 56946,
         "gen_ai.usage.output_tokens": 269,
         "gen_ai.usage.cache_read.input_tokens": 56708,
