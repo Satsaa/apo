@@ -1,4 +1,4 @@
-# pyright: reportUnusedImport=false, reportUnusedCallResult=false, reportAny=false, reportPrivateUsage=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownLambdaType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportCallIssue=false, reportAttributeAccessIssue=false, reportReturnType=false
+# pyright: reportUnusedImport=false, reportUnusedCallResult=false, reportAny=false, reportPrivateUsage=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownLambdaType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportCallIssue=false, reportAttributeAccessIssue=false, reportReturnType=false, reportUntypedFunctionDecorator=false
 
 """JSON-defaults loader."""
 
@@ -120,7 +120,9 @@ class TestLoadDefaults:
         row = session.exec(select(ModelRowDB).where(ModelRowDB.project == "__global__")).one()
         assert row.id is not None
         tier_ids = sorted(
-            t.id for t in session.exec(select(PricingTierDB).where(PricingTierDB.model_id == row.id)).all()
+            t.id
+            for t in session.exec(select(PricingTierDB).where(PricingTierDB.model_id == row.id)).all()
+            if t.id is not None
         )
         n_prices = len(list(session.exec(select(PriceDB).where(PriceDB.model_id == row.id)).all()))
 
@@ -130,7 +132,9 @@ class TestLoadDefaults:
         # Same row survived the reload — not deleted and reinserted.
         assert session.get(ModelRowDB, row.id) is not None
         assert sorted(
-            t.id for t in session.exec(select(PricingTierDB).where(PricingTierDB.model_id == row.id)).all()
+            t.id
+            for t in session.exec(select(PricingTierDB).where(PricingTierDB.model_id == row.id)).all()
+            if t.id is not None
         ) == tier_ids
         assert len(list(session.exec(select(PriceDB).where(PriceDB.model_id == row.id)).all())) == n_prices
 
@@ -431,25 +435,29 @@ class TestBundledCurrentModels:
             assert cost.breakdown["output"] == 25_000_000, name
 
     def test_sonnet_55_has_its_own_rates_not_sonnet_5(self, session: Session) -> None:
-        """Sonnet 5.5 is $2/$10 per MTok with cache reads at $0.20. The Sonnet 5
-        patterns used to be ``^claude-sonnet-5.*$``, which also matched
-        ``claude-sonnet-5-5`` and, from 2026-09-01, priced it at Sonnet 5's
-        standard $3/$15/$0.30. Resolution has no most-specific-wins rule, so the
-        patterns must not overlap."""
+        """Sonnet 5.5 has its own rates and preserves the cache-read price cut."""
         load_default_prices(session)
-        after_intro = datetime(2026, 10, 1, tzinfo=timezone.utc)
         usage = {"input": 1_000_000, "cache_read": 1_000_000, "output": 1_000_000}
         for name in ("claude-sonnet-5-5", "claude-sonnet-5.5", "claude-sonnet-5-5-20261001"):
-            cost = compute_cost(session, name, usage, "__global__", after_intro)
+            cost = compute_cost(session, name, usage, "__global__", datetime(2026, 10, 12, tzinfo=timezone.utc))
             assert cost is not None, f"{name} should be priced"
             assert cost.breakdown["input"] == 2_000_000, name
-            assert cost.breakdown["cache_read"] == 200_000, name
+            assert cost.breakdown["cache_read"] == 100_000, name
             assert cost.breakdown["output"] == 10_000_000, name
+        launch_cost = compute_cost(
+            session,
+            "claude-sonnet-5-5",
+            usage,
+            "__global__",
+            datetime(2026, 10, 1, tzinfo=timezone.utc),
+        )
+        assert launch_cost is not None
+        assert launch_cost.breakdown["cache_read"] == 200_000
         for name in ("claude-sonnet-5", "claude-sonnet-5-20260630"):
-            cost = compute_cost(session, name, usage, "__global__", after_intro)
+            cost = compute_cost(session, name, usage, "__global__", datetime(2026, 10, 12, tzinfo=timezone.utc))
             assert cost is not None, f"{name} should be priced"
-            assert cost.breakdown["input"] == 3_000_000, name
-            assert cost.breakdown["output"] == 15_000_000, name
+            assert cost.breakdown["input"] == 2_000_000, name
+            assert cost.breakdown["output"] == 10_000_000, name
 
     def test_prices_current_gemini_models_bare_and_prefixed(self, session: Session) -> None:
         load_default_prices(session)
@@ -539,7 +547,7 @@ class TestCurrentClaudeGeneration:
             assert cost.breakdown["cache_write_5m"] == int(inp * 1.25 * 1_000_000), name
             assert cost.breakdown["cache_write_1h"] == int(inp * 2 * 1_000_000), name
 
-    def test_sonnet_5_uses_standard_rates_after_introductory_period(self, session: Session) -> None:
+    def test_sonnet_5_introductory_rates_became_permanent(self, session: Session) -> None:
         load_default_prices(session)
         cost = compute_cost(
             session,
@@ -549,8 +557,8 @@ class TestCurrentClaudeGeneration:
             datetime(2026, 9, 1, tzinfo=timezone.utc),
         )
         assert cost is not None
-        assert cost.breakdown["input"] == 3_000_000
-        assert cost.breakdown["output"] == 15_000_000
+        assert cost.breakdown["input"] == 2_000_000
+        assert cost.breakdown["output"] == 10_000_000
 
     def test_haiku_45_does_not_inherit_35_haiku_rates(self, session: Session) -> None:
         """``claude-3-5-haiku`` is a different, cheaper model ($0.80/$4). The

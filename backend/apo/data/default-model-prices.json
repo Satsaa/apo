@@ -219,14 +219,13 @@
       ]
     },
     {
-      "_doc": "Introductory rates through 2026-08-31: $2/$10 per MTok. Cache dimensions use Anthropic's standard multipliers of 0.1x read, 1.25x 5-minute write, and 2x 1-hour write. Excludes Sonnet 5.5 (its own entry below): matching is not most-specific-wins.",
+      "_doc": "Claude Sonnet 5: $2/$10 per MTok. Anthropic made the introductory rate permanent on 2026-08-10, so the previously announced 2026-09-01 increase to $3/$15 never took effect. Cache dimensions use Anthropic's standard multipliers of 0.1x read, 1.25x 5-minute write, and 2x 1-hour write. Excludes Sonnet 5.5 (its own entries below): matching is not most-specific-wins.",
       "match_pattern": "(?i)^claude-sonnet-5(?![.-]5\\b).*$",
       "provider": "anthropic",
       "display_name": "Claude Sonnet 5",
       "start_date": "2026-06-30T00:00:00Z",
-      "end_date": "2026-09-01T00:00:00Z",
       "updated_at": "2026-10-12T00:00:00Z",
-      "last_reviewed": "2026-08",
+      "last_reviewed": "2026-10",
       "pricing_tiers": [
         {
           "name": "default",
@@ -244,35 +243,12 @@
       ]
     },
     {
-      "_doc": "Standard rates from 2026-09-01: $3/$15 per MTok. Excludes Sonnet 5.5 (its own entry below).",
-      "match_pattern": "(?i)^claude-sonnet-5(?![.-]5\\b).*$",
-      "provider": "anthropic",
-      "display_name": "Claude Sonnet 5",
-      "start_date": "2026-09-01T00:00:00Z",
-      "updated_at": "2026-10-12T00:00:00Z",
-      "last_reviewed": "2026-08",
-      "pricing_tiers": [
-        {
-          "name": "default",
-          "is_default": true,
-          "priority": 0,
-          "conditions": [],
-          "prices": {
-            "input": 3.0,
-            "cache_read": 0.3,
-            "cache_write_5m": 3.75,
-            "cache_write_1h": 6.0,
-            "output": 15.0
-          }
-        }
-      ]
-    },
-    {
-      "_doc": "Claude Sonnet 5.5: $2/$10 per MTok, cache read $0.20, cache write $2.50 (5-minute) / $4 (1-hour). Anthropic list price, as the bind LiteLLM proxy meters it. Before this entry it matched the Sonnet 5 pattern and was priced at Sonnet 5's standard $3/$15 (50% too high).",
+      "_doc": "Claude Sonnet 5.5 launch rates through 2026-10-06: $2/$10 per MTok, cache read $0.20, cache write $2.50 (5-minute) / $4 (1-hour).",
       "match_pattern": "(?i)^claude-sonnet-5[.-]5.*$",
       "provider": "anthropic",
       "display_name": "Claude Sonnet 5.5",
-      "start_date": null,
+      "start_date": "2026-09-28T00:00:00Z",
+      "end_date": "2026-10-07T00:00:00Z",
       "updated_at": "2026-10-12T00:00:00Z",
       "last_reviewed": "2026-10",
       "pricing_tiers": [
@@ -284,6 +260,30 @@
           "prices": {
             "input": 2.0,
             "cache_read": 0.2,
+            "cache_write_5m": 2.5,
+            "cache_write_1h": 4.0,
+            "output": 10.0
+          }
+        }
+      ]
+    },
+    {
+      "_doc": "Claude Sonnet 5.5 current rates: $2/$10 per MTok, cache read $0.10 after Anthropic's 2026-10-07 price cut, cache write $2.50 (5-minute) / $4 (1-hour).",
+      "match_pattern": "(?i)^claude-sonnet-5[.-]5.*$",
+      "provider": "anthropic",
+      "display_name": "Claude Sonnet 5.5",
+      "start_date": "2026-10-07T00:00:00Z",
+      "updated_at": "2026-10-12T00:00:00Z",
+      "last_reviewed": "2026-10",
+      "pricing_tiers": [
+        {
+          "name": "default",
+          "is_default": true,
+          "priority": 0,
+          "conditions": [],
+          "prices": {
+            "input": 2.0,
+            "cache_read": 0.1,
             "cache_write_5m": 2.5,
             "cache_write_1h": 4.0,
             "output": 10.0
