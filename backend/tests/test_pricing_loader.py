@@ -571,6 +571,47 @@ class TestCurrentClaudeGeneration:
         assert old.breakdown["input"] == 800_000
         assert new.breakdown["input"] == 1_000_000
 
+    def test_haiku_55_switches_rate_card_above_100k_prompt_tokens(self, session: Session) -> None:
+        """Haiku 5.5 bills a prompt over 100K tokens at 5x on every dimension.
+        The prompt is input plus cache reads plus cache writes, so a mostly
+        cached agent turn crosses the line even with little uncached input."""
+        load_default_prices(session)
+        at = datetime(2026, 10, 12, tzinfo=timezone.utc)
+        for name in ("claude-haiku-5-5", "claude-haiku-5.5"):
+            small = compute_cost(
+                session,
+                name,
+                {"input": 1_000, "cache_read": 90_000, "cache_write_5m": 9_000, "output": 1_000},
+                "__global__",
+                at,
+            )
+            assert small is not None, f"{name} should be priced, not unpriced"
+            assert small.tier_name == "default"
+            assert small.breakdown == {"input": 100, "cache_read": 900, "cache_write_5m": 1_125, "output": 500}
+
+            large = compute_cost(
+                session,
+                name,
+                {
+                    "input": 1_000,
+                    "cache_read": 90_000,
+                    "cache_write_5m": 9_000,
+                    "cache_write_1h": 1,
+                    "output": 1_000,
+                },
+                "__global__",
+                at,
+            )
+            assert large is not None
+            assert large.tier_name == "large-context"
+            assert large.breakdown == {
+                "input": 500,
+                "cache_read": 4_500,
+                "cache_write_5m": 5_625,
+                "cache_write_1h": 1,
+                "output": 2_500,
+            }
+
 
 class TestCacheWriteIsPricedForEveryProvider:
     """Callers report usage in Anthropic buckets regardless of provider (the
