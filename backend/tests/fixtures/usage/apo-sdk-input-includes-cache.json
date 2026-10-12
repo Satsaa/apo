@@ -1,0 +1,18 @@
+{
+  "description": "An apo SDK t.judge span (Claude through OpenRouter). apo.usage.input_includes_cache declares input_tokens the whole prompt with cache_read and cache_creation as parts of it, overriding the anthropic normalizer the model name would pick. Numbers from a RedlineBench judge call.",
+  "source": "apo-sdk",
+  "input": {
+    "gen_ai.request.model": "anthropic/claude-haiku-5.5",
+    "apo.usage.input_includes_cache": true,
+    "gen_ai.usage.input_tokens": 56946,
+    "gen_ai.usage.output_tokens": 269,
+    "gen_ai.usage.cache_read.input_tokens": 56708,
+    "gen_ai.usage.cache_creation.input_tokens": 0
+  },
+  "expected": {
+    "input": 238,
+    "output": 269,
+    "cache_read": 56708,
+    "cache_write_5m": 0
+  }
+}

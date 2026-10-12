@@ -234,3 +234,26 @@ class TestNonOverlapSubtraction:
         )
         assert result["output"] == 200  # 500 - 300
         assert result["reasoning"] == 300
+
+
+class TestInputIncludesCacheMarker:
+    """apo SDK judge spans carry the whole prompt in input_tokens. Without the
+    marker, an Anthropic model name picks the anthropic normalizer, which reads
+    input as net of cache and prices every cached read at the full input rate."""
+
+    _ATTRS = {
+        "gen_ai.usage.input_tokens": 56946,
+        "gen_ai.usage.output_tokens": 269,
+        "gen_ai.usage.cache_read.input_tokens": 56708,
+    }
+
+    def test_marker_overrides_the_model_name_guess(self) -> None:
+        result = normalize_usage(
+            {**self._ATTRS, "apo.usage.input_includes_cache": True},
+            model_name="anthropic/claude-haiku-5.5",
+        )
+        assert result == {"input": 238, "output": 269, "cache_read": 56708}
+
+    def test_without_marker_anthropic_reading_is_unchanged(self) -> None:
+        result = normalize_usage(self._ATTRS, model_name="anthropic/claude-haiku-5.5")
+        assert result["input"] == 56946

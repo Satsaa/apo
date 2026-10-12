@@ -268,8 +268,9 @@ describe("callJudge — anthropic wire", () => {
 
     const result = await callJudge({ values: ["v"], instruction: "i", model: "claude-sonnet-4-5" });
 
+    // Anthropic's input_tokens leaves cached tokens out; tokens.input is the whole prompt.
     expect(result.judge.tokens).toMatchObject({
-      input: 1000,
+      input: 2000,
       output: 40,
       cache_creation: 900,
       cache_read: 100,

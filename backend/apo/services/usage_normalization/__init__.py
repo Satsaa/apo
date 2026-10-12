@@ -138,6 +138,27 @@ def detect_provider(attrs: dict[str, Any], model_name: str | None) -> str:
     return "generic"
 
 
+# Set by the SDK on spans whose ``gen_ai.usage.input_tokens`` is the whole
+# prompt, with ``cache_read`` and ``cache_creation`` both parts of it (OTel GenAI
+# semconv). It overrides the per-provider guess, which keys on the model name and
+# would read an Anthropic model's count as net of cache even when it arrived
+# through an OpenAI-compatible gateway that reports it gross.
+INPUT_INCLUDES_CACHE_ATTR = "apo.usage.input_includes_cache"
+
+
+def _input_includes_cache(attrs: dict[str, Any]) -> bool:
+    val = attrs.get(INPUT_INCLUDES_CACHE_ATTR)
+    return val is True or (isinstance(val, str) and val.lower() == "true")
+
+
+def _normalize_input_includes_cache(attrs: dict[str, Any]) -> dict[str, int]:
+    usage = openai.normalize(attrs)
+    cache_write = usage.get("cache_write_5m", 0)
+    if cache_write and "input" in usage:
+        usage["input"] = max(usage["input"] - cache_write, 0)
+    return usage
+
+
 def normalize_usage(
     attrs: dict[str, Any],
     provider: str | None = None,
@@ -150,6 +171,8 @@ def normalize_usage(
     verbatim (store-but-unpriced). Returns ``{}`` when no usage is present.
     """
     attrs = _translate_claude_code_usage(attrs)
+    if _input_includes_cache(attrs):
+        return _normalize_input_includes_cache(attrs)
     detected = provider or detect_provider(attrs, model_name)
     if detected == "openai":
         return openai.normalize(attrs)

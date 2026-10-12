@@ -249,6 +249,18 @@ export function createOtelAgentTaskTraceClient(
     if (params.completion_tokens !== undefined) {
       active.span.setAttribute("gen_ai.usage.output_tokens", params.completion_tokens);
     }
+    if (params.cache_read_tokens !== undefined || params.cache_creation_tokens !== undefined) {
+      active.span.setAttribute("apo.usage.input_includes_cache", true);
+      if (params.cache_read_tokens !== undefined) {
+        active.span.setAttribute("gen_ai.usage.cache_read.input_tokens", params.cache_read_tokens);
+      }
+      if (params.cache_creation_tokens !== undefined) {
+        active.span.setAttribute(
+          "gen_ai.usage.cache_creation.input_tokens",
+          params.cache_creation_tokens,
+        );
+      }
+    }
     if (params.reasoning_tokens !== undefined) {
       // The OTel GenAI reasoning attribute the backend's usage normalizer
       // maps onto the canonical `reasoning` dimension. Absent attribute =

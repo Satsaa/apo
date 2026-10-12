@@ -1,0 +1,17 @@
+{
+  "description": "The first call of an apo SDK t.judge span: OpenRouter's prompt_tokens counts the tokens it wrote to the cache, so the write is subtracted from input as well as the read.",
+  "source": "apo-sdk",
+  "input": {
+    "apo.usage.input_includes_cache": "true",
+    "gen_ai.usage.input_tokens": 15019,
+    "gen_ai.usage.output_tokens": 4,
+    "gen_ai.usage.cache_read.input_tokens": 0,
+    "gen_ai.usage.cache_creation.input_tokens": 15009
+  },
+  "expected": {
+    "input": 10,
+    "output": 4,
+    "cache_read": 0,
+    "cache_write_5m": 15009
+  }
+}

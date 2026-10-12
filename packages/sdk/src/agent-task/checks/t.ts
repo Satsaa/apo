@@ -781,7 +781,12 @@ function createJudgeMethod(
               const judgeMeta = (
                 r as {
                   judge?: {
-                    tokens?: { input?: number; output?: number };
+                    tokens?: {
+                      input?: number;
+                      output?: number;
+                      cache_read?: number;
+                      cache_creation?: number;
+                    };
                     served_model?: string;
                   };
                 }
@@ -789,7 +794,18 @@ function createJudgeMethod(
               const tokens = judgeMeta?.tokens;
               return {
                 ...(tokens
-                  ? { prompt_tokens: tokens.input, completion_tokens: tokens.output }
+                  ? {
+                      prompt_tokens: tokens.input,
+                      completion_tokens: tokens.output,
+                      // Without these the backend prices every cached
+                      // prefix read at the full input rate.
+                      ...(tokens.cache_read !== undefined
+                        ? { cache_read_tokens: tokens.cache_read }
+                        : {}),
+                      ...(tokens.cache_creation !== undefined
+                        ? { cache_creation_tokens: tokens.cache_creation }
+                        : {}),
+                    }
                   : {}),
                 // The model that actually judged — a gateway fallback
                 // diverges from the requested judge model.

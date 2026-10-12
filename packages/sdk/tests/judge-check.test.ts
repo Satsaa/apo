@@ -1251,8 +1251,10 @@ describe("t.judge prompt caching", () => {
       judgeConfig,
     });
 
+    // Anthropic-named fields carry Anthropic's count: prompt_tokens leaves the
+    // cache out, so the whole prompt is 10 + 9000.
     expect(result?.judge?.tokens).toMatchObject({
-      input: 10,
+      input: 9010,
       output: 4,
       cache_creation: 9000,
       cache_read: 0,
@@ -1266,7 +1268,7 @@ describe("t.judge prompt caching", () => {
     stubJudgeResponse({
       content: JSON.stringify({ pass: true, reasoning: "ok" }),
       usage: {
-        prompt_tokens: 12,
+        prompt_tokens: 6000,
         completion_tokens: 4,
         prompt_tokens_details: { cached_tokens: 5987, cache_write_tokens: 0 },
       } as never,
@@ -1281,8 +1283,9 @@ describe("t.judge prompt caching", () => {
       judgeConfig,
     });
 
+    // OpenAI-style prompt_tokens already includes the cached tokens.
     expect(result?.judge?.tokens).toMatchObject({
-      input: 12,
+      input: 6000,
       output: 4,
       cache_creation: 0,
       cache_read: 5987,
@@ -1535,6 +1538,47 @@ describe("t.judge — judge-span trace link (issue #288)", () => {
     });
 
     expect(result?.judge?.span_id).toBeUndefined();
+  });
+
+  it("puts the cache counts on the judge span so cached reads are priced as such", async () => {
+    stubJudgeResponse({
+      content: JSON.stringify({ pass: true, reasoning: "meets the rubric" }),
+      usage: {
+        prompt_tokens: 56946,
+        completion_tokens: 269,
+        prompt_tokens_details: { cached_tokens: 56708, cache_write_tokens: 0 },
+      } as never,
+    });
+    let spanUsage: unknown;
+    const tracer = {
+      step: async (
+        options: { usage?: (r: unknown) => unknown },
+        fn: (id: string) => Promise<unknown>,
+      ) => {
+        const result = await fn("span-j1");
+        // The check's own span wraps the judge's and carries no usage.
+        if (options.usage) spanUsage = options.usage(result);
+        return result;
+      },
+      traceTool: (_name: unknown, _params: unknown, fn: () => Promise<unknown>) => fn(),
+    };
+    defineCheck("quality", async (t) => {
+      await t.judge("complete answer", "PASS when complete");
+    });
+
+    await runTraceChecks({
+      snapshot: emptySnapshot,
+      deliverables: {},
+      judgeConfig,
+      judgeTracer: tracer,
+    });
+
+    expect(spanUsage).toEqual({
+      prompt_tokens: 56946,
+      completion_tokens: 269,
+      cache_read_tokens: 56708,
+      cache_creation_tokens: 0,
+    });
   });
 });
 

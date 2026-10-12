@@ -210,6 +210,9 @@ function formatJudgeValues(values: unknown[]): string {
 // (and OpenAI) normalize them into prompt_tokens_details.cache_write_tokens /
 // prompt_tokens_details.cached_tokens. Their presence proves the cached
 // deliverable prefix was written once and read on subsequent criteria (#21).
+// The two shapes count the prompt differently: Anthropic's input_tokens leaves
+// the cached tokens out, OpenAI's prompt_tokens includes them. JudgeTokens.input
+// is always the whole prompt, so the cache counts are a part of it.
 type JudgeUsage = {
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -230,12 +233,15 @@ type JudgeTokens = {
 
 function parseJudgeUsage(usage: JudgeUsage | undefined): JudgeTokens | undefined {
   if (!usage) return undefined;
+  const anthropicShape =
+    usage.cache_creation_input_tokens !== undefined || usage.cache_read_input_tokens !== undefined;
   const cacheCreation =
     usage.cache_creation_input_tokens ?? usage.prompt_tokens_details?.cache_write_tokens;
   const cacheRead =
     usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens;
+  const prompt = usage.prompt_tokens ?? 0;
   const tokens: JudgeTokens = {
-    input: usage.prompt_tokens ?? 0,
+    input: anthropicShape ? prompt + (cacheCreation ?? 0) + (cacheRead ?? 0) : prompt,
     output: usage.completion_tokens ?? 0,
   };
   if (typeof cacheCreation === "number") tokens.cache_creation = cacheCreation;

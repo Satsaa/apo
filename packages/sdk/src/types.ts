@@ -54,6 +54,14 @@ export interface EndSpanParams {
   /** Reasoning/thinking tokens, when the provider reports them as a distinct
    * dimension. Omit when unreported — unknown must stay unknown, not zero. */
   reasoning_tokens?: number;
+  /** Prompt tokens read from the provider's prompt cache. Setting either cache
+   * field declares `prompt_tokens` the whole prompt, cached tokens included
+   * (OTel GenAI semconv), whatever the model's own API reports; the span then
+   * carries `apo.usage.input_includes_cache` so the backend prices it that way. */
+  cache_read_tokens?: number;
+  /** Prompt tokens written to the provider's prompt cache; part of
+   * `prompt_tokens` like `cache_read_tokens`. */
+  cache_creation_tokens?: number;
   /** The model the provider reports as having served the call (the response's
    * `model` field), emitted as `gen_ai.response.model`. A gateway fallback
    * (LiteLLM router, OpenRouter provider fallback) can serve a different
@@ -98,6 +106,8 @@ export interface TraceStepOptions
   ) => {
     prompt_tokens?: number;
     completion_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
     served_model?: string;
   } | undefined;
 }
