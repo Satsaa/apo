@@ -410,6 +410,31 @@ export interface CorrectedTestResult {
   corrected_tests: number;
 }
 
+/**
+ * A Task Note: a Project's durable knowledge about a Folder, Task, or Test.
+ * Never changes a verdict.
+ */
+export interface TaskNote {
+  id: string;
+  scope: "folder" | "task" | "test";
+  folder: string | null;
+  task_id: string | null;
+  test_id: string | null;
+  /** Plain text; rendered with line breaks preserved, never as HTML. */
+  body: string;
+  task_definition_revision_id: string | null;
+  created_by_user_id: string | null;
+  created_by_label: string | null;
+  created_via: "session" | "api_key" | "open_dev";
+  created_at: string;
+  updated_by_user_id: string | null;
+  updated_at: string;
+  archived_at: string | null;
+  /** True when written against a different Task Definition Revision than
+   * this run pinned. Null/absent when either side is unknown. */
+  task_changed_since?: boolean | null;
+}
+
 export interface TaskDefinitionFileSummary {
   path: string;
   language: "typescript";
@@ -437,6 +462,8 @@ export interface AgentTaskRunDetail extends AgentTaskRunSummary {
   task_definition?: TaskDefinitionRevisionSummary | null;
   /** Issue #159: recorded rejudge judgments. The verdict above stays canonical. */
   judgments_count?: number;
+  /** The Task Notes that apply to this run's Task. Absent on older backends. */
+  task_notes?: TaskNote[];
 }
 
 /** Issue #159: one judgment on a Task Run (original or rejudge). */

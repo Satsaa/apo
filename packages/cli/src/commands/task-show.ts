@@ -89,6 +89,7 @@ export async function run(argv: string[]): Promise<number> {
       }
     }
   }
+  console.log(dim(`  Notes:       apo notes list ${task.id}`));
 
   return 0;
 }

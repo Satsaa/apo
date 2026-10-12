@@ -38,6 +38,7 @@ The core loop: run a task, read its verdict, open its trace when something fails
 | [`apo runs rejudge`](/cli/runs-rejudge/) | Re-judge a completed run against its stored deliverables, swap the judge, sample for stability, without re-running the agent. |
 | [`apo runs judgments`](/cli/runs-judgments/) | List a run's verdict history, the original plus every re-judge. |
 | [`apo runs correct`](/cli/runs-correct/) | Correct a recorded test result — set effective PASS/FAIL with a reason, or restore the recorded result. |
+| [`apo notes`](/cli/notes/) | Record and read what the project has learned about a task, its tests, or a folder of tasks. `runs show` prints the ones that apply. |
 | [`apo runs delete`](/cli/runs-delete/) | Permanently delete garbage runs (harness failures, wrong environment). `--yes` required; admin only. |
 | [`apo runs export`](/cli/runs-export/) | Dump a run as a self-contained JSON bundle, the backup before evidence expires or a run is deleted. |
 | [`apo traces import`](/cli/traces-import/) | Import a Claude Code / Codex session transcript as a run. |

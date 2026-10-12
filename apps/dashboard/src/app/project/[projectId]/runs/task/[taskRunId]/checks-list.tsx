@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { CheckResult, TaskFileContentResponse } from "@/lib/agent-task-api";
+import type { CheckResult, TaskFileContentResponse, TaskNote } from "@/lib/agent-task-api";
 import { usePersistentStringSet } from "@/hooks/use-persistent-string-set";
 import { useUrlParam } from "@/hooks/use-url-state";
 import { parseCheckIdFromAssertionParam } from "@/lib/assertion-select";
@@ -23,8 +23,11 @@ export function ChecksList({
   taskId,
   projectId,
   traceRunId,
+  testNotes,
 }: {
   checks: CheckResult[];
+  /** Task Notes on single Tests, keyed by check id. */
+  testNotes?: ReadonlyMap<string, TaskNote[]>;
   checksSource?: TaskFileContentResponse | null;
   /** Whether test-result corrections are allowed on this run. */
   correctable?: boolean;
@@ -136,6 +139,7 @@ export function ChecksList({
               taskRunId={taskRunId}
               projectId={projectId}
               traceRunId={traceRunId}
+              notes={testNotes?.get(segment.check.id)}
             />
           );
         }
@@ -171,6 +175,7 @@ export function ChecksList({
                     taskRunId={taskRunId}
                     projectId={projectId}
                     traceRunId={traceRunId}
+                    notes={testNotes?.get(item.id)}
                   />
                 ))}
               </div>

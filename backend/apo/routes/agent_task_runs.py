@@ -992,7 +992,7 @@ async def get_agent_task_run(
         if def_rev is not None:
             task_definition_summary = to_definition_summary(def_rev)
 
-    return _build_task_run_detail(
+    detail = _build_task_run_detail(
         session,
         task_run,
         trigger=trigger,
@@ -1000,6 +1000,11 @@ async def get_agent_task_run(
         task_definition=task_definition_summary,
         deliverables_json=await derive_deliverables_json(session, task_run),
     )
+    if batch is not None:
+        from apo.services.task_notes import notes_for_run
+
+        detail.task_notes = notes_for_run(session, project=batch.project, task_run=task_run)
+    return detail
 
 
 @router.get("/agent-task-runs/{task_run_id}/export")

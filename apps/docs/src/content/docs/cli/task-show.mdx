@@ -19,6 +19,7 @@ Show a task's details, adapter, checks, and how it has been performing. With a b
     { text: "  Folder:      real-agent/documents" },
     { text: "  Runs:        5 total · 2 passed · 2 failed · 1 errored (40% pass) · avg 6.4s" },
     { text: "  Latest run:  run_de89cab0f1e2d3a4b5c6d7e8 — failed", tone: "danger" },
+    { text: "  Notes:       apo notes list real-agent/documents/document-qa" },
   ]}
 />
 
@@ -49,10 +50,11 @@ With a backend project, the task comes from the synced inventory and includes th
     { text: "  Folder:      real-agent/documents" },
     { text: "  Runs:        5 total · 2 passed · 2 failed · 1 errored (40% pass) · avg 6.4s" },
     { text: "  Latest run:  run_de89cab0f1e2d3a4b5c6d7e8 — failed", tone: "danger" },
+    { text: "  Notes:       apo notes list real-agent/documents/document-qa" },
   ]}
 />
 
-`Checks` is a `yes`/`no` flag. The `Latest run:` line (when one exists) gives the run id and its status.
+`Checks` is a `yes`/`no` flag. The `Latest run:` line (when one exists) gives the run id and its status. The `Notes:` line is the command that lists what the project has [noted](/cli/notes/) about the task.
 
 Without a backend project, the task is read from the local filesystem, it shows `Deliverables:` (comma-joined) and a `Files:` list instead, and no latest run:
 

@@ -113,6 +113,21 @@ A test that was [manually corrected](/cli/runs-correct/) shows its **effective**
 
 The `Checks:` header carries the count (`3/3 passed (0 failed) · 1 corrected`), and `--exit-status` uses the **effective** run verdict, a corrected run that now passes exits `0`.
 
+## Notes
+
+The [notes](/cli/notes/) the project has written about the task print with the run: folder and task notes once above the checks, and a test's notes under that test when it did not pass (under every test with `--verbose`). A note written against an earlier definition of the task is marked `task changed since`. Notes are knowledge, not verdicts: they never change a result.
+
+```text
+  Notes:
+    task · Opus 5.5 scores 45–47/48 over 6 runs (Oct 2026).
+           (sami@company.test · 2026-10-12 · note_3f2a…)
+
+  Checks:
+    FAIL C-021 — Identifies mixed-motive theory of liability
+      note · Audited 2026-10-12 against the case file and the law: sound. Misses are real gaps.
+             (sami@company.test · 2026-10-12 · note_9a7b…)
+```
+
 ## The three ids
 
 `apo runs show` takes a **run id**. This is distinct from the **task id** (`apo task run` takes that) and the **trace id** (a separate field on the run, printed at the bottom of the output, pass it to `apo traces show`).

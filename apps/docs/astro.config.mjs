@@ -123,6 +123,7 @@ export default defineConfig({
 							{ label: 'runs deliverable', slug: 'cli/runs-deliverable' },
 							{ label: 'runs rejudge', slug: 'cli/runs-rejudge' },
 							{ label: 'runs correct', slug: 'cli/runs-correct' },
+							{ label: 'notes', slug: 'cli/notes' },
 							{ label: 'runs judgments', slug: 'cli/runs-judgments' },
 							{ label: 'runs delete', slug: 'cli/runs-delete' },
 							{ label: 'runs export', slug: 'cli/runs-export' },

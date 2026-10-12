@@ -22,7 +22,6 @@ projection.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
@@ -40,6 +39,7 @@ from apo.models.schemas import (
     CorrectedTestResult,
     as_no_verdict_reason,
 )
+from apo.services.human_actor import HumanActor
 from apo.services.check_report_storage import (
     caller_error_message,
     compose_no_verdict_error_message,
@@ -67,14 +67,8 @@ class CorrectionError(ValueError):
         self.kind = kind
 
 
-@dataclass(frozen=True, slots=True)
-class CorrectionActor:
-    """Who is correcting, through which identity channel."""
-
-    user_id: str | None
-    label: str | None
-    via: Literal["session", "api_key", "open_dev"]
-    api_key_id: str | None
+CorrectionActor = HumanActor
+"""Who is correcting, through which identity channel."""
 
 
 def load_corrections(

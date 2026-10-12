@@ -5,8 +5,10 @@ import { useUrlParam } from "@/hooks/use-url-state";
 import { ConversationTranscript } from "@/components/agent-task-execution/conversation-transcript";
 import { DeliverablesPanel } from "@/components/agent-task-execution/deliverables-panel";
 import type { DeliverableSummary } from "@/lib/agent-task-deliverables-api";
-import type { CheckResult, TaskDefinitionRevisionSummary } from "@/lib/agent-task-api";
+import type { CheckResult, TaskDefinitionRevisionSummary, TaskNote } from "@/lib/agent-task-api";
 import { ChecksList } from "./checks-list";
+import { TaskNotesPanel } from "./task-notes";
+import { notesForRun } from "./task-notes-model";
 import { secondJudgeSummary } from "@/lib/second-judge";
 import { DeliverablesView } from "./deliverables-view";
 import { useLazyConversation } from "./use-lazy-conversation";
@@ -28,8 +30,11 @@ export function TaskRunDetailBody({
   taskDefinition,
   taskRunId,
   correctable = false,
+  taskNotes,
 }: {
   checks: CheckResult[];
+  /** Task Notes: the Notes that apply to the run's Task (absent on older backends). */
+  taskNotes?: TaskNote[] | null;
   deliverables: Record<string, unknown> | null;
   deliverableItems: DeliverableSummary[];
   traceRunId: string | null;
@@ -64,6 +69,7 @@ export function TaskRunDetailBody({
     sourceType,
   });
 
+  const notes = notesForRun(taskNotes);
   const checksPassed = checks.filter((check) => check.pass === true).length;
   const failedCount = checks.length - checksPassed;
 
@@ -121,6 +127,8 @@ export function TaskRunDetailBody({
               </div>
             )}
 
+            <TaskNotesPanel notes={notes.general} />
+
             {checksSource && (
               <p className="text-[11px] text-muted-foreground/70">
                 Expand a code check to see its source with the failing line marked.
@@ -142,6 +150,7 @@ export function TaskRunDetailBody({
                   taskId={taskId}
                   projectId={projectId}
                   traceRunId={traceRunId}
+                  testNotes={notes.byTest}
                 />
               </Panel>
             )}

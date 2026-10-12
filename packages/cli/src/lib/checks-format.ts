@@ -6,6 +6,7 @@ import type {
 import { dim, green, passFail, red, yellow } from "./format.ts";
 import { RECEIVED_PREVIEW_CHARS, previewString, segmentText } from "./runs-truncate.ts";
 import { secondJudgeFacts, secondJudgeTakeaway } from "@apo-ai/sdk/agent-task";
+import { formatNote, type NotesForRun } from "./task-notes.ts";
 
 //─ Second judge: measurements, not diagnoses ──────────────────────────
 //
@@ -71,15 +72,23 @@ export function secondJudgeSummary(checks: CheckResult[]): string | null {
  * Large `received` values (typically the deliverable re-sent per criterion)
  * are replaced by a one-line manifest pointing at `apo runs deliverable`,
  * which fetches the content once instead of re-dumping it per check (#22).
+ *
+ * `notes` puts each Test's Notes under it — for every Test that did not pass,
+ * and for all of them when verbose — before the judge's reasoning, so what the
+ * Project already knows about a Test frames how its failure is read.
  */
-export function formatChecks(checks: CheckResult[], verbose = false): string {
+export function formatChecks(
+  checks: CheckResult[],
+  verbose = false,
+  notes?: NotesForRun,
+): string {
   // nest checks declared inside a describe() under a roll-up header.
   // Bare checks (no group_id) render as before, so old output is unchanged.
   const segments = groupChecks(checks);
   const lines: string[] = [];
   for (const segment of segments) {
     if (segment.kind === "check") {
-      lines.push(formatCheck(segment.check, verbose));
+      lines.push(formatCheck(segment.check, verbose, notes));
       continue;
     }
     const passed = segment.checks.filter((c) => c.pass === true).length;
@@ -87,7 +96,7 @@ export function formatChecks(checks: CheckResult[], verbose = false): string {
     const verdict = passed === total ? green(`${passed}/${total}`) : `${red(String(passed))}/${total}`;
     lines.push(`  ${dim("▾")} ${segment.groupName} ${dim(`· ${verdict}`)}`);
     for (const check of segment.checks) {
-      lines.push(formatCheck(check, verbose));
+      lines.push(formatCheck(check, verbose, notes));
     }
   }
   return lines.join("\n");
@@ -122,7 +131,7 @@ function groupChecks(checks: CheckResult[]): CheckSegment[] {
   return segments;
 }
 
-function formatCheck(check: CheckResult, verbose: boolean): string {
+function formatCheck(check: CheckResult, verbose: boolean, notes?: NotesForRun): string {
   const lines: string[] = [];
   // Corrected tests carry their effective verdict with the
   // recorded one and the correction provenance one line below. A correction
@@ -141,6 +150,12 @@ function formatCheck(check: CheckResult, verbose: boolean): string {
     );
   } else {
     lines.push(`    ${verdictMark(check)} ${check.id}${secondJudgeMark(check)}`);
+  }
+
+  if (check.pass !== true || verbose) {
+    for (const note of notes?.byTest.get(check.id) ?? []) {
+      lines.push(...formatNote(note, { indent: "      ", label: "note" }));
+    }
   }
 
   // The second-judge relation is signal, not decoration — splits and unsure

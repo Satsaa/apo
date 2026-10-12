@@ -1,0 +1,160 @@
+/**
+ * Scene tests: Task Notes on the run page, read-only.
+ *
+ * 1. notesForRun splits Folder/Task Notes from Test Notes keyed by test id.
+ * 2. The Notes panel shows Folder and Task Notes with scope label,
+ *    attribution, the "Task changed since" marker, and plain-text bodies.
+ * 3. A Test Note renders inside its check — passing checks too — and only
+ *    there.
+ * 4. No Notes (absent or empty) → nothing renders.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+
+vi.mock("next/dynamic", () => ({
+  __esModule: true,
+  default: (_loader: () => Promise<unknown>) => {
+    const Comp = () => null;
+    Comp.displayName = "DynamicComponent";
+    return Comp;
+  },
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/",
+}));
+
+import type { CheckResult, TaskNote } from "@/lib/agent-task-api";
+import { ChecksList } from "./checks-list";
+import { ExpandableCheckItem } from "./expandable-check-item";
+import { TaskNotesPanel } from "./task-notes";
+import { notesForRun } from "./task-notes-model";
+
+function note(overrides: Partial<TaskNote> = {}): TaskNote {
+  return {
+    id: "note_0000000000000001",
+    scope: "task",
+    folder: null,
+    task_id: "harvey-lab/assess-risk",
+    test_id: null,
+    body: "Opus 5.5 normally scores 45–47/48",
+    task_definition_revision_id: "rev_1",
+    created_by_user_id: "u1",
+    created_by_label: "sami",
+    created_via: "session",
+    created_at: "2026-10-10T09:00:00Z",
+    updated_by_user_id: "u1",
+    updated_at: "2026-10-12T09:00:00Z",
+    archived_at: null,
+    task_changed_since: false,
+    ...overrides,
+  };
+}
+
+const folderNote = note({
+  id: "note_folder",
+  scope: "folder",
+  folder: "harvey-lab",
+  task_id: null,
+  task_definition_revision_id: null,
+  body: "DeepSeek judge returns FAIL under PASS reasoning\nabout 1 draw in 5",
+  created_by_label: "ci-agent",
+  updated_at: "2026-10-01T00:00:00Z",
+});
+const taskNote = note({ id: "note_task", task_changed_since: true });
+const testNote = note({
+  id: "note_test",
+  scope: "test",
+  test_id: "C-021",
+  body: "Audited 2026-10-12: criterion sound, misses are real",
+});
+
+function check(overrides: Partial<CheckResult> = {}): CheckResult {
+  return { id: "C-021", pass: true, reasoning: "covered", ...overrides };
+}
+
+describe("notesForRun", () => {
+  it("splits Folder/Task Notes from Test Notes keyed by test id", () => {
+    const { general, byTest } = notesForRun([folderNote, taskNote, testNote]);
+    expect(general.map((n) => n.id)).toEqual(["note_folder", "note_task"]);
+    expect([...byTest.keys()]).toEqual(["C-021"]);
+    expect(byTest.get("C-021")?.map((n) => n.id)).toEqual(["note_test"]);
+  });
+
+  it("treats a missing list as no Notes", () => {
+    const { general, byTest } = notesForRun(undefined);
+    expect(general).toEqual([]);
+    expect(byTest.size).toBe(0);
+  });
+});
+
+describe("TaskNotesPanel", () => {
+  it("renders Folder and Task Notes with attribution and the changed-since marker", () => {
+    render(<TaskNotesPanel notes={[folderNote, taskNote]} />);
+    const panel = screen.getByRole("region", { name: "Task notes" });
+
+    expect(panel).toHaveTextContent("harvey-lab");
+    expect(panel).toHaveTextContent("ci-agent · 2026-10-01");
+    expect(panel).toHaveTextContent("Task");
+    expect(panel).toHaveTextContent("sami · 2026-10-12");
+    expect(screen.getAllByText("Task changed since")).toHaveLength(1);
+
+    // Plain text with line breaks kept, not rendered markup.
+    const body = screen.getByText(/DeepSeek judge returns FAIL/);
+    expect(body.textContent).toBe(folderNote.body);
+    expect(body.className).toContain("whitespace-pre-wrap");
+  });
+
+  it("renders the body as text, never as HTML", () => {
+    const { container } = render(
+      <TaskNotesPanel notes={[note({ body: "<b>bold</b> **md**" })]} />,
+    );
+    expect(container.querySelector("b")).toBeNull();
+    expect(screen.getByText("<b>bold</b> **md**")).toBeInTheDocument();
+  });
+
+  it("renders nothing without Notes", () => {
+    const { container } = render(<TaskNotesPanel notes={[]} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("Test Notes in a check", () => {
+  it("marks a passing check's row and shows the Note when expanded", () => {
+    render(<ExpandableCheckItem item={check()} index={0} notes={[testNote]} />);
+    expect(screen.getByText("Note")).toHaveAttribute("title", testNote.body);
+    expect(screen.queryByRole("list", { name: "Test notes" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /C-021/ }));
+    const notes = screen.getByRole("list", { name: "Test notes" });
+    expect(notes).toHaveTextContent(testNote.body);
+    expect(notes).toHaveTextContent("sami · 2026-10-12");
+  });
+
+  it("routes each Test's Notes to its own check in the list", () => {
+    const { byTest } = notesForRun([folderNote, testNote]);
+    render(
+      <ChecksList
+        checks={[check(), check({ id: "C-022", pass: false, reasoning: "missed" })]}
+        testNotes={byTest}
+      />,
+    );
+    expect(screen.getAllByText("Note")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /C-022/ }));
+    expect(screen.queryByRole("list", { name: "Test notes" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /C-021/ }));
+    expect(screen.getByRole("list", { name: "Test notes" })).toHaveTextContent(testNote.body);
+  });
+
+  it("renders no Note affordance on a check without Notes", () => {
+    render(<ExpandableCheckItem item={check()} index={0} />);
+    expect(screen.queryByText("Note")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /C-021/ }));
+    expect(screen.queryByRole("list", { name: "Test notes" })).toBeNull();
+  });
+});

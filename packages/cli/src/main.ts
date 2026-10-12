@@ -358,6 +358,73 @@ const commands: Record<string, CommandEntry> = {
     ],
     note: "The original verdict is the first row (trigger=original). Re-judge with `apo runs rejudge <run-id>`. Supports --json.",
   },
+  "notes list": {
+    handler: loadCommand("notes-list"),
+    help: "List what the project knows about a task, its tests, or a folder of tasks",
+    args: [
+      ["[task-id]", "Task id (or a unique bare name): notes on its folders, the task, and its tests"],
+    ],
+    options: [
+      ["--folder <path>", "Notes at or under a folder (e.g. harvey-lab) instead of one task"],
+      ["--archived", "Include archived notes"],
+    ],
+    examples: [
+      "apo notes list harvey-lab/assess-legal-risk",
+      "apo notes list --folder harvey-lab",
+      "apo notes list",
+    ],
+    note: "Notes are dated, attributed statements — what an investigation established, a judge quirk, a normal score range. They never change a verdict. apo runs show prints the ones that apply to the run. Supports --json.",
+  },
+  "notes add": {
+    handler: loadCommand("notes-add"),
+    help: "Record what running a task taught you, on a folder, a task, or one test",
+    args: [
+      ["<task-id>", "Task id (or a unique bare name); omit with --folder"],
+      ["<text...>", "The note; '-' reads it from stdin"],
+    ],
+    options: [
+      ["--test <test-id>", "Attach to one test of the task (the exact test(...) name)"],
+      ["--folder <path>", "Attach to every task under a folder instead of one task"],
+    ],
+    examples: [
+      "apo notes add harvey-lab/assess-legal-risk --test \"C-021 — mixed motive\" \"Audited 2026-10-12 against case file and law: sound. Misses are real gaps (run_78226dd5).\"",
+      "apo notes add harvey-lab/assess-legal-risk \"Opus 5.5 scores 45-47/48 across 6 runs (Oct 2026).\"",
+      "apo notes add --folder harvey-lab \"The DeepSeek judge returns FAIL under reasoning that concludes PASS ~1 draw in 5; rejudge --samples 5 before correcting.\"",
+      "cat finding.md | apo notes add harvey-lab/assess-legal-risk -",
+    ],
+    note: "Write facts with their evidence (run ids, judgment ids, the document that settles it) and a date — not verdicts about models. Task and test notes record the task's current definition, so runs on a later definition show 'task changed since'. 3–4000 chars. Never prompts.",
+  },
+  "notes edit": {
+    handler: loadCommand("notes-edit"),
+    help: "Replace a note's text (re-anchors it to the task's current definition)",
+    args: [
+      ["<note-id>", "Note id (note_…), as printed under the note"],
+      ["<text...>", "The new text; '-' reads it from stdin"],
+    ],
+    examples: [
+      "apo notes edit note_3f2a9c1d0b8e7a6f \"Re-checked on the 2026-11 revision: still sound.\"",
+    ],
+  },
+  "notes archive": {
+    handler: loadCommand("notes-archive"),
+    help: "Retire a note that stopped being true (kept, hidden by default)",
+    args: [
+      ["<note-id>", "Note id (note_…)"],
+    ],
+    examples: [
+      "apo notes archive note_3f2a9c1d0b8e7a6f",
+    ],
+  },
+  "notes restore": {
+    handler: loadCommand("notes-restore"),
+    help: "Bring an archived note back",
+    args: [
+      ["<note-id>", "Note id (note_…)"],
+    ],
+    examples: [
+      "apo notes restore note_3f2a9c1d0b8e7a6f",
+    ],
+  },
   "traces import": {
     handler: loadCommand("traces-import"),
     help: "Import a harness session transcript (Claude Code / Codex JSONL) as a trace",

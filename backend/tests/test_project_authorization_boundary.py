@@ -1161,6 +1161,17 @@ _ROUTE_MODULE_AUDIT: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ),
         ],
     ),
+    "agent_task_notes": (
+        "project",
+        [
+            (
+                "tests/test_task_note_routes.py",
+                "test_key_for_another_project_cannot_read_or_edit",
+            ),
+            ("tests/test_task_note_routes.py", "test_ingest_key_cannot_write"),
+            ("tests/test_task_note_routes.py", "test_runtime_token_cannot_write"),
+        ],
+    ),
     "agent_task_runs": (
         "project",
         [

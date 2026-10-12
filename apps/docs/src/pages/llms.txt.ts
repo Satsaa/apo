@@ -83,6 +83,7 @@ const SECTIONS: { heading: string; slugs: string[] }[] = [
 			'cli/runs-deliverable',
 			'cli/runs-rejudge',
 			'cli/runs-correct',
+			'cli/notes',
 			'cli/runs-judgments',
 			'cli/traces-list',
 			'cli/traces-show',

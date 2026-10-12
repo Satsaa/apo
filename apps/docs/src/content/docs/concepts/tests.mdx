@@ -240,10 +240,15 @@ A correction is not a re-judge: a re-judge produces a new *machine* judgment; a 
 
 Correcting history does not fix the future. After correcting, repair the test itself (a better instruction, a `similarity` matcher where wording varies) so the next run doesn't need the correction.
 
+## Notes
+
+A correction changes one run. What an investigation *learns* about a test outlives the run: the criterion was audited and is sound, the judge misreads one kind of answer, a model normally scores 45 to 47 of 48. A **note** keeps that next to the test, the task, or a folder of tasks, and [`apo runs show`](/cli/runs-show/#notes) prints it beside the failure it explains. Notes never change a result. A note records the version of the task it was written against, and is marked `task changed since` on runs of a later version. See [`apo notes`](/cli/notes/).
+
 ## Next
 
 - [Tasks](/concepts/tasks/), where `test(...)` sits in the `.eval.ts` file.
 - [Adapters](/concepts/adapters/), where `deliverables` comes from.
 - [`apo runs rejudge`](/cli/runs-rejudge/): replay a run's tests against its stored deliverables.
 - [`apo runs correct`](/cli/runs-correct/): record a human correction on a recorded test result.
+- [`apo notes`](/cli/notes/): record what the project has learned about a test, task, or folder.
 - [Run and debug](/guides/run-and-debug/), the workflow from a failing test to the trace.

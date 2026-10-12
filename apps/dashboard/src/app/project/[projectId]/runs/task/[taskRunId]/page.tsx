@@ -484,6 +484,7 @@ export default async function TaskRunDetailPage({
             taskDefinition={taskRun.task_definition ?? null}
             taskRunId={taskRun.id}
             correctable={correctable}
+            taskNotes={taskRun.task_notes ?? []}
           />
         </Suspense>
       </div>

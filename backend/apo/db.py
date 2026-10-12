@@ -3985,7 +3985,55 @@ def _migrate_to_v57() -> None:
         logger.info("Schema v57 backfill: %d calls got a served model", updated)
 
 
-LATEST_SCHEMA_VERSION = 57
+def _migrate_to_v58() -> None:
+    """Version 58: Task Notes.
+
+    Existing DBs gain the ``agent_task_notes`` table. Nothing is
+    backfilled. New DBs already have it from ``create_all``, so the DDL is a
+    guarded no-op there.
+    """
+    with engine.begin() as conn:
+        _migrate_task_notes_schema(conn)
+
+
+def _migrate_task_notes_schema(conn: Connection) -> None:
+    if "agent_task_notes" in _get_table_names(conn):
+        return
+    id_type = "TEXT" if is_sqlite() else "VARCHAR"
+    timestamp_type = "DATETIME" if is_sqlite() else "TIMESTAMPTZ"
+    conn.exec_driver_sql(
+        f"""
+        CREATE TABLE agent_task_notes (
+            id {id_type} PRIMARY KEY,
+            project {id_type} NOT NULL,
+            scope VARCHAR NOT NULL,
+            folder {id_type},
+            task_id {id_type},
+            test_id {id_type},
+            body TEXT NOT NULL,
+            task_definition_revision_id {id_type},
+            created_by_user_id {id_type},
+            created_via VARCHAR NOT NULL DEFAULT 'session',
+            api_key_id {id_type},
+            created_at {timestamp_type} NOT NULL,
+            updated_by_user_id {id_type},
+            updated_at {timestamp_type} NOT NULL,
+            archived_at {timestamp_type}
+        )
+        """
+    )
+    _create_index_if_not_exists(
+        conn, "ix_agent_task_notes_project", "agent_task_notes", "project"
+    )
+    _create_index_if_not_exists(
+        conn, "ix_agent_task_notes_task", "agent_task_notes", "project, task_id"
+    )
+    _create_index_if_not_exists(
+        conn, "ix_agent_task_notes_folder", "agent_task_notes", "project, folder"
+    )
+
+
+LATEST_SCHEMA_VERSION = 58
 
 _SCHEMA_MIGRATIONS: dict[int, Callable[[], None]] = {
     1: _migrate_to_baseline,
@@ -4045,6 +4093,7 @@ _SCHEMA_MIGRATIONS: dict[int, Callable[[], None]] = {
     55: _migrate_to_v55,
     56: _migrate_to_v56,
     57: _migrate_to_v57,
+    58: _migrate_to_v58,
 }
 
 

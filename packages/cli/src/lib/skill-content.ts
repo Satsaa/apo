@@ -102,6 +102,20 @@ apo runs show <run-id>         # failed check reasoning + trace + deliverables
 
 The task defines correct behavior; a failing run means the **agent** (or its adapter) is wrong. Editing the task to match what the agent happens to do deletes the test instead of fixing the bug. The loop: run, read the failed check's reasoning in \`apo runs show\`, inspect the trace for what the agent actually did, fix the agent, rerun. Stop on PASS.
 
+## Notes: what the project already knows
+
+\`apo runs show\` prints the **notes** the project has written about the task: notes on the folder and the task above the checks, and a test's notes under that test when it fails. They record what earlier investigations established, such as a criterion that was audited and found sound, a judge that misreads one kind of answer, or the score range a model normally lands in. Read them before diagnosing a failure. A note marked \`task changed since\` was written against an earlier version of the eval file, so check that it still holds before relying on it.
+
+When you establish something the next person would otherwise have to re-derive, write it down:
+
+\`\`\`bash
+apo notes add my-task --test "used-the-input-file" "Audited 2026-10-12: the fixture has no input.txt for locale=fr, so this fails on every fr run; fixed in the adapter, see run_8f2c…"
+apo notes add --folder e2e/billing "All billing tasks share the sandbox Stripe key; a 401 in the trace means it expired, not an agent bug."
+apo notes list my-task
+\`\`\`
+
+A good note states a fact, its evidence (run ids, judgment ids, the document or line that settles it) and a date. "The judge fails C-3 under reasoning that concludes PASS in 2 of 5 draws (rejudge jdg_41…, 2026-10-12)" helps the next reader. "Model X is bad at this task" does not: it is a verdict, it ages badly, and it gives the reader nothing to check. Notes never change a result; use \`apo runs correct\` for that. When a note stops being true, \`apo notes archive <note-id>\`.
+
 ## Reference
 
 - Define a task (full API): https://docs.test-apo.online/guides/define-a-task/

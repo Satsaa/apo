@@ -27,6 +27,7 @@ from .routes import (
     agent_task_deliverables,
     agent_task_judgments,
     agent_task_test_result_corrections,
+    agent_task_notes,
     agent_task_files,
     agent_task_schedules,
     agent_task_trace_projection,
@@ -232,6 +233,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_task_deliverables.router)
     app.include_router(agent_task_judgments.router)
     app.include_router(agent_task_test_result_corrections.router)
+    app.include_router(agent_task_notes.router)
     app.include_router(agent_task_files.router)
     app.include_router(agent_task_schedules.router)
     app.include_router(agent_task_trace_projection.router)

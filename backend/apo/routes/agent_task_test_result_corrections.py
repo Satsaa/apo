@@ -22,14 +22,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from apo.db import get_session
-from apo.models.db import AgentTaskRunDB, UserDB
+from apo.models.db import AgentTaskRunDB
 from apo.models.schemas import CorrectTestResultRequest, CorrectedTestResult
 from apo.services.agent_task_run_access import require_task_run_access
-from apo.services.test_result_corrections import (
-    CorrectionActor,
-    CorrectionError,
-    correct_test_result,
-)
+from apo.services.human_actor import derive_human_actor
+from apo.services.test_result_corrections import CorrectionError, correct_test_result
 
 router = APIRouter(prefix="/v1", tags=["agent-tasks"])
 
@@ -56,7 +53,7 @@ async def correct_run_test_result(
     """Record one human correction on a terminal, verdict-bearing Run."""
     task_run = _load_task_run(session, task_run_id)
     project = require_task_run_access(request, session, task_run, write=True)
-    actor = _derive_actor(request, session)
+    actor = derive_human_actor(request, session, action="correct results")
 
     try:
         return correct_test_result(
@@ -78,60 +75,3 @@ def _load_task_run(session: Session, task_run_id: str) -> AgentTaskRunDB:
     if task_run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Task run not found")
     return task_run
-
-
-def _derive_actor(request: Request, session: Session) -> CorrectionActor:
-    """Human-only actor derivation with the spec's distinct 403 contract."""
-    auth_method = getattr(request.state, "auth_method", None)
-
-    if auth_method in ("service_token", "attempt_token"):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail={
-                "kind": "human_review_required",
-                "msg": "runtime capability credentials cannot correct results; use a session or full API key",
-            },
-        )
-
-    user_id = getattr(request.state, "user_id", None)
-
-    if auth_method == "api_key":
-        scope = getattr(request.state, "api_key_scope", "full")
-        if scope != "full":
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                detail={
-                    "kind": "full_scope_required",
-                    "msg": "ingest-scoped API keys cannot correct results",
-                },
-            )
-        label = _user_email(session, user_id)
-        return CorrectionActor(
-            user_id=user_id,
-            label=label,
-            via="api_key",
-            api_key_id=getattr(request.state, "api_key_id", None),
-        )
-
-    if auth_method == "cookie":
-        return CorrectionActor(
-            user_id=user_id,
-            label=_user_email(session, user_id),
-            via="session",
-            api_key_id=None,
-        )
-
-    # Open-dev (no auth_method): development bypass identity.
-    return CorrectionActor(
-        user_id=user_id,
-        label=_user_email(session, user_id),
-        via="open_dev",
-        api_key_id=None,
-    )
-
-
-def _user_email(session: Session, user_id: str | None) -> str | None:
-    if user_id is None:
-        return None
-    user = session.get(UserDB, user_id)
-    return user.email if user is not None else None

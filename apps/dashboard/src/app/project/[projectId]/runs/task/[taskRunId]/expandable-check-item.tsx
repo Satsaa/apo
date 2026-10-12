@@ -4,7 +4,12 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { ChevronRight, PenLine } from "lucide-react";
 import { useUrlParam } from "@/hooks/use-url-state";
-import type { CheckAssertionResult, CheckResult, TaskFileContentResponse } from "@/lib/agent-task-api";
+import type {
+  CheckAssertionResult,
+  CheckResult,
+  TaskFileContentResponse,
+  TaskNote,
+} from "@/lib/agent-task-api";
 import { buildCheckDiagnostics } from "@/lib/check-diagnostics";
 import { resolveCheckBlock } from "@/lib/extract-check-block";
 import { locateAssertionsInBlock } from "@/lib/locate-assertion";
@@ -13,6 +18,7 @@ import { secondJudgeAgreementLine, secondJudgeFacts, secondJudgeTakeaway } from 
 import { cn } from "@/lib/utils";
 import { AssertionDrawer } from "./assertion-drawer";
 import { JudgeStrip } from "./judge-strip";
+import { TestNotes } from "./task-notes";
 import { TestResultCorrectionDialog } from "./test-result-correction-dialog";
 
 // CodeMirror is heavy — load it only when a code check is expanded.
@@ -29,9 +35,12 @@ export function ExpandableCheckItem({
   taskRunId,
   projectId,
   traceRunId,
+  notes = [],
 }: {
   item: CheckResult;
   index: number;
+  /** This Test's Task Notes. */
+  notes?: TaskNote[];
   checksSource?: TaskFileContentResponse | null;
   /** Terminal + verdict-bearing + evidence present. */
   correctable?: boolean;
@@ -199,6 +208,14 @@ export function ExpandableCheckItem({
                   Corrected
                 </span>
               )}
+              {notes.length > 0 && (
+                <span
+                  className="shrink-0 border border-border bg-muted/40 px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+                  title={notes[0].body}
+                >
+                  {notes.length === 1 ? "Note" : `${notes.length} Notes`}
+                </span>
+              )}
               <SecondJudgeMark check={item} />
             </div>
           </div>
@@ -265,6 +282,7 @@ export function ExpandableCheckItem({
                 run notices (strip above)
               </p>
             )}
+            <TestNotes notes={notes} />
             {correctable && taskRunId && (
               <div className="flex items-center gap-2">
                 <button

@@ -8,6 +8,7 @@ import { NO_CHECKS_REGISTERED_MESSAGE } from "@apo-ai/sdk/agent-task";
 import { conciseChecks, conciseDeliverables } from "../lib/runs-truncate.ts";
 import { resolveRunId, resolveLatestRunId } from "../lib/runs-resolve.ts";
 import { reportCommandError } from "../lib/command-error.ts";
+import { formatNote, notesForRun, scopeLabel, type TaskNote } from "../lib/task-notes.ts";
 
 type RunDetail = {
   id: string;
@@ -54,6 +55,8 @@ type RunDetail = {
   run_configuration?: { model: string; effort?: string | null } | null;
   task_definition?: { id?: string } | null;
   judgments_count?: number;
+  /** Folder, Task and Test Notes that apply to the Run's Task. */
+  task_notes?: TaskNote[];
   /** Tests whose effective result differs from the recorded one. */
   corrected_tests?: number;
   /** Issue #176: the attempt's last lease heartbeat (null for terminal-only detail). */
@@ -178,6 +181,8 @@ export async function run(argv: string[]): Promise<number> {
 }
 
 function printRunDetail(run: RunDetail, verbose: boolean): void {
+  // Absent on backends that predate Task Notes: the Run renders as before.
+  const notes = notesForRun(run.task_notes ?? []);
   console.log(bold(`Run: ${run.id}`));
   console.log(`  Task:     ${run.task_id}`);
   console.log(`  Path:     ${run.task_path}`);
@@ -265,9 +270,16 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
     console.log(`  Error:    ${run.error_message.slice(0, 500)}`);
   }
 
+  if (notes.general.length > 0) {
+    console.log(bold("\n  Notes:"));
+    for (const note of notes.general) {
+      console.log(formatNote(note, { indent: "    ", label: scopeLabel(note) }).join("\n"));
+    }
+  }
+
   if (run.checks_json && run.checks_json.length > 0) {
     console.log(bold("\n  Checks:"));
-    console.log(formatChecks(run.checks_json, verbose));
+    console.log(formatChecks(run.checks_json, verbose, notes));
     const sjSummary = secondJudgeSummary(run.checks_json);
     if (sjSummary) console.log(dim(`\n  ${sjSummary}`));
   } else if (run.pass_result === false) {

@@ -1,0 +1,82 @@
+---
+title: "apo notes"
+description: "Record and read what the project has learned about a task, its tests, or a folder of tasks."
+---
+
+import TerminalOutput from '../../../components/demos/TerminalOutput.astro';
+
+A failing run is often the second time someone has looked at that failure. The first investigation found that the criterion is sound and the misses are real, or that the judge misreads one kind of answer, or that a model normally scores 45 to 47 out of 48. **Notes** keep that knowledge next to the task. [`apo runs show`](/cli/runs-show/) prints the notes that apply to a run, so the next person or coding agent reads them at the moment they look at the failure.
+
+A note is a short, dated, attributed statement. It never changes a verdict: [`apo runs correct`](/cli/runs-correct/) changes a run's effective result, and notes change nothing.
+
+## Synopsis
+
+```bash
+apo notes list [<task-id>] [--folder <path>] [--archived]
+apo notes add <task-id> [--test <test-id>] <text…>
+apo notes add --folder <path> <text…>
+apo notes edit <note-id> <text…>
+apo notes archive <note-id>
+apo notes restore <note-id>
+```
+
+`<text…>` can be `-` to read the note from stdin, for longer notes.
+
+## Where a note attaches
+
+| Scope | Command | For knowledge about |
+|---|---|---|
+| Folder | `apo notes add --folder harvey-lab …` | every task under a folder: a judge prompt or adapter they share |
+| Task | `apo notes add harvey-lab/assess-risk …` | one task, e.g. its normal score range |
+| Test | `apo notes add harvey-lab/assess-risk --test "C-021" …` | one `test(...)` of a task, e.g. an audited criterion |
+
+A folder matches on whole path segments: `harvey-lab` covers `harvey-lab/x` and `harvey-lab/sub/y`, not `harvey-labs/x`. The task id is the folder-qualified id; a bare name works when it is unique in your task root. The test id is the exact `test("…")` name. If a test is renamed or a task moved, its notes stay on the old id, where `apo notes list --folder` still finds them.
+
+## What runs show prints
+
+Folder and task notes appear once above the checks. A test's notes appear under that test when it did not pass, and under every test with `--verbose`:
+
+<TerminalOutput
+  lines={[
+    { text: "  Notes:" },
+    { text: "    harvey-lab · The judge returns FAIL under reasoning that concludes PASS about 1 draw in 5." },
+    { text: "                 (sami@company.test · 2026-10-12 · note_5c1e…)" },
+    { text: "" },
+    { text: "  Checks:" },
+    { text: "    FAIL C-021 — Identifies mixed-motive theory of liability", tone: "danger" },
+    { text: "      note · Audited 2026-10-12 against the case file and the law: sound. Misses are real gaps." },
+    { text: "             (sami@company.test · 2026-10-12 · note_9a7b… · task changed since)" },
+  ]}
+/>
+
+Task and test notes record the definition of the task (its eval file) current when they were written. On a run of a different definition the note is marked **`task changed since`**: it may still hold, but the eval changed after it was written, so check it before relying on it. Editing a note's text re-anchors it to the current definition. Folder notes are not anchored.
+
+With `--json`, the run detail carries the same notes as `task_notes`, each with `task_changed_since`.
+
+## Writing a useful note
+
+Write a fact, its evidence and a date. A reader should be able to check a note without redoing the work behind it.
+
+| Helps the next reader | Doesn't |
+|---|---|
+| "C-040: the case file's rebuttal does say the targets were set 'unilaterally by Ryan Ostrowski'; memos that omit it are a real miss (run_790f…, 2026-10-12)." | "C-040 is flaky." |
+| "Opus 5.5 scores 45–47/48 over 6 runs (Oct 2026); a run under 44 is a regression." | "Opus is bad at this task." |
+
+When a note stops being true, archive it rather than leaving it to mislead: `apo notes archive <note-id>`. Archived notes leave `runs show` and default listings, stay readable with `apo notes list --archived`, and come back with `apo notes restore`.
+
+## Permissions
+
+Any project viewer can read notes. Writing needs a project member acting through a session, a full-scope project API key, or open-dev mode, the same rule as corrections. Ingest keys and executor credentials are refused, and the demo project is read-only.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | The note was written, changed, or listed. |
+| `2` | Usage error or API failure: missing text, `--test` with `--folder`, a body outside 3–4000 characters, unknown note, auth failure. |
+
+## See also
+
+- [`apo runs show`](/cli/runs-show/): where notes are read.
+- [`apo runs correct`](/cli/runs-correct/): changing one run's effective result, which a note never does.
+- [`apo runs rejudge`](/cli/runs-rejudge/): measuring whether a judged test is stable before writing a note about it.

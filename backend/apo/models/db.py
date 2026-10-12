@@ -824,6 +824,45 @@ class AgentTaskTestResultCorrectionDB(SQLModel, table=True):
     )
 
 
+class AgentTaskNoteDB(SQLModel, table=True):
+    """A Project's durable knowledge about a Folder, Task, or Test.
+
+    Exactly one scope is set: ``folder`` (a path prefix, whole segments),
+    ``task_id``, or ``task_id`` + ``test_id``. Notes never touch a verdict.
+    ``task_definition_revision_id`` anchors Task and Test Notes to the
+    definition current when they were written, so readers can tell when
+    the Task has changed since.
+    """
+
+    __tablename__: ClassVar[str] = "agent_task_notes"
+    __table_args__: ClassVar[tuple[object, ...]] = (
+        Index("ix_agent_task_notes_task", "project", "task_id"),
+        Index("ix_agent_task_notes_folder", "project", "folder"),
+    )
+
+    id: str = Field(primary_key=True, default_factory=lambda: f"note_{uuid4().hex[:16]}")
+    project: str = Field(index=True)
+    scope: str  # folder | task | test
+    folder: str | None = None
+    task_id: str | None = None
+    test_id: str | None = None
+    body: str = Field(sa_column=Column(Text, nullable=False))
+    task_definition_revision_id: str | None = None
+    created_by_user_id: str | None = None
+    created_via: str = "session"  # session | api_key | open_dev
+    api_key_id: str | None = None
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(UTCDateTime, server_default=func.now()),
+    )
+    updated_by_user_id: str | None = None
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(UTCDateTime, server_default=func.now()),
+    )
+    archived_at: datetime | None = Field(default=None, sa_column=Column(UTCDateTime))
+
+
 class AgentTaskScheduleDB(SQLModel, table=True):
     __tablename__: ClassVar[str] = "agent_task_schedules"
 

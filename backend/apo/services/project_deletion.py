@@ -43,6 +43,7 @@ from ..models.db import (
     AgentTaskCheckReportDB,
     AgentTaskDeliverableDB,
     AgentTaskJudgmentDB,
+    AgentTaskNoteDB,
     AgentTaskTestResultCorrectionDB,
     AgentTaskRunDB,
     AgentTaskScheduleDB,
@@ -218,6 +219,9 @@ def delete_project_data(
     )
     deleted["task_view_comparisons"] = _delete_by_column(
         session, TaskViewComparisonDB, TaskViewComparisonDB.project_id == project_id
+    )
+    deleted["agent_task_notes"] = _delete_by_column(
+        session, AgentTaskNoteDB, AgentTaskNoteDB.project == project_id
     )
     # task_revisions reference batch runs via FK, so they must be
     # removed BEFORE agent_task_batch_runs. Their bundle objects were already

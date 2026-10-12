@@ -843,6 +843,50 @@ class AgentTaskRunSummary(SQLModel):
     corrected_tests: int = 0
 
 
+# ── Task Notes ──────────────────────────────────────────────────────
+
+TaskNoteScope = Literal["folder", "task", "test"]
+
+
+class CreateTaskNoteRequest(SQLModel):
+    """Exactly one target: ``folder``, or ``task_id`` with optional ``test_id``."""
+
+    folder: str | None = None
+    task_id: str | None = None
+    test_id: str | None = None
+    body: str
+
+
+class UpdateTaskNoteRequest(SQLModel):
+    body: str | None = None
+    archived: bool | None = None
+
+
+class TaskNote(SQLModel):
+    id: str
+    scope: TaskNoteScope
+    folder: str | None
+    task_id: str | None
+    test_id: str | None
+    body: str
+    task_definition_revision_id: str | None
+    created_by_user_id: str | None
+    created_by_label: str | None
+    created_via: Literal["session", "api_key", "open_dev"]
+    created_at: datetime
+    updated_by_user_id: str | None
+    updated_at: datetime
+    archived_at: datetime | None
+    # Set only when Notes are read for a Run: whether the Note was written
+    # against a different Task Definition Revision than the Run pinned. None
+    # when either side is unknown (Folder Notes, Runs without a revision).
+    task_changed_since: bool | None = None
+
+
+class TaskNoteList(SQLModel):
+    notes: list[TaskNote]
+
+
 class AgentTaskRunDetail(SQLModel):
     id: str
     batch_run_id: str
@@ -903,6 +947,9 @@ class AgentTaskRunDetail(SQLModel):
     # Issue #159: number of recorded rejudge judgments. The original verdict
     # is synthesized on read and not counted.
     judgments_count: int = 0
+    # Folder, Task and Test Notes that apply to this Run's Task, each marked
+    # against the Run's pinned definition. Knowledge only, never a verdict.
+    task_notes: list[TaskNote] = Field(default_factory=list)
     # Tests whose effective result differs from the recorded one.
     corrected_tests: int = 0
     # Issue #176: the run's attempt lease heartbeat — the run's live
