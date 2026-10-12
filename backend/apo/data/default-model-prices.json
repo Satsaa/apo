@@ -171,6 +171,54 @@
       ]
     },
     {
+      "_doc": "Claude Haiku 5.5: two rate cards chosen by prompt length. $0.10/$0.50 per MTok when the prompt is 100K tokens or fewer, $0.50/$2.50 above that; cache read 0.1x, 5-minute write 1.25x, 1-hour write 2x the card's input rate. The prompt counts every input token, cached or not, so the condition sums input, cache_read and both cache writes. Before this entry claude-haiku-5-5 matched no pattern and every call was unpriced.",
+      "match_pattern": "(?i)^claude-haiku-5[.-]5.*$",
+      "provider": "anthropic",
+      "display_name": "Claude Haiku 5.5",
+      "start_date": null,
+      "updated_at": "2026-10-12T00:00:00Z",
+      "last_reviewed": "2026-10",
+      "pricing_tiers": [
+        {
+          "name": "default",
+          "is_default": true,
+          "priority": 0,
+          "conditions": [],
+          "prices": {
+            "input": 0.1,
+            "cache_read": 0.01,
+            "cache_write_5m": 0.125,
+            "cache_write_1h": 0.2,
+            "output": 0.5
+          }
+        },
+        {
+          "name": "large-context",
+          "is_default": false,
+          "priority": 1,
+          "conditions": [
+            {
+              "keys": [
+                "input",
+                "cache_read",
+                "cache_write_5m",
+                "cache_write_1h"
+              ],
+              "operator": "gt",
+              "threshold": 100000
+            }
+          ],
+          "prices": {
+            "input": 0.5,
+            "cache_read": 0.05,
+            "cache_write_5m": 0.625,
+            "cache_write_1h": 1.0,
+            "output": 2.5
+          }
+        }
+      ]
+    },
+    {
       "_doc": "$1/$5 per MTok. Pattern allows a date suffix \u2014 the canonical id is dated (claude-haiku-4-5-20251001). Distinct from the Claude 3.5 Haiku entry below, which is a different model at $0.80/$4.",
       "match_pattern": "(?i)^claude-haiku-4[.-]5.*$",
       "provider": "anthropic",
