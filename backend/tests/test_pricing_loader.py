@@ -430,6 +430,27 @@ class TestBundledCurrentModels:
             assert cost.breakdown["cache_read"] == 500_000, name
             assert cost.breakdown["output"] == 25_000_000, name
 
+    def test_sonnet_55_has_its_own_rates_not_sonnet_5(self, session: Session) -> None:
+        """Sonnet 5.5 is $2/$10 per MTok with cache reads at $0.20. The Sonnet 5
+        patterns used to be ``^claude-sonnet-5.*$``, which also matched
+        ``claude-sonnet-5-5`` and, from 2026-09-01, priced it at Sonnet 5's
+        standard $3/$15/$0.30. Resolution has no most-specific-wins rule, so the
+        patterns must not overlap."""
+        load_default_prices(session)
+        after_intro = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        usage = {"input": 1_000_000, "cache_read": 1_000_000, "output": 1_000_000}
+        for name in ("claude-sonnet-5-5", "claude-sonnet-5.5", "claude-sonnet-5-5-20261001"):
+            cost = compute_cost(session, name, usage, "__global__", after_intro)
+            assert cost is not None, f"{name} should be priced"
+            assert cost.breakdown["input"] == 2_000_000, name
+            assert cost.breakdown["cache_read"] == 200_000, name
+            assert cost.breakdown["output"] == 10_000_000, name
+        for name in ("claude-sonnet-5", "claude-sonnet-5-20260630"):
+            cost = compute_cost(session, name, usage, "__global__", after_intro)
+            assert cost is not None, f"{name} should be priced"
+            assert cost.breakdown["input"] == 3_000_000, name
+            assert cost.breakdown["output"] == 15_000_000, name
+
     def test_prices_current_gemini_models_bare_and_prefixed(self, session: Session) -> None:
         load_default_prices(session)
         usage = {"input": 1_000_000, "output": 1_000_000}
