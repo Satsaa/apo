@@ -22,6 +22,7 @@ export interface ExecutorRunWarning {
 export function executorRunWarning(
   state: ConnectedEnvironmentState | null,
 ): ExecutorRunWarning | null {
+  // Mirrors the backend's DEFAULT_QUEUE_TTL_SECONDS (services/executor_auth.py).
   const expiry = "Runs wait in the queue and expire after 24 hours if nothing claims them.";
   switch (state) {
     case "not_connected":
@@ -40,9 +41,11 @@ export function executorRunWarning(
         detail: `Update the Apo CLI, then restart apo connect. ${expiry}`,
       };
     case "catalog_mismatch":
+      // The tasks page only renders with a published catalog, so a mismatch
+      // means the two differ; either side may be the newer one.
       return {
-        title: "Your published catalog is out of date",
-        detail: `Run apo task publish from this Task workspace; apo connect resumes automatically. ${expiry}`,
+        title: "Your local catalog doesn't match the published one",
+        detail: `Pull the latest tasks, or run apo task publish if your copy is newer; apo connect resumes automatically. ${expiry}`,
       };
     default:
       return null;
@@ -57,9 +60,14 @@ export function useConnectedExecutorState(
   const [state, setState] = useState<ConnectedEnvironmentState | null>(null);
 
   useEffect(() => {
+    // A previous selection or project's answer must not flash while reloading.
+    setState(null);
     if (!enabled) return;
     let cancelled = false;
+    let inFlight = false;
     const load = () => {
+      if (inFlight || document.hidden) return;
+      inFlight = true;
       getConnectedExecutorStatus(projectId)
         .then((res) => {
           if (!cancelled) setState(res.state);
@@ -67,15 +75,23 @@ export function useConnectedExecutorState(
         .catch(() => {
           // Status is advisory: an unreachable endpoint must not warn or block.
           if (!cancelled) setState(null);
+        })
+        .finally(() => {
+          inFlight = false;
         });
+    };
+    const onVisibility = () => {
+      if (!document.hidden) load();
     };
     load();
     const timer = setInterval(load, POLL_MS);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [projectId, enabled]);
 
-  return enabled ? state : null;
+  return state;
 }

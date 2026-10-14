@@ -39,19 +39,21 @@ export function SelectionActionBar({
 }) {
   return (
     <div className="sticky bottom-4 z-20 mx-auto mb-4 w-fit max-w-[calc(100%-1rem)]">
-      {canRunTasks && !isDemoProject && runWarning ? (
-        <div
-          role="status"
-          data-testid="executor-run-warning"
-          className="mb-2 flex max-w-xl items-start gap-2 border border-warning/40 bg-card px-3 py-2 text-[12px] shadow-2xl shadow-black/60"
-        >
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-          <div>
-            <p className="font-medium text-foreground">{runWarning.title}</p>
-            <p className="text-muted-foreground">{runWarning.detail}</p>
+      {/* The live region stays mounted so its content changes are announced. */}
+      <div role="status">
+        {canRunTasks && !isDemoProject && runWarning ? (
+          <div
+            data-testid="executor-run-warning"
+            className="mb-2 flex max-w-xl items-start gap-2 border border-warning/40 bg-card px-3 py-2 text-[12px] shadow-2xl shadow-black/60"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+            <div>
+              <p className="font-medium text-foreground">{runWarning.title}</p>
+              <p className="text-muted-foreground">{runWarning.detail}</p>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border border-border bg-card px-3 py-2 shadow-2xl shadow-black/60">
         <div className="flex items-center gap-2 text-[12px]">
           <span className="grid h-5 min-w-5 place-items-center bg-white px-1 font-mono text-[11px] font-semibold text-black">
