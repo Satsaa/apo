@@ -12,38 +12,16 @@ claimed.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
-import pytest
-from fastapi.testclient import TestClient
+from fastapi import Response
 from sqlmodel import Session
 
-from apo.api import app
-from apo.db import get_session
 from apo.models.db import ExecutorDB, ProjectDB, ProjectMembershipDB, UserDB
+from apo.models.execution import ExecutorCapabilities
+from apo.routes.executor_protocol_v2 import EnrollV2Request, enroll_v2
 from apo.services.source_owned_executor import bootstrap_connected_executor
-
-
-@pytest.fixture
-def engine(monkeypatch):
-    from sqlalchemy.pool import StaticPool
-    from sqlmodel import SQLModel, create_engine
-
-    eng = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    SQLModel.metadata.create_all(eng)
-    import apo.db as db_module
-
-    monkeypatch.setattr(db_module, "engine", eng)
-
-    def _sess():
-        with Session(eng) as s:
-            yield s
-
-    app.dependency_overrides[get_session] = _sess
-    yield eng
-    app.dependency_overrides.pop(get_session, None)
 
 
 def _member(s: Session, email: str) -> str:
@@ -62,43 +40,46 @@ def _member(s: Session, email: str) -> str:
     return user.id
 
 
-def _enroll(client: TestClient, token: str, name: str) -> str:
-    res = client.post(
-        "/v1/executor-protocol/v2/enroll",
-        json={
-            "token": token,
-            "name": name,
-            "capabilities": {
-                "protocol_version": 2,
-                "executor_version": "0.0.0-test",
-                "driver_kinds": ["source-owned-ts"],
-                "os": "linux",
-                "architecture": "x64",
-                "runtimes": {"node": "22"},
-                "max_concurrency": 1,
-            },
-        },
+def _enroll(session: Session, token: str, name: str) -> str:
+    result = asyncio.run(
+        enroll_v2(
+            EnrollV2Request(
+                token=token,
+                name=name,
+                capabilities=ExecutorCapabilities(
+                    protocol_version=2,
+                    executor_version="0.0.0-test",
+                    driver_kinds=["source-owned-ts"],
+                    os="linux",
+                    architecture="x64",
+                    runtimes={"node": "22"},
+                    max_concurrency=1,
+                ),
+            ),
+            Response(),
+            session,
+        )
     )
-    assert res.status_code == 200, res.text
-    return res.json()["executor_id"]
+    return result.executor_id
 
 
-def test_each_member_executor_is_bound_to_that_member(engine):
-    with Session(engine) as s:
-        alice = _member(s, "alice@t.com")
-        bob = _member(s, "bob@t.com")
-        alice_token = bootstrap_connected_executor(
-            s, project_id="p1", user_id=alice, name="alice-laptop"
-        ).enrollment_token
-        bob_token = bootstrap_connected_executor(
-            s, project_id="p1", user_id=bob, name="bob-laptop"
-        ).enrollment_token
+def test_each_member_executor_is_bound_to_that_member(session: Session):
+    alice = _member(session, "alice@t.com")
+    bob = _member(session, "bob@t.com")
+    alice_token = bootstrap_connected_executor(
+        session, project_id="p1", user_id=alice, name="alice-laptop"
+    ).enrollment_token
+    bob_token = bootstrap_connected_executor(
+        session, project_id="p1", user_id=bob, name="bob-laptop"
+    ).enrollment_token
 
-    client = TestClient(app)
-    alice_executor = _enroll(client, alice_token, "alice-laptop")
-    bob_executor = _enroll(client, bob_token, "bob-laptop")
+    alice_executor = _enroll(session, alice_token, "alice-laptop")
+    bob_executor = _enroll(session, bob_token, "bob-laptop")
 
-    with Session(engine) as s:
-        assert s.get(ExecutorDB, alice_executor).enrolled_by_user_id == alice
-        assert s.get(ExecutorDB, bob_executor).enrolled_by_user_id == bob
+    alice_executor_row = session.get(ExecutorDB, alice_executor)
+    bob_executor_row = session.get(ExecutorDB, bob_executor)
+    assert alice_executor_row is not None
+    assert bob_executor_row is not None
+    assert alice_executor_row.enrolled_by_user_id == alice
+    assert bob_executor_row.enrolled_by_user_id == bob
 
