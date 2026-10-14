@@ -933,6 +933,9 @@ class AgentTaskRunDetail(SQLModel):
     # Why an ``error`` run has no verdict: judge | generations | executor.
     no_verdict_reason: NoVerdictReason | None = None
     trigger: AgentTaskRunTrigger | None = None
+    # The parent Batch's requester (see AgentTaskBatchRunSummary).
+    requested_by_user_id: str | None = None
+    requested_by_label: str | None = None
     checks_json: list[dict[str, object]] | None = None
     transcript_json: dict[str, object] | None = None
     deliverables_json: dict[str, object] | None = None
@@ -1097,6 +1100,11 @@ class AgentTaskBatchRunSummary(SQLModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     trigger: AgentTaskRunTrigger | None = None
+    # Who asked for the Batch: the authenticated User (session or the User an
+    # API key belongs to), resolved server-side. Unlike ``trigger.actor`` it is
+    # never client-supplied. Null for runtime credentials and older Batches.
+    requested_by_user_id: str | None = None
+    requested_by_label: str | None = None
     # Union of serving-host labels (route wins over provider; issue #307)
     # across the child Task Runs, projected on read from each child's
     # ``model_providers_json`` rollup. Lets the list page fill the Hosts
@@ -1143,6 +1151,11 @@ class AgentTaskBatchRunDetail(SQLModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     trigger: AgentTaskRunTrigger | None = None
+    # Who asked for the Batch: the authenticated User (session or the User an
+    # API key belongs to), resolved server-side. Unlike ``trigger.actor`` it is
+    # never client-supplied. Null for runtime credentials and older Batches.
+    requested_by_user_id: str | None = None
+    requested_by_label: str | None = None
     task_runs: list[AgentTaskRunSummary] = Field(default_factory=list)
     failure_breakdown: list[FailureBreakdownItem] = Field(default_factory=list)
     task_revision: TaskRevisionSummary | None = None

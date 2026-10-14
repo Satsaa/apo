@@ -103,3 +103,14 @@ export function TriggerInline({ trigger }: { trigger: AgentTaskRunTrigger | null
   );
   return <span>{parts.join(" · ")}</span>;
 }
+
+/** Who asked for the run, as the backend recorded it; nothing for old rows. */
+export function RequestedByInline({ label }: { label: string | null | undefined }) {
+  if (!label) return null;
+  return (
+    <>
+      <span className="text-muted-foreground/50">·</span>
+      <span title="Requested by">by {label}</span>
+    </>
+  );
+}

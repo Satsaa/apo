@@ -201,6 +201,7 @@ def to_batch_run_summary(
     total_reasoning_tokens: int | None = None,
     total_model_time_ms: float | None = None,
     providers: Sequence[str] = (),
+    requested_by_label: str | None = None,
 ) -> AgentTaskBatchRunSummary:
     """Project a batch run DB row to its summary view model.
 
@@ -242,6 +243,8 @@ def to_batch_run_summary(
         started_at=br.started_at,
         completed_at=br.completed_at,
         trigger=trigger,
+        requested_by_user_id=br.requested_by_user_id,
+        requested_by_label=requested_by_label,
         providers=list(providers),
         configuration=configuration
         or AgentTaskBatchRunConfigurationSummary(state="unknown"),
@@ -256,6 +259,7 @@ def to_batch_run_detail(
     attempts: Sequence[TaskExecutionAttemptDB] = (),
     executor_names: Mapping[str, str] | None = None,
     executor_pool_name: str | None = None,
+    requested_by_label: str | None = None,
 ) -> AgentTaskBatchRunDetail:
     """Project a batch run DB row + its task runs to a detail view model.
 
@@ -350,6 +354,8 @@ def to_batch_run_detail(
         started_at=br.started_at,
         completed_at=br.completed_at,
         trigger=trigger,
+        requested_by_user_id=br.requested_by_user_id,
+        requested_by_label=requested_by_label,
         task_runs=task_run_summaries,
         failure_breakdown=breakdown,
         task_revision=task_revision,

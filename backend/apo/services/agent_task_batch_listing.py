@@ -32,6 +32,7 @@ from ..services.agent_task_projection import (
     to_batch_run_summary,
 )
 from ..services.archived_models import load_archived_models
+from ..services.human_actor import user_labels
 from ..services.trace_backend import parse_model_providers, provider_labels
 from ..services.view_runs import since_cutoff
 
@@ -399,6 +400,10 @@ def _hydrate_batch_summaries(
                 merged.append(label)
     for labels in providers_by_batch.values():
         labels.sort()
+    requester_labels = user_labels(
+        session,
+        {br.requested_by_user_id for br in batches if br.requested_by_user_id},
+    )
     task_ids_by_batch = {
         bid: child_task_ids([tr for tr in all_task_runs if tr.batch_run_id == bid])
         for bid in batch_ids
@@ -412,6 +417,11 @@ def _hydrate_batch_summaries(
             unpriced_call_count=unpriced_by_batch.get(br.id, 0),
             configuration=configuration_by_batch.get(br.id),
             derived_task_ids=task_ids_by_batch.get(br.id, ()),
+            requested_by_label=(
+                requester_labels.get(br.requested_by_user_id)
+                if br.requested_by_user_id
+                else None
+            ),
             total_reasoning_tokens=(
                 reasoning_by_batch.get(br.id)
                 if br.id in reasoning_known_by_batch

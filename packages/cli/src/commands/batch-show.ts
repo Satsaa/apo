@@ -43,6 +43,8 @@ type BatchDetail = {
     hostname: string | null;
     entrypoint: string | null;
   } | null;
+  /** The authenticated User who asked for the Batch; null on older rows. */
+  requested_by_label?: string | null;
   task_runs: TaskRunSummary[];
 };
 
@@ -108,6 +110,9 @@ function printBatchDetail(batch: BatchDetail): void {
   console.log(`  Cost:     ${formatCost(batch.total_cost)}`);
   console.log(`  Created:  ${formatTime(batch.created_at)}`);
   console.log(`  Source:   ${formatTriggerOpt(batch.trigger)}`);
+  if (batch.requested_by_label) {
+    console.log(`  Requested by: ${batch.requested_by_label}`);
+  }
   if (batch.started_at) {
     console.log(`  Started:  ${formatTime(batch.started_at)}`);
   }

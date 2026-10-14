@@ -48,6 +48,8 @@ type RunDetail = {
     hostname: string | null;
     entrypoint: string | null;
   } | null;
+  /** The authenticated User who asked for the parent Batch. */
+  requested_by_label?: string | null;
   checks_json: CheckResult[] | null;
   deliverables_json: Record<string, unknown> | null;
   transcript_json: Record<string, unknown> | null;
@@ -241,6 +243,9 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
     console.log(`  Completed: ${formatTime(run.completed_at)}`);
   }
   console.log(`  Source:   ${formatTriggerOpt(run.trigger)}`);
+  if (run.requested_by_label) {
+    console.log(`  Requested by: ${run.requested_by_label}`);
+  }
   console.log(`  Cost:     ${formatCost(run.total_cost)}${formatPartialCostSuffix(run)}`);
   if (run.total_tokens != null && run.total_tokens > 0) {
     console.log(

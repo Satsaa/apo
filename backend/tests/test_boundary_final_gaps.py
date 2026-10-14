@@ -238,6 +238,27 @@ class TestTaskRunResultAuthorization:
         assert run.status == "passed"
         assert run.pass_result is True
 
+    def test_runtime_report_response_omits_the_requester(self, session: Session) -> None:
+        _seed_world(session)
+        run = _seed_task_run(session, run_id="run-a-1", batch_id="batch-a-1", project=_PROJECT_A)
+        batch = session.get(AgentTaskBatchRunDB, "batch-a-1")
+        assert batch is not None
+        batch.requested_by_user_id = _USER_ALICE
+        session.add(batch)
+        session.commit()
+        client = _service_token_client(session, _PROJECT_A, run.id)
+
+        response = client.post(
+            f"/v1/agent-task-runs/{run.id}/result",
+            json={"pass_result": True, "checks": []},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["requested_by_user_id"] is None
+        assert response.json()["requested_by_label"] is None
+        member = _session_client(session, _USER_ALICE).get(f"/v1/agent-task-runs/{run.id}")
+        assert member.json()["requested_by_label"] == f"{_USER_ALICE}@test"
+
 
 # ---------------------------------------------------------------------------
 # 2. projects.py Credential Authority

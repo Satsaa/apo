@@ -461,6 +461,9 @@ export interface TaskDefinitionRevisionSummary {
 }
 
 export interface AgentTaskRunDetail extends AgentTaskRunSummary {
+  /** The parent Batch's requester; absent on older backends. */
+  requested_by_user_id?: string | null;
+  requested_by_label?: string | null;
   checks_json: CheckResult[] | null;
   transcript_json: Record<string, unknown> | null;
   deliverables_json: Record<string, unknown> | null;
@@ -522,6 +525,10 @@ export interface AgentTaskBatchRunSummary {
   started_at: string | null;
   completed_at: string | null;
   trigger: AgentTaskRunTrigger | null;
+  /** The authenticated User who asked for the Batch, resolved server-side
+   * (never client-supplied, unlike trigger.actor). Null on older Batches. */
+  requested_by_user_id?: string | null;
+  requested_by_label?: string | null;
   trace_persistence_status: TracePersistenceStatus;
   trace_error_message: string | null;
   total_cost: number | null;

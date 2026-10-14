@@ -35,7 +35,7 @@ from ..models import (
     ReportAgentTaskRunResultRequest,
     RunDB,
 )
-from ..models.db import TaskExecutionAttemptDB
+from ..models.db import TaskExecutionAttemptDB, UserDB
 from ..models.schemas import (
     as_no_verdict_reason,
     as_task_run_status,
@@ -50,6 +50,7 @@ from ..services.agent_task_batch_listing import (
     list_batch_run_summaries,
 )
 from ..services.agent_task_deliverables import derive_deliverables_json
+from ..services.human_actor import user_label
 from ..services.judgments import count_judgments
 from ..services.judge_span_links import annotate_judge_span_ids
 from ..services.test_result_corrections import projected_check_report
@@ -238,7 +239,13 @@ def _build_task_run_detail(
     include_transcript: bool = False,
     task_definition: dict[str, object] | None = None,
     deliverables_json: dict[str, object] | None = None,
+    include_requester: bool = True,
 ) -> AgentTaskRunDetail:
+    # Callers have already loaded the Batch, so this hits the identity map.
+    batch = session.get(AgentTaskBatchRunDB, task_run.batch_run_id)
+    requested_by_user_id = (
+        batch.requested_by_user_id if batch is not None and include_requester else None
+    )
     return AgentTaskRunDetail(
         id=task_run.id,
         batch_run_id=task_run.batch_run_id,
@@ -286,6 +293,8 @@ def _build_task_run_detail(
         no_verdict_reason=as_no_verdict_reason(task_run.no_verdict_reason),
         corrected_tests=task_run.corrected_tests,
         trigger=trigger,
+        requested_by_user_id=requested_by_user_id,
+        requested_by_label=user_label(session, requested_by_user_id),
         # Current surfaces show the effective projection —
         # recorded evidence stays inside the report, overlay adds
         # recorded_pass/correction metadata on corrected tests.
@@ -405,7 +414,12 @@ async def create_agent_task_batch_run(
             TaskExecutionAttemptDB.batch_run_id == batch.id
         )
     ).all()
-    return to_batch_run_detail(batch, task_runs, attempts=attempts)
+    return to_batch_run_detail(
+        batch,
+        task_runs,
+        attempts=attempts,
+        requested_by_label=user_label(session, batch.requested_by_user_id),
+    )
 
 
 # ============================================================================
@@ -588,6 +602,22 @@ class CallerIdentityBody(BaseModel):
     architecture: str
 
 
+def _requesting_member_id(
+    request: Request, session: Session, membership: object
+) -> str | None:
+    """The real User behind a member-authorized request, else None.
+
+    Session cookies carry the User; an API key carries the User who created
+    it. The open-dev ``"dev"`` sentinel and fallback memberships name no User
+    row, so they are dropped rather than written into the foreign key.
+    """
+    acting_user_id = cast(str | None, getattr(request.state, "user_id", None))
+    membership_user_id = getattr(membership, "user_id", None)
+    if not acting_user_id or str(acting_user_id) != str(membership_user_id):
+        return None
+    return acting_user_id if session.get(UserDB, acting_user_id) is not None else None
+
+
 class CallerCreateResponse(BaseModel):
     batch_run_id: str
     task_run_id: str
@@ -626,7 +656,7 @@ async def create_caller_batch_run_route(
     /start, heartbeat, and result. The caller owns execution; no Executor
     process is enrolled."""
     require_project_not_demo(request.project)
-    _ = enforce_project_role_from_request(
+    membership = enforce_project_role_from_request(
         http_request, session, request.project, minimum_role="member"
     )
     from apo.models.execution import (
@@ -673,6 +703,7 @@ async def create_caller_batch_run_route(
                 architecture=request.caller_identity.architecture,
             ),
             task_definition=request.task_definition,
+            requested_by_user_id=_requesting_member_id(http_request, session, membership),
         )
     except CallerExecutionError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -832,6 +863,7 @@ async def get_agent_task_batch_run(
         attempts=attempts,
         executor_names=executor_names,
         executor_pool_name=pool_name,
+        requested_by_label=user_label(session, batch.requested_by_user_id),
     )
 
 
@@ -1167,4 +1199,7 @@ async def report_agent_task_run_result(
         task_run,
         trigger=trigger,
         deliverables_json=await derive_deliverables_json(session, task_run),
+        # Runtime credentials report results; they have no use for who asked.
+        include_requester=getattr(request.state, "auth_method", None)
+        not in ("service_token", "attempt_token"),
     )

@@ -212,3 +212,69 @@ def test_caller_create_advertises_configured_result_cap(
     r = client.post("/v1/agent-task-batch-runs/caller", json=_caller_body())  # type: ignore[attr-defined]
     assert r.status_code == 201, r.text
     assert r.json()["result_max_bytes"] == 2048
+
+
+def _seed_member(session: Session, project_id: str = "proj-caller") -> str:
+    from apo.models.db import ProjectMembershipDB, UserDB
+
+    user = UserDB(email="runner@test.com", name="Runner", password_hash="x", is_active=True)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    now = datetime.now(timezone.utc)
+    session.add(
+        ProjectMembershipDB(
+            project_id=project_id, user_id=user.id, role="member", created_at=now, updated_at=now
+        )
+    )
+    session.commit()
+    return user.id
+
+
+def _assert_requested_by(client: object, body: dict[str, object], user_id: str | None) -> None:
+    label = "runner@test.com" if user_id else None
+    batch = client.get(f"/v1/agent-task-batch-runs/{body['batch_run_id']}")  # type: ignore[attr-defined]
+    assert batch.status_code == 200, batch.text
+    assert batch.json()["requested_by_user_id"] == user_id
+    assert batch.json()["requested_by_label"] == label
+    listed = client.get("/v1/agent-task-batch-runs", params={"project": "proj-caller"})  # type: ignore[attr-defined]
+    assert listed.status_code == 200, listed.text
+    row = next(b for b in listed.json()["data"] if b["id"] == body["batch_run_id"])
+    assert row["requested_by_label"] == label
+    run = client.get(f"/v1/agent-task-runs/{body['task_run_id']}")  # type: ignore[attr-defined]
+    assert run.status_code == 200, run.text
+    assert run.json()["requested_by_label"] == label
+
+
+def test_caller_batch_records_the_session_user(
+    session: Session, auth_secret: str, make_authed_client
+) -> None:
+    _seed_project(session)
+    user_id = _seed_member(session)
+    authed = make_authed_client(user_id, session, is_admin=False)
+    r = authed.post("/v1/agent-task-batch-runs/caller", json=_caller_body())
+    assert r.status_code == 201, r.text
+    _assert_requested_by(authed, r.json(), user_id)
+
+
+def test_caller_batch_records_the_api_key_creator(
+    session: Session, auth_secret: str, make_api_key_client
+) -> None:
+    _seed_project(session)
+    user_id = _seed_member(session)
+    keyed = make_api_key_client(user_id, "proj-caller", session)
+    r = keyed.post("/v1/agent-task-batch-runs/caller", json=_caller_body())
+    assert r.status_code == 201, r.text
+    _assert_requested_by(keyed, r.json(), user_id)
+
+
+def test_open_dev_caller_batch_names_no_requester(
+    client: object, session: Session, auth_secret: str
+) -> None:
+    """The open-dev identity is no User row, so nothing lands in the FK."""
+    _seed_project(session)
+    r = client.post("/v1/agent-task-batch-runs/caller", json=_caller_body())  # type: ignore[attr-defined]
+    assert r.status_code == 201, r.text
+    batch = session.get(AgentTaskBatchRunDB, r.json()["batch_run_id"])
+    assert batch is not None and batch.requested_by_user_id is None
+    _assert_requested_by(client, r.json(), None)

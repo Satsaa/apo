@@ -63,6 +63,7 @@ def create_caller_batch_run(
     attestation: CallerSourceAttestation,
     caller_identity: CallerIdentity,
     task_definition: dict[str, object],
+    requested_by_user_id: str | None = None,
 ) -> CallerClaimResult:
     """Atomically create one Batch + Task Run + attested Revision + leased caller
     Attempt, and mint the Attempt JWT. Supports exactly one Task.
@@ -96,6 +97,7 @@ def create_caller_batch_run(
         run_metadata=run_metadata or {},
         status="queued",
         execution_target_json={"kind": "caller"},
+        requested_by_user_id=requested_by_user_id,
         created_at=now,
     )
     session.add(batch)

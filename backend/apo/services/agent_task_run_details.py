@@ -38,6 +38,7 @@ from .agent_task_deliverables import derive_deliverables_json_for_runs
 from .agent_task_outcome import classify_run_outcome
 from .agent_task_projection import parse_trigger
 from .check_report_storage import load_check_reports
+from .human_actor import user_labels
 from .judge_span_links import annotate_judge_span_ids
 from .task_definition_revisions import to_definition_summary
 from .test_result_corrections import (
@@ -171,7 +172,9 @@ def load_task_run_details(
         )
     ).all()
     run_by_id = {run.id: run for run in runs}
-    triggers = _load_triggers(session, runs)
+    batches = _load_batches(session, runs)
+    triggers = {batch.id: parse_trigger(batch.run_metadata) for batch in batches}
+    requesters = _requesters(session, batches)
     definitions = _load_definitions(session, runs)
     check_reports = load_check_reports(session, runs)
 
@@ -201,6 +204,7 @@ def load_task_run_details(
             session,
             run,
             trigger=triggers.get(run.batch_run_id),
+            requester=requesters.get(run.batch_run_id, (None, None)),
             task_definition=definitions.get(run.task_definition_revision_id),
             checks=effective_checks.get(run.id) or None,
             deliverables_json=derived.get(run.id),
@@ -210,19 +214,43 @@ def load_task_run_details(
     ]
 
 
-def _load_triggers(
+def _load_batches(
     session: Session,
     runs: Sequence[AgentTaskRunDB],
-) -> dict[str, AgentTaskRunTrigger | None]:
+) -> Sequence[AgentTaskBatchRunDB]:
     batch_ids = list(dict.fromkeys(run.batch_run_id for run in runs))
     if not batch_ids:
-        return {}
-    batches = session.exec(
+        return []
+    return session.exec(
         select(AgentTaskBatchRunDB).where(
             col(AgentTaskBatchRunDB.id).in_(batch_ids)
         )
     ).all()
-    return {batch.id: parse_trigger(batch.run_metadata) for batch in batches}
+
+
+def _load_triggers(
+    session: Session,
+    runs: Sequence[AgentTaskRunDB],
+) -> dict[str, AgentTaskRunTrigger | None]:
+    return {batch.id: parse_trigger(batch.run_metadata) for batch in _load_batches(session, runs)}
+
+
+def _requesters(
+    session: Session,
+    batches: Sequence[AgentTaskBatchRunDB],
+) -> dict[str, tuple[str | None, str | None]]:
+    """(user id, label) of each Batch's requester; reads users only if any."""
+    labels = user_labels(
+        session,
+        {batch.requested_by_user_id for batch in batches if batch.requested_by_user_id},
+    )
+    return {
+        batch.id: (
+            batch.requested_by_user_id,
+            labels.get(batch.requested_by_user_id) if batch.requested_by_user_id else None,
+        )
+        for batch in batches
+    }
 
 
 def _load_definitions(
@@ -251,6 +279,7 @@ def _to_detail(
     run: AgentTaskRunDB,
     *,
     trigger: AgentTaskRunTrigger | None,
+    requester: tuple[str | None, str | None] = (None, None),
     task_definition: dict[str, object] | None,
     checks: list[dict[str, object]] | None,
     deliverables_json: dict[str, object] | None = None,
@@ -292,6 +321,8 @@ def _to_detail(
         no_verdict_reason=as_no_verdict_reason(run.no_verdict_reason),
         corrected_tests=run.corrected_tests,
         trigger=trigger,
+        requested_by_user_id=requester[0],
+        requested_by_label=requester[1],
         checks_json=checks,
         transcript_json=None,
         deliverables_json=deliverables_json,

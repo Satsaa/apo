@@ -85,6 +85,20 @@ describe("runs show command", () => {
     expect(out).toContain(FULL_ID);
     expect(out).toContain("code-review");
     expect(out).toContain("trace-1");
+    expect(out).not.toContain("Requested by");
+  });
+
+  it("prints who requested the run when the backend knows", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({ requested_by_label: "runner@test.com" })),
+    );
+    const { logs, restore } = captureLog();
+
+    const code = await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    expect(code).toBe(0);
+    expect(stripAnsi(logs.join("\n"))).toContain("Requested by: runner@test.com");
   });
 
   it("says 'not started' for a run that never started, not the 1970 epoch", async () => {

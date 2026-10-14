@@ -27,7 +27,7 @@ import {
   runStatusLabel,
   showsErrorBanner,
 } from "@/lib/run-verdict";
-import { TriggerInline } from "@/components/trigger-badge";
+import { RequestedByInline, TriggerInline } from "@/components/trigger-badge";
 import { DeleteRunButton } from "@/components/runs/DeleteRunButton";
 import { TaskRunDetailBody } from "./task-run-detail-body";
 import { TaskRunAutoRefresh } from "@/components/agent-task-execution/task-run-auto-refresh";
@@ -344,6 +344,7 @@ export default async function TaskRunDetailPage({
                   <TriggerInline trigger={taskRun.trigger} />
                 </>
               )}
+              <RequestedByInline label={taskRun.requested_by_label} />
               <>
                 <span className="text-muted-foreground/50">·</span>
                 <Link href={`/project/${projectId}/runs/${taskRun.batch_run_id}`} className="font-mono hover:text-foreground">

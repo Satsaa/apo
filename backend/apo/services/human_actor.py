@@ -46,7 +46,7 @@ def derive_human_actor(request: Request, session: Session, *, action: str) -> Hu
         )
 
     user_id = getattr(request.state, "user_id", None)
-    label = _user_email(session, user_id)
+    label = user_label(session, user_id)
 
     if auth_method == "api_key":
         if getattr(request.state, "api_key_scope", "full") != "full":
@@ -76,7 +76,8 @@ def user_labels(session: Session, user_ids: set[str]) -> dict[str, str]:
     return {user.id: user.email for user in users}
 
 
-def _user_email(session: Session, user_id: str | None) -> str | None:
+def user_label(session: Session, user_id: str | None) -> str | None:
+    """Email of one user, or None when unknown."""
     if user_id is None:
         return None
     user = session.get(UserDB, user_id)

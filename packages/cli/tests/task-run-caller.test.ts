@@ -102,6 +102,38 @@ describe("task run caller-execution dispatch", () => {
     });
     expect(calls.some((u) => u.includes("/executor-protocol/v1/attempts/a1/start"))).toBe(true);
     expect(calls.some((u) => u.includes("/executor-protocol/v1/attempts/a1/result"))).toBe(true);
+    // No implicit username or hostname: the backend records the requester.
+    expect(callerBody?.run_metadata).toEqual({ trigger: { source: "cli", executor: "caller" } });
+    expect(code).toBe(0);
+  });
+
+  it("--actor labels the recorded run's trigger", async () => {
+    let callerBody: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/health")) return new Response("ok", { status: 200 });
+      if (url.includes("/agent-task-batch-runs/caller")) {
+        callerBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return mockResp({
+          batch_run_id: "b1", task_run_id: "r1", attempt_id: "a1", lease_generation: 1,
+          lease_expires_at: "2026-01-01T00:00:00Z", attempt_jwt: "jwt-1",
+          trace_endpoint: "http://backend.test", trace_project: "proj-test",
+        }, 201);
+      }
+      if (url.includes("/attempts/a1/start")) return mockResp({ status: "running" });
+      if (url.includes("/attempts/a1/heartbeat")) return mockResp({ cancel_requested: false });
+      if (url.includes("/attempts/a1/result")) return mockResp({ status: "succeeded" });
+      return mockResp({}, 404);
+    });
+
+    const code = await run([
+      taskId, "--dir", testDir, "--backend", "http://backend.test",
+      "--project", "proj-test", "--api-key", "sk-apo-test", "--actor", "nightly-ci",
+    ]);
+
+    expect(callerBody?.run_metadata).toEqual({
+      trigger: { source: "cli", executor: "caller", actor: "nightly-ci" },
+    });
     expect(code).toBe(0);
   });
 

@@ -188,6 +188,14 @@ function withNoVerdict(summary: LocalRunSummary): LocalRunSummary {
  * in the child env (never the Project API key), heartbeats, and submits the
  * result/failure through the scoped protocol.
  */
+/** `--actor` / `APO_ACTOR` labels the run only when the caller sets it;
+ * who ran it is recorded server-side from the credential. */
+function callerTrigger(config: Config): Record<string, string> {
+  const trigger: Record<string, string> = { source: "cli", executor: "caller" };
+  if (config.actor) trigger.actor = config.actor;
+  return trigger;
+}
+
 async function runCallerRecorded(
   config: Config,
   resolved: ResolvedTask,
@@ -230,7 +238,7 @@ async function runCallerRecorded(
         task_id: taskId, task_path: taskId, display_name: taskId,
         adapter_name: null, has_checks: false,
       },
-      environment: "default", runMetadata: { trigger: { source: "cli", executor: "caller" } },
+      environment: "default", runMetadata: { trigger: callerTrigger(config) },
       attestation: {
         source_type: "caller_worktree",
         repository_url: git.repositoryUrl,
