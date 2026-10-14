@@ -46,7 +46,7 @@ export function executorRunWarning(
       // The tasks page only renders with a published catalog, so a mismatch
       // means the two differ; either side may be the newer one.
       return {
-        title: "Your local catalog doesn't match the published one",
+        title: "Your local catalog doesn’t match the published one",
         detail: `Pull the latest tasks, or run apo task publish if your copy is newer; apo connect resumes automatically. ${expiry}`,
       };
     default:
@@ -67,21 +67,26 @@ export function useConnectedExecutorState(
     if (!enabled) return;
     let cancelled = false;
     let inFlight: AbortController | null = null;
+    // The cleanup must be able to disarm the abort timer even while a
+    // request is still pending, so the handle lives at effect scope.
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     const load = () => {
       if (inFlight || document.hidden) return;
       const controller = new AbortController();
       inFlight = controller;
-      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       getConnectedExecutorStatus(projectId, controller.signal)
         .then((res) => {
           if (!cancelled) setState(res.state);
         })
         .catch(() => {
-          // Status is advisory: an unreachable endpoint must not warn or block.
-          if (!cancelled) setState(null);
+          // Status is advisory: an unreachable endpoint must not warn or
+          // block, and a transient failure keeps the last known state
+          // instead of flashing the warning off and back on.
         })
         .finally(() => {
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
           if (inFlight === controller) inFlight = null;
         });
     };
@@ -94,6 +99,7 @@ export function useConnectedExecutorState(
     return () => {
       cancelled = true;
       clearInterval(timer);
+      if (timeout) clearTimeout(timeout);
       inFlight?.abort();
       document.removeEventListener("visibilitychange", onVisibility);
     };
