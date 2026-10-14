@@ -150,9 +150,10 @@ const DIM_STRING = "\u2500";
 
 // Whole escape sequences first, so stored ANSI leaves no "[31m" residue:
 // CSI (ESC [ or C1 0x9B, parameters, one final byte) and OSC (ESC ] or C1
-// 0x9D, up to BEL, ST or ESC \, or to the end when unterminated).
+// 0x9D, up to BEL, ST or ESC \). An unterminated OSC keeps its text: only the
+// introducer goes, and mojibake can produce a lone 0x9D inside real prose.
 const TERMINAL_SEQUENCE =
-  /(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|(?:\u001B\]|\u009D)[\s\S]*?(?:\u0007|\u009C|\u001B\\|$)/g;
+  /(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|(?:\u001B\]|\u009D)[\s\S]*?(?:\u0007|\u009C|\u001B\\)/g;
 // Then any lone control: C0 except tab and newline, DEL, and C1. A
 // server-provided string can't move the cursor, retitle the terminal, or
 // print a disguised hyperlink.

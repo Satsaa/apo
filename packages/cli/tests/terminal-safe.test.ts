@@ -12,7 +12,8 @@ describe("terminalSafe", () => {
     expect(terminalSafe("\x1b]8;;https://evil\x07ceo@corp\x1b]8;;\x07")).toBe("ceo@corp");
     expect(terminalSafe("a\x1b]0;title\x1b\\b")).toBe("ab");
     expect(terminalSafe("a\u009d0;title\u009cb")).toBe("ab");
-    expect(terminalSafe("a\x1b]0;never terminated")).toBe("a");
+    expect(terminalSafe("a\x1b]0;never terminated")).toBe("a]0;never terminated");
+    expect(terminalSafe("He said \u00e2\u0080\u009dhello, then the rest")).toBe("He said \u00e2hello, then the rest");
   });
 
   it("strips lone controls", () => {
