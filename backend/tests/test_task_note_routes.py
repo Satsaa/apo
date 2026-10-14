@@ -65,7 +65,9 @@ def _revision(session: Session, content: str, task_id: str = TASK) -> str:
     return rev.id
 
 
-def _pin_catalog(session: Session, revision_id: str, task_id: str = TASK) -> None:
+def _pin_catalog(
+    session: Session, revision_id: str, task_id: str = TASK, published_at: datetime = NOW
+) -> None:
     source = session.exec(select(ProjectTaskSourceDB).where(ProjectTaskSourceDB.project == "p1")).first()
     if source is None:
         source = ProjectTaskSourceDB(project="p1", source_type="published", status="ready")
@@ -85,7 +87,9 @@ def _pin_catalog(session: Session, revision_id: str, task_id: str = TASK) -> Non
             source_type="published",
         )
     row.task_definition_revision_id = revision_id
+    source.published_at = published_at
     session.add(row)
+    session.add(source)
     session.commit()
 
 
@@ -242,7 +246,7 @@ class TestRevisionAnchor:
         self, client: TestClient, session: Session
     ) -> None:
         _seed_project(session)
-        _pin_catalog(session, _revision(session, "published"))
+        _pin_catalog(session, _revision(session, "published"), published_at=NOW - timedelta(days=1))
         local = _revision(session, "local edit")
         _seed_run(session, local, "run-local", NOW)
 
@@ -254,13 +258,28 @@ class TestRevisionAnchor:
         self, client: TestClient, session: Session
     ) -> None:
         _seed_project(session)
-        _seed_run(session, _revision(session, "old run"), "run-old", NOW)
+        _seed_run(session, _revision(session, "old run"), "run-old", NOW - timedelta(days=1))
         published = _revision(session, "published later")
-        _pin_catalog(session, published)
+        _pin_catalog(session, published, published_at=NOW)
 
         resp = _add(client, task_id=TASK)
 
         assert resp.json()["task_definition_revision_id"] == published
+
+    def test_republishing_reverted_source_makes_the_catalog_current_again(
+        self, client: TestClient, session: Session
+    ) -> None:
+        """Publish B, run local edit C, revert and republish B: the note is
+        about B, though B's revision row was first seen before C's."""
+        _seed_project(session)
+        b = _revision(session, "v2")
+        _pin_catalog(session, b, published_at=NOW - timedelta(days=2))
+        _seed_run(session, _revision(session, "v3 local"), "run-local", NOW - timedelta(days=1))
+        _pin_catalog(session, b, published_at=NOW)
+
+        resp = _add(client, task_id=TASK)
+
+        assert resp.json()["task_definition_revision_id"] == b
 
     def test_editing_the_body_re_anchors_to_the_current_revision(
         self, client: TestClient, session: Session

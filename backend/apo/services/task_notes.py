@@ -24,7 +24,7 @@ from apo.models.db import (
     AgentTaskBatchRunDB,
     AgentTaskNoteDB,
     AgentTaskRunDB,
-    TaskDefinitionRevisionDB,
+    ProjectTaskSourceDB,
 )
 from apo.models.schemas import TaskNote, TaskNoteScope
 from apo.services.human_actor import HumanActor, user_labels
@@ -252,32 +252,38 @@ def _validate_body(body: str) -> str:
 
 
 def _current_definition_revision(session: Session, project: str, task_id: str) -> str | None:
-    """The newer of the catalog's pinned revision and the latest Run's.
+    """The more recently used of the catalog's pinned revision and the latest Run's.
 
     A note written while iterating with ``apo task run`` is about the local
-    source that Run executed, which can be newer than what was last published.
+    source that Run executed, which can be newer than what was last published;
+    a publish after that Run (a revert included) makes the catalog current
+    again. Revisions are deduplicated, so their own ``created_at`` says when
+    a source was first seen, not when it was last used.
     """
     row = get_inventory_row(session, project, task_id)
     pinned = row.task_definition_revision_id if row is not None else None
-    latest_run = _latest_run_revision(session, project, task_id)
-    if pinned is None or latest_run is None or latest_run == pinned:
-        return pinned or latest_run
-    revisions = {
-        rev.id: rev
-        for rev in session.exec(
-            select(TaskDefinitionRevisionDB).where(
-                col(TaskDefinitionRevisionDB.id).in_([pinned, latest_run])
-            )
-        ).all()
-    }
-    if pinned not in revisions or latest_run not in revisions:
-        return pinned if pinned in revisions else latest_run
-    return latest_run if revisions[latest_run].created_at > revisions[pinned].created_at else pinned
+    latest = _latest_run_revision(session, project, task_id)
+    if latest is None:
+        return pinned
+    run_revision, run_at = latest
+    if pinned is None or run_revision == pinned:
+        return pinned or run_revision
+    source = session.get(ProjectTaskSourceDB, row.task_source_id) if row is not None else None
+    published_at = source.published_at if source is not None else None
+    if published_at is None or _as_utc(run_at) > _as_utc(published_at):
+        return run_revision
+    return pinned
 
 
-def _latest_run_revision(session: Session, project: str, task_id: str) -> str | None:
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _latest_run_revision(
+    session: Session, project: str, task_id: str
+) -> tuple[str, datetime] | None:
     statement = (
-        select(AgentTaskRunDB.task_definition_revision_id)
+        select(AgentTaskRunDB.task_definition_revision_id, AgentTaskBatchRunDB.created_at)
         .join(AgentTaskBatchRunDB, col(AgentTaskBatchRunDB.id) == col(AgentTaskRunDB.batch_run_id))
         .where(
             AgentTaskBatchRunDB.project == project,
@@ -290,7 +296,10 @@ def _latest_run_revision(session: Session, project: str, task_id: str) -> str | 
         )
         .limit(1)
     )
-    return session.exec(statement).first()
+    found = session.exec(statement).first()
+    if found is None or found[0] is None:
+        return None
+    return found[0], found[1]
 
 
 def _user_ids(rows: Sequence[AgentTaskNoteDB]) -> set[str]:

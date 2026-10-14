@@ -77,6 +77,13 @@ def _pinned(session: Session) -> TaskDefinitionRevisionDB | None:
     return session.get(TaskDefinitionRevisionDB, row.task_definition_revision_id)
 
 
+def _inventory_row_id(session: Session) -> int | str | None:
+    session.expire_all()
+    return session.exec(
+        select(ProjectTaskInventoryDB).where(ProjectTaskInventoryDB.project == _PROJECT)
+    ).one().id
+
+
 def _publish(client: TestClient, source: str | None) -> Any:
     return client.put(
         f"/v1/projects/{_PROJECT}/task-catalog",
@@ -128,16 +135,19 @@ def test_editing_only_the_source_repins_without_moving_the_digest(
     assert second_revision.source_files_json[0]["content"] == "task('alpha', { maxTurns: 2 });\n"
 
 
-def test_republishing_the_same_source_is_a_no_op(
+def test_republishing_the_same_source_keeps_inventory_and_refreshes_published_at(
     session: Session, make_authed_client: Callable[..., TestClient]
 ) -> None:
     _seed(session)
     client = make_authed_client(_USER, session)
 
     first = _publish(client, "task('alpha', {});\n").json()
+    first_row = _inventory_row_id(session)
     second = _publish(client, "task('alpha', {});\n").json()
 
-    assert second["published_at"] == first["published_at"]
+    assert _inventory_row_id(session) == first_row
+    assert second["catalog_digest"] == first["catalog_digest"]
+    assert second["published_at"] > first["published_at"]
 
 
 def test_publication_without_definitions_still_works(

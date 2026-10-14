@@ -42,6 +42,7 @@ _CAPPED_WRITE_PATHS = [
     ("POST", "/v1/executor-protocol/v1/attempts/att-1/failure"),
     ("POST", "/v1/executor-protocol/v2/attempts/att-1/result"),
     ("POST", "/v1/executor-protocol/v2/attempts/att-1/failure"),
+    ("POST", "/v1/executor-protocol/v2/attempts/att-1/source-attestation"),
     ("POST", "/v1/executor-protocol/v1/attempts/att-1/result-evidence"),
     ("POST", "/v1/executor-protocol/v2/attempts/att-1/result-evidence"),
     ("PUT", "/v1/executor-protocol/result-evidence/rev-1"),

@@ -350,12 +350,11 @@ async def source_attestation(
             detail={"kind": "attestation_closed", "message": "attempt is no longer leased"},
         )
 
-    # Idempotent replay: if already attested with same digest, return existing
+    # Idempotent replay: if already attested with same digest, return existing.
+    # The first attestation's definition pin stands; a replay never re-pins.
     if attempt.task_revision_id:
         existing_rev = session.get(TaskRevisionDB, attempt.task_revision_id)
         if existing_rev is not None and existing_rev.content_sha256 == body.content_sha256:
-            _pin_executed_definition(session, attempt, body.task_definition)
-            session.commit()
             return SourceAttestationResponse(
                 task_revision_id=existing_rev.id,
                 content_sha256=existing_rev.content_sha256,

@@ -181,13 +181,19 @@ def publish_catalog(
         and existing.source_type == "published"
         and _pinned_revisions(session, existing.id) == revision_ids
     ):
+        # Nothing to replace, but the catalog was just re-asserted: Notes
+        # compare this time with the latest Run to pick the current source.
+        existing.published_at = now
+        if user_id:
+            existing.published_by_user_id = user_id
+        session.add(existing)
         session.commit()
         return {
             "project": project_id,
             "schema_version": 2,
             "task_count": existing.task_count or len(normalized_tasks),
             "catalog_digest": digest,
-            "published_at": existing.published_at.isoformat() if existing.published_at else now.isoformat(),
+            "published_at": now.isoformat(),
             "execution_mode": "caller",
         }
 

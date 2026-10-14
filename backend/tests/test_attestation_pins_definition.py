@@ -128,14 +128,14 @@ def test_an_old_executor_keeps_the_catalog_pin(engine):
     assert _pinned_source(engine) == "task('published');"
 
 
-def test_a_replayed_attestation_still_pins(engine):
+def test_a_replayed_attestation_keeps_the_first_pin(engine):
     jwt = _seed(engine)
-    assert _attest(engine, jwt).status_code == 200
+    assert _attest(engine, jwt, task_definition=_document("task('executed');")).status_code == 200
 
-    resp = _attest(engine, jwt, task_definition=_document("task('local edit');"))
+    resp = _attest(engine, jwt, task_definition=_document("task('other');"))
 
     assert resp.status_code == 200, resp.text
-    assert _pinned_source(engine) == "task('local edit');"
+    assert _pinned_source(engine) == "task('executed');"
 
 
 def test_an_invalid_definition_is_rejected_and_attaches_nothing(engine):

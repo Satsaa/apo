@@ -57,6 +57,11 @@ def validate_task_definition_document(
     """
     if not isinstance(document, dict):
         raise TaskDefinitionValidationError("invalid_task_definition", "document is not an object")
+    unknown = set(document) - {"schema_version", "files"}
+    if unknown:
+        raise TaskDefinitionValidationError(
+            "invalid_task_definition", f"unknown document keys: {sorted(unknown)}"
+        )
     if document.get("schema_version") != 1:
         raise TaskDefinitionValidationError("invalid_task_definition", "schema_version must be 1")
     files = document.get("files")
@@ -65,6 +70,11 @@ def validate_task_definition_document(
     file = files[0]
     if not isinstance(file, dict):
         raise TaskDefinitionValidationError("invalid_task_definition", "file entry is not an object")
+    unknown = set(file) - {"path", "content"}
+    if unknown:
+        raise TaskDefinitionValidationError(
+            "invalid_task_definition", f"unknown file keys: {sorted(unknown)}"
+        )
     path = file.get("path")
     content = file.get("content")
     if not isinstance(path, str) or not path:
@@ -80,7 +90,7 @@ def validate_task_definition_document(
         raise TaskDefinitionValidationError(
             "invalid_task_definition", f"content exceeds {MAX_DEFINITION_BYTES} bytes"
         )
-    return document
+    return {"schema_version": 1, "files": [{"path": path, "content": content}]}
 
 
 def ensure_task_definition_revision(
@@ -121,6 +131,11 @@ def ensure_task_definition_revision(
     )
     # A concurrent request may insert the same revision first; the savepoint
     # keeps the caller's transaction usable so the winner's row can be reused.
+    # On SQLite (pysqlite without the begin-handling hooks) a savepoint that
+    # is the transaction's first write survives a later rollback of the
+    # caller's transaction, leaving an orphan revision. Revisions are
+    # immutable and deduplicated, an unpinned row is never read, and the
+    # retention sweep deletes unreferenced ones; Postgres has no such gap.
     try:
         with session.begin_nested():
             session.add(rev)

@@ -138,6 +138,25 @@ class TestValidation:
                 document={"schema_version": 1, "files": [{"path": "../evil.ts", "content": "x"}]},
             )
 
+    @pytest.mark.parametrize(
+        "document",
+        [
+            {"schema_version": 1, "files": [{"path": "x.eval.ts", "content": "x"}], "extra": "y"},
+            {"schema_version": 1, "files": [{"path": "x.eval.ts", "content": "x", "mode": "755"}]},
+        ],
+    )
+    def test_rejects_unknown_keys(self, session, document):
+        session.add(ProjectDB(id="p1", name="P", created_by="u"))
+        session.commit()
+        with pytest.raises(TaskDefinitionValidationError, match="unknown"):
+            ensure_task_definition_revision(session, project_id="p1", task_id="t", document=document)
+
+    def test_stores_only_path_and_content(self, session):
+        session.add(ProjectDB(id="p1", name="P", created_by="u"))
+        session.commit()
+        rev = ensure_task_definition_revision(session, project_id="p1", task_id="t", document=_doc("x\n"))
+        assert rev.source_files_json == [{"path": "demo.eval.ts", "content": "x\n"}]
+
     def test_rejects_wrong_schema(self, session):
         session.add(ProjectDB(id="p1", name="P", created_by="u"))
         session.commit()

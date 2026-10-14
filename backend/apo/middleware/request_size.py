@@ -66,6 +66,8 @@ _LIMITED_PATH_SPECS: tuple[tuple[str, str, str | None], ...] = (
     ("POST", "/v1/executor-protocol/v1/attempts/", "failure"),
     ("POST", "/v1/executor-protocol/v2/attempts/", "result"),
     ("POST", "/v1/executor-protocol/v2/attempts/", "failure"),
+    # Carries the executed *.eval.ts (<= 1 MB, at most ~6 MB JSON-escaped).
+    ("POST", "/v1/executor-protocol/v2/attempts/", "source-attestation"),
     # Result-evidence part bytes (issue #251): their own cap, artifact-upload
     # magnitude, keyed by the version-neutral PUT path.
     ("PUT", "/v1/executor-protocol/result-evidence/", None),
