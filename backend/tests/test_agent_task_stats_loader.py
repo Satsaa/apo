@@ -245,3 +245,34 @@ def test_stats_loader_carries_errored_checks(session: Session) -> None:
     assert compute_run_stats(grouped["task-b"]).last_run_no_verdict is False
     assert compute_run_stats(grouped["task-a"]).last_run_no_verdict_reason == "judge"
     assert compute_run_stats(grouped["task-b"]).last_run_no_verdict_reason == "executor"
+
+
+def test_stats_loader_orders_unstarted_runs_after_started_ones(
+    session: Session, captured_sql: list[str]
+) -> None:
+    # Postgres sorts NULLs first under DESC and SQLite last; the cohort pins
+    # NULLs last so the "latest run" is the same on both databases. SQLite
+    # already agrees, so the SQL is checked too.
+    session.add_all([_batch("b-old", "project-1"), _batch("b-new", "project-1")])
+    session.add_all(
+        [
+            _run("r-started", "b-old", "task-a", started_at=_OLDER),
+            _run(
+                "r-expired",
+                "b-new",
+                "task-a",
+                status="error",
+                pass_result=None,
+                started_at=None,
+            ),
+        ]
+    )
+    session.commit()
+
+    runs = load_run_stat_fields(session, "project-1", ["task-a"])["task-a"]
+    assert any("NULLS LAST" in sql for sql in captured_sql)
+    assert [r.started_at is None for r in runs] == [False, True]
+    stats = compute_run_stats(runs)
+    assert stats.total_runs == 1
+    assert stats.not_started_runs == 1
+    assert stats.last_run_status == "passed"

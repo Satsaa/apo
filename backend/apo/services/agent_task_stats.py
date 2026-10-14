@@ -46,6 +46,7 @@ from ..models.schemas import (
 from ..models.schemas import AgentTaskRunStats, RunConfigEffortFacet, RunConfigModelFacet, TaskViewConfig, RunHostFacet
 from .archived_models import load_archived_models
 from .check_report_storage import is_judge_no_verdict_run
+from .lifecycle import is_never_started_run
 from .view_runs import runs_in_view
 
 
@@ -81,6 +82,18 @@ def compute_run_stats(runs: Sequence[RunStatFields]) -> AgentTaskRunStats:
     Handles an empty list (returns all-zero / None fields). Callers that
     already guard against empty input get the same result either way.
     """
+    # A run that never started has no outcome to aggregate: counting it would
+    # report "Errored, Pass 0%, Last run Never" for a task that did not run.
+    not_started = sum(
+        1
+        for r in runs
+        if is_never_started_run(r.status, r.started_at, r.no_verdict_reason)
+    )
+    runs = [
+        r
+        for r in runs
+        if not is_never_started_run(r.status, r.started_at, r.no_verdict_reason)
+    ]
     total = len(runs)
 
     completed = [r for r in runs if r.completed_at and r.started_at]
@@ -105,6 +118,7 @@ def compute_run_stats(runs: Sequence[RunStatFields]) -> AgentTaskRunStats:
 
     return AgentTaskRunStats(
         total_runs=total,
+        not_started_runs=not_started,
         passed_runs=passed,
         failed_runs=failed,
         errored_runs=errored,

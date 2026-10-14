@@ -520,6 +520,28 @@ def test_expired_queued_becomes_executor_unavailable(session: Session) -> None:
     task_run = session.get(AgentTaskRunDB, atts[0].task_run_id)
     batch = session.get(AgentTaskBatchRunDB, atts[0].batch_run_id)
     assert task_run is not None and task_run.status == "error"
+    assert task_run.started_at is None
+    # Nothing ran, so the batch did not complete.
+    assert batch is not None and batch.status == "error"
+
+
+def test_batch_with_a_started_run_still_completes_when_the_rest_expire(
+    session: Session,
+) -> None:
+    atts = _seed(session, sequence_indices=[0, 1])
+    ran = session.get(AgentTaskRunDB, atts[0].task_run_id)
+    assert ran is not None
+    ran.status = "passed"
+    ran.pass_result = True
+    ran.started_at = _now() - timedelta(minutes=5)
+    ran.completed_at = _now()
+    atts[0].status = "succeeded"
+    atts[1].queue_expires_at = _now() - timedelta(seconds=1)
+    session.add_all([ran, atts[0], atts[1]])
+    session.commit()
+    counts = recover_expired_attempts(session, now=_now())
+    assert counts.failed_unavailable == 1
+    batch = session.get(AgentTaskBatchRunDB, atts[0].batch_run_id)
     assert batch is not None and batch.status == "completed"
 
 

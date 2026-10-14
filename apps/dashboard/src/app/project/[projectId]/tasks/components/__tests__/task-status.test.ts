@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentTaskRunStats, AgentTaskSummary } from "@/lib/agent-task-api";
 import { TASK_STATUS_FILTERS } from "@/lib/filter-status";
 import { STATUS_CONFIG, getTaskStatus, taskFilterStatus } from "../task-list-shared";
+import { notStartedLabel } from "../TaskCard";
 
 function task(stats: Partial<AgentTaskRunStats>): AgentTaskSummary {
   return {
@@ -60,5 +61,22 @@ describe("getTaskStatus", () => {
   it("keeps passed and failed", () => {
     expect(getTaskStatus(task({ last_run_status: "passed", last_run_passed: true }))).toBe("passed");
     expect(getTaskStatus(task({ last_run_status: "failed", last_run_passed: false }))).toBe("failed");
+  });
+});
+
+// The backend leaves runs that never started out of the stats (no executor
+// claimed them before the queue TTL), so such a task reads as not run.
+describe("a task whose only runs never started", () => {
+  it("is idle, not Errored, and says its runs never started", () => {
+    const t = task({
+      total_runs: 0,
+      errored_runs: 0,
+      last_run_status: null,
+      not_started_runs: 2,
+    });
+    expect(getTaskStatus(t)).toBe("idle");
+    expect(notStartedLabel(t.run_stats?.not_started_runs ?? 0)).toBe("2 runs never started");
+    expect(notStartedLabel(1)).toBe("1 run never started");
+    expect(notStartedLabel(0)).toBe("Ready to run");
   });
 });

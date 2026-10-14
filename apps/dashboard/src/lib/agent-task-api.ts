@@ -12,7 +12,10 @@ export type TracePersistenceStatus = "pending" | "persisted" | "failed";
 export type NoVerdictReason = "judge" | "generations" | "executor";
 
 export interface AgentTaskRunStats {
+  /** Runs that started; the rest of these stats describe only those. */
   total_runs: number;
+  /** Runs that ended without starting (never claimed, cancelled first). */
+  not_started_runs?: number;
   passed_runs: number;
   failed_runs: number;
   errored_runs: number;

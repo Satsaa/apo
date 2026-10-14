@@ -667,6 +667,8 @@ def _finalize_logical_run(
     task_run.no_verdict_reason = "executor"
     task_run.error_message = error_message
     task_run.completed_at = now
+    # started_at is what tells a run that started from one that never did.
+    task_run.started_at = task_run.started_at or attempt.started_at
     if cancelled:
         batch.cancelled_tasks += 1
     session.add(task_run)

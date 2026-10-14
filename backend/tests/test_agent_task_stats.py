@@ -23,6 +23,7 @@ def _run(
     completed_at: datetime | None = _NOW,
     total_cost: float | None = None,
     checks: list[dict[str, object]] | None = None,
+    no_verdict_reason: str | None = None,
 ) -> RunStatFields:
     # ``compute_run_stats`` operates on the minimal ``RunStatFields``
     # projection — it deliberately does not see the full DB row (no
@@ -41,6 +42,7 @@ def _run(
         pass_result=pass_result,
         total_checks=total,
         passed_checks=passed,
+        no_verdict_reason=no_verdict_reason,
     )
 
 
@@ -168,3 +170,45 @@ def test_last_run_status_takes_first_run_in_input_order() -> None:
     stats = compute_run_stats(runs)
     assert stats.last_run_status == "failed"
     assert stats.last_run_passed is False
+
+
+def _never_claimed(id: str) -> RunStatFields:
+    # The queue-TTL reaper's row: error, no verdict, never started.
+    return _run(
+        id=id, status="error", started_at=None, completed_at=_NOW, no_verdict_reason="executor"
+    )
+
+
+def test_never_started_runs_are_counted_apart_from_runs() -> None:
+    # A task whose only run expired in the queue did not run: it must not read
+    # as "Errored, 1 run, Pass 0%, Last run Never".
+    stats = compute_run_stats([_never_claimed("expired")])
+    assert stats.total_runs == 0
+    assert stats.not_started_runs == 1
+    assert stats.errored_runs == 0
+    assert stats.last_run_status is None
+    assert stats.last_run_at is None
+
+
+def test_never_started_runs_do_not_shadow_the_latest_started_run() -> None:
+    older = _NOW - timedelta(days=1)
+    runs = [
+        _never_claimed("expired"),
+        _run(id="ran", status="passed", pass_result=True, started_at=older, completed_at=_NOW),
+    ]
+    stats = compute_run_stats(runs)
+    assert stats.total_runs == 1
+    assert stats.not_started_runs == 1
+    assert stats.pass_rate == 1.0
+    assert stats.last_run_status == "passed"
+    assert stats.last_run_at == older
+
+
+def test_error_without_started_at_but_with_judge_reason_still_counts() -> None:
+    # A judge no-verdict means checks ran; a missing started_at there is a
+    # data gap, not a run that never started.
+    stats = compute_run_stats(
+        [_run(id="j", status="error", started_at=None, no_verdict_reason="judge")]
+    )
+    assert stats.total_runs == 1
+    assert stats.not_started_runs == 0

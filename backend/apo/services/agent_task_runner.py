@@ -28,7 +28,7 @@ from ..models.db import (
 from ..models.schemas import AgentTaskRunConfiguration
 from .agent_task_configuration import normalize_run_configuration
 from .archived_models import set_model_archived
-from .lifecycle import TASK_RUN_TERMINAL
+from .lifecycle import TASK_RUN_TERMINAL, is_never_started_run
 from .agent_task_discovery import DEFAULT_TASK_ROOT, resolve_task_paths
 from .check_report_storage import (
     compose_no_verdict_error_message,
@@ -326,7 +326,14 @@ def update_batch_run_status(session: Session, batch: AgentTaskBatchRunDB) -> Non
 
     all_done = all(tr.status in TASK_RUN_TERMINAL for tr in task_runs)
     if all_done and task_runs:
-        batch.status = "completed"
+        # A batch none of whose runs started (no executor claimed them, or
+        # each died before start) did not complete; a user cancellation did
+        # finish as asked, so it keeps "completed".
+        none_started = batch.cancelled_tasks == 0 and all(
+            is_never_started_run(tr.status, tr.started_at, tr.no_verdict_reason)
+            for tr in task_runs
+        )
+        batch.status = "error" if none_started else "completed"
         batch.completed_at = datetime.now(timezone.utc)
     elif any(tr.status in ("running", "pending") for tr in task_runs):
         batch.status = "running"

@@ -31,6 +31,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
 from ..models.columns import (
+    AGENT_TASK_BATCH_CREATED_AT_COL,
     AGENT_TASK_BATCH_ID_COL,
     AGENT_TASK_BATCH_PROJECT_COL,
     AGENT_TASK_RUN_BATCH_RUN_ID_COL,
@@ -194,7 +195,13 @@ def runs_in_view(
         )
         .join(AgentTaskBatchRunDB, AGENT_TASK_RUN_BATCH_RUN_ID_COL == AGENT_TASK_BATCH_ID_COL)
         .where(*conditions)
-        .order_by(desc(AGENT_TASK_RUN_STARTED_AT_COL))
+        # NULLs last on every dialect (Postgres defaults DESC to NULLs first,
+        # SQLite to last), so "first row per task" is the most recent run that
+        # started on either database; unstarted rows follow, newest batch first.
+        .order_by(
+            desc(AGENT_TASK_RUN_STARTED_AT_COL).nulls_last(),
+            desc(AGENT_TASK_BATCH_CREATED_AT_COL),
+        )
     )
 
     runs: list[ViewRun] = []

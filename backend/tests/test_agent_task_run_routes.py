@@ -394,6 +394,41 @@ def test_task_run_list_filters_since_window_over_started_at(
     assert {r["id"] for r in client.get(base, params={"project": "proj-since", "since": "nope"}).json()} == {"r-fresh", "r-stale"}
 
 
+def test_task_run_list_places_unstarted_runs_by_when_they_ended(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """A run that expired in the queue has no started_at; it keeps its place by
+    completion time (inside a since window, between older and newer runs), and
+    a still-queued run lists first, on SQLite and Postgres alike."""
+    now = datetime.now(timezone.utc)
+    session.add_all([_batch("b", "proj-unstarted", now)])
+    expired = _run("r-expired", "b", "task-1", now - timedelta(hours=2))
+    expired.status = "error"
+    expired.pass_result = None
+    expired.no_verdict_reason = "executor"
+    expired.started_at = None
+    queued = _run("r-queued", "b", "task-1", now)
+    queued.status = "pending"
+    queued.pass_result = None
+    queued.started_at = None
+    queued.completed_at = None
+    session.add_all(
+        [
+            _run("r-newer", "b", "task-1", now - timedelta(hours=1)),
+            expired,
+            _run("r-older", "b", "task-1", now - timedelta(hours=3)),
+            _run("r-stale", "b", "task-1", now - timedelta(days=9)),
+            queued,
+        ]
+    )
+    session.commit()
+
+    base = "/v1/agent-task-runs"
+    ids = [r["id"] for r in client.get(base, params={"project": "proj-unstarted", "since": "7d"}).json()]
+    assert ids == ["r-queued", "r-newer", "r-expired", "r-older"]
+
+
 def test_batch_run_list_filter_matches_only_when_one_child_satisfies_all_dimensions(
     client: TestClient,
     session: Session,

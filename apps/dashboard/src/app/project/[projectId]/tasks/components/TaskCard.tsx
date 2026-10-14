@@ -88,7 +88,7 @@ export function TaskCard({
           {status === "idle" ? (
             <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-muted-foreground/50">
               <Play className="h-3 w-3" />
-              <span>Ready to run</span>
+              <span>{notStartedLabel(stats?.not_started_runs ?? 0)}</span>
               <span className="ml-auto font-mono text-[11px] text-muted-foreground/40">
                 {relativePath(task.task_path)}
               </span>
@@ -123,6 +123,13 @@ export function TaskCard({
       </div>
     </Link>
   );
+}
+
+/** An idle task may still have runs that ended before starting (no executor
+ * claimed them): say so rather than implying it was never tried. */
+export function notStartedLabel(notStarted: number): string {
+  if (notStarted === 0) return "Ready to run";
+  return notStarted === 1 ? "1 run never started" : `${notStarted} runs never started`;
 }
 
 const TASK_ROOT = process.env.NEXT_PUBLIC_AGENT_TASK_ROOT ?? null;
