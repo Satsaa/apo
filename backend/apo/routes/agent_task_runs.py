@@ -50,7 +50,7 @@ from ..services.agent_task_batch_listing import (
     list_batch_run_summaries,
 )
 from ..services.agent_task_deliverables import derive_deliverables_json
-from ..services.human_actor import requesting_user_id, user_label
+from ..services.human_actor import is_runtime_credential, requesting_user_id, user_label
 from ..services.judgments import count_judgments
 from ..services.judge_span_links import annotate_judge_span_ids
 from ..services.test_result_corrections import projected_check_report
@@ -375,7 +375,10 @@ async def create_agent_task_batch_run(
             session,
             project_id=body.project,
             user_id=str(acting_user_id),
-            requested_by_user_id=str(acting_user_id),
+            # The requester is whoever asked, per the shared channel
+            # predicate — an ingest-scoped key records nobody even though
+            # project auth lets its creator act here.
+            requested_by_user_id=requesting_user_id(http_request, session),
             task_ids=body.task_ids,
             environment=body.environment,
             run_metadata=body.run_metadata,
@@ -1185,6 +1188,5 @@ async def report_agent_task_run_result(
         trigger=trigger,
         deliverables_json=await derive_deliverables_json(session, task_run),
         # Runtime credentials report results; they have no use for who asked.
-        include_requester=getattr(request.state, "auth_method", None)
-        not in ("service_token", "attempt_token"),
+        include_requester=not is_runtime_credential(request),
     )

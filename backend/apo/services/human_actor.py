@@ -43,6 +43,13 @@ def _channel(request: Request) -> _Channel:
     return "session" if auth_method == "cookie" else "open_dev"
 
 
+def is_runtime_credential(request: Request) -> bool:
+    """True when the request rides a service or Attempt token. Routes that
+    hide identity fields from runtime credentials use this instead of
+    re-reading ``auth_method``, so the channel list lives in one place."""
+    return _channel(request) == "runtime"
+
+
 def derive_human_actor(request: Request, session: Session, *, action: str) -> HumanActor:
     """Resolve the acting human or raise a distinct 403.
 

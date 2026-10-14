@@ -464,6 +464,9 @@ class TestCreateBatchRunRoute:
         body = resp.json()
         assert body["status"] == "queued"
         assert body["execution_target"] == {"kind": "source_owned"}
+        # The clicking member is recorded as the requester, through the route.
+        assert body["requested_by_user_id"] == user_a.id
+        assert body["requested_by_label"] == user_a.email
         assert body["executor_pool_name"] is None
         assert len(body["attempts"]) == 2
         for attempt in body["attempts"]:
