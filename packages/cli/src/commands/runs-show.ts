@@ -18,7 +18,7 @@ type RunDetail = {
   adapter_name: string;
   status: string;
   pass_result: boolean | null;
-  started_at: string;
+  started_at: string | null;
   completed_at: string | null;
   trace_run_id: string | null;
   error_message: string | null;
@@ -236,7 +236,7 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
     );
   }
 
-  console.log(`  Started:  ${formatTime(run.started_at)}`);
+  console.log(`  Started:  ${run.started_at ? formatTime(run.started_at) : "not started"}`);
   if (run.completed_at) {
     console.log(`  Completed: ${formatTime(run.completed_at)}`);
   }

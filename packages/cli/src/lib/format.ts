@@ -146,12 +146,10 @@ export function formatTrigger(parts: TriggerParts): string {
 
 const DIM_STRING = "\u2500";
 
-export function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+/** "-" for a missing timestamp: `new Date(null)` would print the 1970 epoch. */
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  return new Date(iso).toLocaleString();
 }
 
 /**

@@ -66,6 +66,17 @@ describe("runs list command", () => {
     expect(out).toContain("batch-12");
   });
 
+  it("prints '-' in Started for a run that never started, not the 1970 epoch", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse([makeRun({ status: "error", pass_result: null, started_at: null })]),
+    );
+    const { logs, restore } = captureLog();
+    await run(["--backend", "http://backend.test"]);
+    restore();
+
+    expect(stripAnsi(logs.join("\n"))).not.toContain("1970");
+  });
+
   it("returns exit code 2 when the backend is unreachable", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("network down"));
     const { errors, restore } = captureError();

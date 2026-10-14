@@ -87,6 +87,24 @@ describe("runs show command", () => {
     expect(out).toContain("trace-1");
   });
 
+  it("says 'not started' for a run that never started, not the 1970 epoch", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        status: "error",
+        pass_result: null,
+        started_at: null,
+        error_message: "queue TTL expired before an executor claimed the task",
+      })),
+    );
+    const { logs, restore } = captureLog();
+    await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    const out = stripAnsi(logs.join("\n"));
+    expect(out).toContain("Started:  not started");
+    expect(out).not.toContain("1970");
+  });
+
   it("shows a passed run's kept executor note as a note, not an error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       mockResponse(makeRun({ status: "passed", pass_result: true, error_message: "adapter note" })),

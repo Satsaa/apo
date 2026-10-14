@@ -95,6 +95,12 @@ describe("formatTime", () => {
     expect(result).not.toBe("2026-06-02T12:00:00Z");
   });
 
+  it("returns '-' for a missing timestamp instead of the 1970 epoch", () => {
+    expect(formatTime(null)).toBe("-");
+    expect(formatTime(undefined)).toBe("-");
+    expect(formatTime("")).toBe("-");
+  });
+
   it("returns Invalid Date for unparseable input", () => {
     const result = formatTime("not-a-date");
     expect(result).toBe("Invalid Date");

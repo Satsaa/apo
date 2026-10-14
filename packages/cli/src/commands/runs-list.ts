@@ -14,7 +14,7 @@ type RunSummary = {
   batch_run_id: string;
   status: string;
   pass_result: boolean | null;
-  started_at: string;
+  started_at: string | null;
   completed_at: string | null;
   total_cost: number | null;
   unpriced_call_count?: number;

@@ -104,6 +104,7 @@ function printBatchDetail(batch: BatchDetail): void {
   console.log(`  Passed:   ${batch.passed_tasks}`);
   console.log(`  Failed:   ${batch.failed_tasks}`);
   console.log(`  Errored:  ${batch.errored_tasks}`);
+  for (const line of formatNeverStarted(batch)) console.log(line);
   console.log(`  Cost:     ${formatCost(batch.total_cost)}`);
   console.log(`  Created:  ${formatTime(batch.created_at)}`);
   console.log(`  Source:   ${formatTriggerOpt(batch.trigger)}`);
@@ -144,6 +145,30 @@ function printBatchDetail(batch: BatchDetail): void {
       }
     }
   }
+}
+
+/**
+ * A run that errored without ever starting (e.g. no executor claimed it before
+ * the queue TTL) counts as "Errored" above, which reads as the task failing.
+ * Say how many never ran, grouped by the reason the backend recorded.
+ */
+export function formatNeverStarted(batch: Pick<BatchDetail, "task_runs">): string[] {
+  const neverStarted = batch.task_runs.filter((tr) => tr.started_at == null && tr.status === "error");
+  if (neverStarted.length === 0) return [];
+  const byReason = new Map<string, number>();
+  for (const tr of neverStarted) {
+    const reason = tr.error_message?.split("\n")[0]?.trim() || "no reason recorded";
+    byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+  }
+  const total = batch.task_runs.length;
+  const reasons = [...byReason];
+  if (reasons.length === 1) {
+    return [`  ${neverStarted.length} of ${total} never started: ${reasons[0]![0]}`];
+  }
+  return [
+    `  ${neverStarted.length} of ${total} never started:`,
+    ...reasons.map(([reason, n]) => `    ${n}× ${reason}`),
+  ];
 }
 
 function formatTriggerOpt(trigger: BatchDetail["trigger"]): string {
