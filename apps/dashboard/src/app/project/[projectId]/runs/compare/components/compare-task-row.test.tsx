@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { AgentTaskRunDetail } from "@/lib/agent-task-api";
 
@@ -608,6 +608,7 @@ describe("CompareTaskRow check source for generated-title checks (issue #178)", 
 // ─── reopening from memory ──────────────────────────────────────────────────
 
 import { getAgentTaskRun } from "@/lib/agent-task-api";
+import type { TaskComparisonEvidenceLoader } from "@/lib/agent-task-view-api";
 
 describe("CompareTaskRow reopened rows and checks", () => {
   beforeEach(() => {
@@ -615,7 +616,7 @@ describe("CompareTaskRow reopened rows and checks", () => {
     viewerProps = {};
   });
 
-  const renderRow = (props: { open: boolean; task?: ComparisonTask; evidenceLoader?: ReturnType<typeof vi.fn> }) => (
+  const renderRow = (props: { open: boolean; task?: ComparisonTask; evidenceLoader?: TaskComparisonEvidenceLoader }) => (
     <CompareTaskRow
       task={props.task ?? makeTask()}
       expanded={new Set(props.open ? [(props.task ?? makeTask()).taskId] : [])}
@@ -625,11 +626,17 @@ describe("CompareTaskRow reopened rows and checks", () => {
     />
   );
 
-  it("renders a reopened row's checks at once, without loading the evidence again", async () => {
-    const evidenceLoader = vi.fn().mockResolvedValue({
-      left: { id: "run-a", checks_json: [{ id: "C-1", pass: true }] },
-      right: { id: "run-b", checks_json: [{ id: "C-1", pass: false }] },
-    });
+  it("renders a reopened row's kept checks at once, then shows what the refresh brings", async () => {
+    const evidenceLoader = vi
+      .fn()
+      .mockResolvedValueOnce({
+        left: { id: "run-a", checks_json: [{ id: "C-1", pass: true }] },
+        right: { id: "run-b", checks_json: [{ id: "C-1", pass: false }] },
+      })
+      .mockResolvedValueOnce({
+        left: { id: "run-a", checks_json: [{ id: "C-1", pass: true }] },
+        right: { id: "run-b", checks_json: [{ id: "C-1-corrected", pass: true }] },
+      });
     const { rerender } = render(renderRow({ open: true, evidenceLoader }));
     await screen.findByText("C-1");
 
@@ -639,10 +646,87 @@ describe("CompareTaskRow reopened rows and checks", () => {
 
     expect(screen.queryByText("Loading checks…")).not.toBeInTheDocument();
     expect(screen.getByText("C-1")).toBeInTheDocument();
-    expect(evidenceLoader).toHaveBeenCalledOnce();
+    await screen.findByText("C-1-corrected");
+    expect(evidenceLoader).toHaveBeenCalledTimes(2);
   });
 
-  it("reuses finished run details on reopen without an evidence loader", async () => {
+  it("refreshes a reopened row under StrictMode's double mount", async () => {
+    let corrected = false;
+    const evidenceLoader = vi.fn().mockImplementation(async () => ({
+      left: { id: "run-a", checks_json: [{ id: "C-1", pass: true }] },
+      right: { id: "run-b", checks_json: [{ id: corrected ? "C-1-corrected" : "C-1", pass: corrected }] },
+    }));
+    const strict = (open: boolean) => <StrictMode>{renderRow({ open, evidenceLoader })}</StrictMode>;
+    const { rerender } = render(strict(true));
+    await screen.findByText("C-1");
+
+    rerender(strict(false));
+    corrected = true;
+    rerender(strict(true));
+
+    await screen.findByText("C-1-corrected");
+  });
+
+  it("keeps a side's kept details when only that side's refresh fails", async () => {
+    vi.mocked(getAgentTaskRun).mockImplementation(async (id: string) => ({
+      id,
+      status: "passed",
+      checks_json: [{ id: `C-${id}`, pass: true }],
+    }) as unknown as AgentTaskRunDetail);
+    const task = makeTask({
+      taskId: "task-partial",
+      left: { run: { id: "run-partial-a", status: "passed", total_checks: 1, passed_checks: 1, failed_checks: 0 } as unknown as ComparisonTask["left"]["run"] },
+      right: { run: { id: "run-partial-b", status: "passed", total_checks: 1, passed_checks: 1, failed_checks: 0 } as unknown as ComparisonTask["right"]["run"] },
+    });
+    const { rerender } = render(renderRow({ open: true, task }));
+    await screen.findByText("C-run-partial-a");
+
+    vi.mocked(getAgentTaskRun).mockImplementation(async (id: string) => {
+      if (id === "run-partial-a") throw new Error("503");
+      return { id, status: "passed", checks_json: [{ id: `C-${id}`, pass: true }] } as unknown as AgentTaskRunDetail;
+    });
+    rerender(renderRow({ open: false, task }));
+    rerender(renderRow({ open: true, task }));
+
+    await waitFor(() => expect(getAgentTaskRun).toHaveBeenCalledTimes(4));
+    expect(screen.getByText("C-run-partial-a")).toBeInTheDocument();
+    expect(screen.getByText("C-run-partial-b")).toBeInTheDocument();
+  });
+
+  it("keeps the kept checks on screen when the refresh fails", async () => {
+    const evidenceLoader = vi
+      .fn()
+      .mockResolvedValueOnce({
+        left: { id: "run-a", checks_json: [{ id: "C-1", pass: true }] },
+        right: { id: "run-b", checks_json: [{ id: "C-1", pass: false }] },
+      })
+      .mockRejectedValueOnce(new Error("Network error"));
+    const { rerender } = render(renderRow({ open: true, evidenceLoader }));
+    await screen.findByText("C-1");
+
+    rerender(renderRow({ open: false, evidenceLoader }));
+    rerender(renderRow({ open: true, evidenceLoader }));
+
+    await waitFor(() => expect(evidenceLoader).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("C-1")).toBeInTheDocument();
+    expect(screen.queryByText(/Network error/)).not.toBeInTheDocument();
+  });
+
+  it("does not keep an empty pair: Retry loads again and a reopen shows the error", async () => {
+    const evidenceLoader = vi.fn().mockResolvedValue({ left: null, right: null });
+    const { rerender } = render(renderRow({ open: true, evidenceLoader }));
+    await screen.findByText(/Could not load check details/);
+
+    fireEvent.click(screen.getByText("Retry"));
+    await waitFor(() => expect(evidenceLoader).toHaveBeenCalledTimes(2));
+
+    rerender(renderRow({ open: false, evidenceLoader }));
+    rerender(renderRow({ open: true, evidenceLoader }));
+    expect(screen.queryByText("No checks recorded.")).not.toBeInTheDocument();
+    await screen.findByText(/Could not load check details/);
+  });
+
+  it("renders a reopened row's kept run details at once without an evidence loader", async () => {
     vi.mocked(getAgentTaskRun).mockImplementation(async (id: string) => ({
       id,
       status: "passed",
@@ -661,7 +745,7 @@ describe("CompareTaskRow reopened rows and checks", () => {
 
     expect(screen.queryByText("Loading checks…")).not.toBeInTheDocument();
     expect(screen.getByText("C-2")).toBeInTheDocument();
-    expect(getAgentTaskRun).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(getAgentTaskRun).toHaveBeenCalledTimes(4));
   });
 
   it("renders a reopened check's source at once, without loading it again", async () => {
@@ -686,5 +770,29 @@ describe("CompareTaskRow reopened rows and checks", () => {
     expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
     await waitFor(() => expect(viewerProps.code).toContain("literal-title-check"));
     expect(loadCheckSource).toHaveBeenCalledOnce();
+  });
+
+  it("loads a source again on every opening when it fell back to the working tree", async () => {
+    // The pinned definition read failed, so the source came from an unpinned read.
+    vi.mocked(loadCheckSource).mockImplementation(async (input) => {
+      await input.deps.readTaskFile(input.taskId, "task.eval.ts", undefined);
+      return { content: tableDrivenFile, language: "typescript" };
+    });
+    const evidenceLoader = vi.fn().mockResolvedValue({
+      left: {
+        id: "run-a",
+        task_definition: { files: [{ path: "fallback.eval.ts" }] },
+        checks_json: [{ id: "literal-title-check", pass: true }],
+      },
+      right: { id: "run-b", checks_json: [{ id: "literal-title-check", pass: false }] },
+    });
+    render(renderRow({ open: true, evidenceLoader }));
+
+    fireEvent.click(await screen.findByLabelText("Expand"));
+    await waitFor(() => expect(viewerProps.code).toContain("literal-title-check"));
+    fireEvent.click(screen.getByLabelText("Collapse"));
+    fireEvent.click(screen.getByLabelText("Expand"));
+
+    await waitFor(() => expect(loadCheckSource).toHaveBeenCalledTimes(2));
   });
 });

@@ -13,13 +13,15 @@ import {
 } from "@/lib/agent-task-api";
 import { loadCheckSource, type CheckSource, type DefinitionRef } from "@/lib/load-check-source";
 import {
-  checkSources,
   loadComparisonEvidence,
   loadDefinitionSource,
+  loadResolvedCheckSource,
   loadTaskFile,
   loadTaskRunDetail,
   peekComparisonEvidence,
+  peekResolvedCheckSource,
   peekTaskRunDetail,
+  type ResolvedCheckSource,
 } from "@/lib/check-evidence-cache";
 import type { TaskComparisonEvidenceLoader } from "@/lib/agent-task-view-api";
 import { cn } from "@/lib/utils";
@@ -27,6 +29,7 @@ import { formatDuration, runDurationMs, formatCostMicro, formatTokenTotal, token
 import { isDominantReasoningCall } from "@/lib/dominant-reasoning-call";
 import { extractJudgeReasoning } from "@/lib/judge-reasoning";
 import { resolveCheckBlock } from "@/lib/extract-check-block";
+import { checkAnchorLine } from "@/lib/check-source-candidates";
 import { locateAssertionsInBlock } from "@/lib/locate-assertion";
 import type { LineAssertion } from "./compare-markers";
 
@@ -649,6 +652,8 @@ type CheckPairInput = {
   initialLeft: AgentTaskRunDetail | null;
   initialRight: AgentTaskRunDetail | null;
   evidenceLoader?: TaskComparisonEvidenceLoader;
+  /** Reload past the cache: the row is already showing its kept copy. */
+  fresh?: boolean;
 };
 
 const pairResult = (left: AgentTaskRunDetail | null, right: AgentTaskRunDetail | null): CheckPairResult =>
@@ -661,8 +666,7 @@ const pairResult = (left: AgentTaskRunDetail | null, right: AgentTaskRunDetail |
  * Prefer the frozen-pair evidence loader (comparison views) over
  * individual run fetches. The evidence loader resolves the exact frozen pair
  * server-side and never accepts arbitrary run IDs from the browser. Both
- * paths read through the page's check-evidence cache, so reopening a row
- * costs no request.
+ * paths read through the page's check-evidence cache.
  *
  * Returns the in-flight promise plus an `abort` that marks its result as
  * stale, so callers never settle superseded loads into state, and releases
@@ -675,6 +679,7 @@ function fetchCheckPair({
   initialLeft,
   initialRight,
   evidenceLoader,
+  fresh = false,
 }: CheckPairInput): { promise: Promise<CheckPairResult>; abort: () => void } {
   let cancelled = false;
   const releases: Array<() => void> = [];
@@ -682,8 +687,11 @@ function fetchCheckPair({
     releases.push(release);
     return promise;
   };
+  // A side whose refresh fails keeps its kept copy rather than going blank.
+  const loadSide = (runId: string): Promise<AgentTaskRunDetail | null> =>
+    held(loadTaskRunDetail(runId, fresh)).catch(() => peekTaskRunDetail(runId) ?? null);
   const loaded: Promise<CheckPairResult> = evidenceLoader
-    ? held(loadComparisonEvidence(evidenceLoader, taskId)).then(
+    ? held(loadComparisonEvidence(evidenceLoader, taskId, fresh)).then(
         ({ left, right }) => pairResult(left, right),
         (err: unknown): CheckPairResult => ({
           ok: false,
@@ -691,8 +699,8 @@ function fetchCheckPair({
         }),
       )
     : Promise.all([
-        initialLeft ?? (leftId ? held(loadTaskRunDetail(leftId)).catch(() => null) : null),
-        initialRight ?? (rightId ? held(loadTaskRunDetail(rightId)).catch(() => null) : null),
+        initialLeft ?? (leftId ? loadSide(leftId) : null),
+        initialRight ?? (rightId ? loadSide(rightId) : null),
       ]).then(([left, right]) => pairResult(left, right));
   const promise = loaded.then((result): CheckPairResult =>
     // Superseded mid-flight: report an error the caller will discard, so
@@ -717,11 +725,15 @@ function peekCheckPair({
   initialRight,
   evidenceLoader,
 }: CheckPairInput): { left: AgentTaskRunDetail | null; right: AgentTaskRunDetail | null } | null {
-  if (evidenceLoader) return peekComparisonEvidence(evidenceLoader, taskId) ?? null;
-  const left = initialLeft ?? (leftId ? peekTaskRunDetail(leftId) : null);
-  const right = initialRight ?? (rightId ? peekTaskRunDetail(rightId) : null);
-  if (left === undefined || right === undefined || (!left && !right)) return null;
-  return { left, right };
+  const pair = evidenceLoader
+    ? peekComparisonEvidence(evidenceLoader, taskId)
+    : {
+        left: initialLeft ?? (leftId ? peekTaskRunDetail(leftId) : null),
+        right: initialRight ?? (rightId ? peekTaskRunDetail(rightId) : null),
+      };
+  if (!pair || pair.left === undefined || pair.right === undefined) return null;
+  const result = pairResult(pair.left, pair.right);
+  return result.ok ? { left: result.left, right: result.right } : null;
 }
 
 /** Aligned checks for a differing task — lazily loaded on expand. */
@@ -747,11 +759,14 @@ function CheckDiff({
     | { status: "error"; message: string }
     | { status: "ready"; left: AgentTaskRunDetail | null; right: AgentTaskRunDetail | null }
   >(() => {
-    // A row opened again renders its checks on the first frame.
+    // A row opened again renders its kept checks on the first frame, and the
+    // mount load refreshes them behind it.
     const cached = peekCheckPair({ taskId, leftId, rightId, initialLeft, initialRight, evidenceLoader });
     return cached ? { status: "ready", ...cached } : { status: "loading" };
   });
-  const loadedOnMountRef = useRef(state.status === "ready");
+  // Until a load settles, the checks on screen are the kept copy and every
+  // load refreshes past it (a remount in development runs the effect twice).
+  const showingKeptRef = useRef(state.status === "ready");
 
   // Latest-ref for the parent-provided loader: the load effect must not
   // re-fire (and re-fetch) just because the parent re-created the callback.
@@ -766,6 +781,7 @@ function CheckDiff({
 
   const load = useCallback(() => {
     abortInFlightRef.current?.();
+    const refresh = showingKeptRef.current;
     const { promise, abort } = fetchCheckPair({
       taskId,
       leftId,
@@ -773,6 +789,7 @@ function CheckDiff({
       initialLeft,
       initialRight,
       evidenceLoader: evidenceLoaderRef.current,
+      fresh: refresh,
     });
     let superseded = false;
     abortInFlightRef.current = () => {
@@ -780,7 +797,9 @@ function CheckDiff({
       abort();
     };
     promise.then((result) => {
-      if (superseded) return;
+      // A failed refresh leaves the kept checks on screen.
+      if (superseded || (refresh && !result.ok)) return;
+      showingKeptRef.current = false;
       setState(
         result.ok
           ? { status: "ready", left: result.left, right: result.right }
@@ -790,10 +809,6 @@ function CheckDiff({
   }, [taskId, leftId, rightId, initialLeft, initialRight]);
 
   useEffect(() => {
-    if (loadedOnMountRef.current) {
-      loadedOnMountRef.current = false;
-      return;
-    }
     load();
     return () => abortInFlightRef.current?.();
   }, [load]);
@@ -810,12 +825,16 @@ function CheckDiff({
   // offered because either run's revision renders the same source; two runs of one
   // task normally pin the same digest. Memoized so the per-check source effect
   // isn't re-fired by a fresh array identity on every render.
-  const definitionRefs = useMemo<DefinitionRef[]>(() => {
-    if (state.status !== "ready") return [];
-    return [state.left, state.right]
-      .map((run) => ({ runId: run?.id ?? "", filePath: run?.task_definition?.files[0]?.path ?? "" }))
-      .filter((ref) => ref.runId && ref.filePath);
-  }, [state]);
+  // Keyed by content, not by `state`, so a refresh that returns the same
+  // runs keeps the same refs.
+  const definitionRefsKey = JSON.stringify(
+    state.status === "ready"
+      ? [state.left, state.right]
+          .map((run) => ({ runId: run?.id ?? "", filePath: run?.task_definition?.files[0]?.path ?? "" }))
+          .filter((ref) => ref.runId && ref.filePath)
+      : [],
+  );
+  const definitionRefs = useMemo<DefinitionRef[]>(() => JSON.parse(definitionRefsKey), [definitionRefsKey]);
 
   if (state.status === "loading") {
     return <div className="px-6 py-3 text-[12px] text-muted-foreground">Loading checks…</div>;
@@ -1144,16 +1163,20 @@ function CheckSourceWithResults({
   // fell back to the whole file — with the gutter markers landing on an
   // unrelated check's lines. Both runs' results carry the anchor; prefer
   // whichever side recorded one.
+  // Keyed by the anchor lines, so a refresh that brings new check objects
+  // with the same anchors doesn't load the source again.
+  const leftAnchor = leftCheck ? checkAnchorLine(leftCheck) : undefined;
+  const rightAnchor = rightCheck ? checkAnchorLine(rightCheck) : undefined;
   const blockQuery = useMemo(
-    () => ({ id: checkId, anchorFrom: [leftCheck, rightCheck] }),
-    [checkId, leftCheck, rightCheck],
+    () => ({
+      id: checkId,
+      anchorFrom: [leftAnchor, rightAnchor].map((line) => (line ? { location: { line } } : undefined)),
+    }),
+    [checkId, leftAnchor, rightAnchor],
   );
-  // Only a pinned definition or a file at a commit is fixed; a working-tree
-  // read is fetched fresh on every opening.
-  const sourceKey =
-    definitionRefs.length > 0 || commitSha
-      ? JSON.stringify([projectId, taskId, checkId, sourceFile ?? null, commitSha, definitionRefs])
-      : null;
+  // Kept only when pinned reads produced it (a definition, a file at a
+  // commit); a working-tree read is fetched fresh on every opening.
+  const sourceKey = JSON.stringify([projectId, taskId, checkId, sourceFile ?? null, commitSha, definitionRefs]);
   const viewOf = useCallback(
     (source: CheckSource): { status: "ready"; code: string; language: string } => ({
       status: "ready",
@@ -1168,20 +1191,21 @@ function CheckSourceWithResults({
     | { status: "ready"; code: string; language: string }
   >(() => {
     // A check opened again renders its source on the first frame.
-    const cached = sourceKey ? checkSources.peek(sourceKey) : undefined;
-    return cached ? viewOf(cached) : { status: "loading" };
+    const cached = peekResolvedCheckSource(sourceKey);
+    return cached ? viewOf(cached.source) : { status: "loading" };
   });
-  const loadedOnMountRef = useRef(state.status === "ready");
+  const shownFromCacheRef = useRef(state.status === "ready");
 
   useEffect(() => {
-    if (loadedOnMountRef.current) {
-      loadedOnMountRef.current = false;
+    // A pinned source can't change, so a kept one needs no reload.
+    if (shownFromCacheRef.current) {
+      shownFromCacheRef.current = false;
       return;
     }
     let cancelled = false;
-    let release = () => {};
-    const load = () =>
-      loadCheckSource({
+    const load = async (): Promise<ResolvedCheckSource> => {
+      let pinned = true;
+      const source = await loadCheckSource({
         taskId,
         recordedSourceFile: sourceFile,
         commitSha,
@@ -1189,36 +1213,34 @@ function CheckSourceWithResults({
         containsKnownCheck: (content) => resolveCheckBlock(content, blockQuery) !== null,
         deps: {
           readDefinitionSource: loadDefinitionSource,
-          readTaskFile: (id, candidate, sha) => loadTaskFile(id, candidate, projectId, sha),
+          readTaskFile: (id, candidate, sha) => {
+            if (!sha) pinned = false;
+            return loadTaskFile(id, candidate, projectId, sha);
+          },
         },
       });
+      return { source, pinned };
+    };
+    const { promise, release } = loadResolvedCheckSource(sourceKey, load);
 
-    (async () => {
-      try {
-        let pending: Promise<CheckSource>;
-        if (sourceKey) {
-          const held = checkSources.get(sourceKey, load);
-          release = held.release;
-          pending = held.promise;
-        } else {
-          pending = load();
-        }
-        const source = await pending;
+    promise.then(
+      ({ source }) => {
         if (!cancelled) setState(viewOf(source));
-      } catch (error) {
+      },
+      (error: unknown) => {
         if (cancelled) return;
         setState({
           status: "error",
           message: error instanceof Error ? error.message : "Could not load check source.",
         });
-      }
-    })();
+      },
+    );
 
     return () => {
       cancelled = true;
       release();
     };
-  }, [sourceKey, sourceFile, taskId, projectId, commitSha, definitionRefs, blockQuery, viewOf]);
+  }, [sourceKey, taskId, projectId, sourceFile, commitSha, definitionRefs, blockQuery, viewOf]);
 
   // Locate each run's assertions onto lines of the source block. Builds a
   // map: line number → { left?, right? } assertion results. Empty when the

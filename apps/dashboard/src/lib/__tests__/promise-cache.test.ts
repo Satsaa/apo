@@ -67,4 +67,57 @@ describe("createPromiseCache", () => {
     held.release();
     expect(cache.peek("k")).toBe("source");
   });
+
+  it("refreshes a kept value on a fresh get, and keeps it if the refresh fails", async () => {
+    const cache = createPromiseCache<string>();
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce("v1")
+      .mockResolvedValueOnce("v2")
+      .mockRejectedValueOnce(new Error("503"));
+    await cache.get("k", load).promise;
+    expect(await cache.get("k", load, { fresh: true }).promise).toBe("v2");
+    expect(cache.peek("k")).toBe("v2");
+    await expect(cache.get("k", load, { fresh: true }).promise).rejects.toThrow("503");
+    expect(cache.peek("k")).toBe("v2");
+  });
+
+  it("keeps a kept value when an in-flight refresh is released", async () => {
+    const cache = createPromiseCache<string>();
+    await cache.get("k", async () => "v1").promise;
+    const signals: AbortSignal[] = [];
+    const refresh = cache.get("k", (signal) => {
+      signals.push(signal);
+      return pending<string>().promise;
+    }, { fresh: true });
+    refresh.release();
+    expect(signals[0].aborted).toBe(true);
+    expect(cache.peek("k")).toBe("v1");
+  });
+
+  it("answers a plain get from the kept value while a refresh is in flight", async () => {
+    const cache = createPromiseCache<string>();
+    await cache.get("k", async () => "v1").promise;
+    const refresh = cache.get("k", () => Promise.reject(new Error("503")), { fresh: true });
+    expect(await cache.get("k", async () => "unused").promise).toBe("v1");
+    await expect(refresh.promise).rejects.toThrow("503");
+  });
+
+  it("keeps the kept value when keep refuses a refresh", async () => {
+    const cache = createPromiseCache<string>({ keep: (value) => value !== "" });
+    await cache.get("k", async () => "v1").promise;
+    expect(await cache.get("k", async () => "", { fresh: true }).promise).toBe("");
+    expect(cache.peek("k")).toBe("v1");
+  });
+
+  it("holds at most maxEntries values, dropping the least recently used", async () => {
+    const cache = createPromiseCache<string>({ maxEntries: 2 });
+    await cache.get("a", async () => "A").promise;
+    await cache.get("b", async () => "B").promise;
+    await cache.get("a", async () => "A").promise;
+    await cache.get("c", async () => "C").promise;
+    expect(cache.peek("a")).toBe("A");
+    expect(cache.peek("b")).toBeUndefined();
+    expect(cache.peek("c")).toBe("C");
+  });
 });

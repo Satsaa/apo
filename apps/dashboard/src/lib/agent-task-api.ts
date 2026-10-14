@@ -901,8 +901,9 @@ export const getAgentTaskBatchRun = (
 
 export const getAgentTaskRun = (
   taskRunId: string,
+  signal?: AbortSignal,
 ): Promise<AgentTaskRunDetail> =>
-  apiClient(`/v1/agent-task-runs/${encodeURIComponent(taskRunId)}`, NO_CACHE);
+  apiClient(`/v1/agent-task-runs/${encodeURIComponent(taskRunId)}`, { ...NO_CACHE, signal });
 
 /** Issue #159: a run's judgments — original first, rejudges newest first. */
 export const listAgentTaskRunJudgments = (

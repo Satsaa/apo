@@ -11,34 +11,39 @@ import { createPromiseCache, type PromiseCache } from "./promise-cache";
 
 /**
  * Page-lifetime caches for what an expanded compare row loads, so collapsing a
- * row or a check and opening it again reads from memory instead of the
- * network. Everything cached here is fixed once written: a finished run's
- * detail, a frozen comparison's evidence, a run's pinned definition and a
- * file at a commit. A run still in progress is fetched fresh each time.
+ * row or a check and opening it again renders from memory instead of waiting
+ * on the network. Run details and comparison evidence can change after they
+ * are read (a correction, a rejudge, a note), so a reopened row shows the
+ * kept copy and then refreshes it (`fresh`). Sources are kept only when they
+ * are pinned — a run's definition or a file at a commit — and never refreshed.
  */
 
 type Held<T> = { promise: Promise<T>; release: () => void };
 
 const UNFINISHED = new Set(["running", "pending"]);
 
+// A few open rows' worth of both sides; each detail can carry a transcript.
 const runDetails = createPromiseCache<AgentTaskRunDetail>({
   keep: (run) => !UNFINISHED.has(run.status),
+  maxEntries: 8,
 });
 
-export const loadTaskRunDetail = (runId: string): Held<AgentTaskRunDetail> =>
-  runDetails.get(runId, () => getAgentTaskRun(runId));
+export const loadTaskRunDetail = (runId: string, fresh = false): Held<AgentTaskRunDetail> =>
+  runDetails.get(runId, (signal) => getAgentTaskRun(runId, signal), { fresh });
 
 export const peekTaskRunDetail = (runId: string): AgentTaskRunDetail | undefined =>
   runDetails.peek(runId);
 
 // One cache per loader: a loader is bound to one frozen comparison, and a new
-// comparison brings a new loader.
+// comparison brings a new loader. A comparison view opens one task at a time
+// so that only one evidence pair is in memory; keeping that one pair after it
+// closes is enough to reopen it at once.
 const evidenceByLoader = new WeakMap<TaskComparisonEvidenceLoader, PromiseCache<LoadedTaskComparisonEvidence>>();
 
 const evidenceCache = (loader: TaskComparisonEvidenceLoader): PromiseCache<LoadedTaskComparisonEvidence> => {
   let cache = evidenceByLoader.get(loader);
   if (!cache) {
-    cache = createPromiseCache();
+    cache = createPromiseCache({ keep: ({ left, right }) => Boolean(left || right), maxEntries: 1 });
     evidenceByLoader.set(loader, cache);
   }
   return cache;
@@ -47,7 +52,9 @@ const evidenceCache = (loader: TaskComparisonEvidenceLoader): PromiseCache<Loade
 export const loadComparisonEvidence = (
   loader: TaskComparisonEvidenceLoader,
   taskId: string,
-): Held<LoadedTaskComparisonEvidence> => evidenceCache(loader).get(taskId, (signal) => loader(taskId, signal));
+  fresh = false,
+): Held<LoadedTaskComparisonEvidence> =>
+  evidenceCache(loader).get(taskId, (signal) => loader(taskId, signal), { fresh });
 
 export const peekComparisonEvidence = (
   loader: TaskComparisonEvidenceLoader,
@@ -76,5 +83,18 @@ export const loadTaskFile = (
       ).promise
     : readTaskFile(taskId, filePath, projectId, commitSha);
 
-/** The resolved source of one check, so a reopened check renders at once. */
-export const checkSources = createPromiseCache<CheckSource>();
+/** A check's resolved source, and whether only pinned reads produced it. */
+export interface ResolvedCheckSource {
+  source: CheckSource;
+  pinned: boolean;
+}
+
+// One entry per check; the file reads underneath are shared.
+const checkSources = createPromiseCache<ResolvedCheckSource>({ keep: ({ pinned }) => pinned, maxEntries: 64 });
+
+export const loadResolvedCheckSource = (
+  key: string,
+  load: () => Promise<ResolvedCheckSource>,
+): Held<ResolvedCheckSource> => checkSources.get(key, load);
+
+export const peekResolvedCheckSource = (key: string): ResolvedCheckSource | undefined => checkSources.peek(key);
