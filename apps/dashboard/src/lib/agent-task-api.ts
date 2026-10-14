@@ -870,6 +870,14 @@ export const listTaskRuns = (
     },
   });
 
+/** The acting member's aggregate Connected Executor state. Dashboard Batches
+ * are claimed only by Executors the requesting member enrolled, so this is
+ * the state that decides whether "Run selected" will start. */
+export const getConnectedExecutorStatus = (
+  projectId: string,
+): Promise<{ state: ConnectedEnvironmentState }> =>
+  apiClient(`/v1/projects/${encodeURIComponent(projectId)}/connected-executor-status`);
+
 export const createAgentTaskBatchRun = (
   request: CreateAgentTaskBatchRunRequest,
 ): Promise<AgentTaskBatchRunDetail> =>

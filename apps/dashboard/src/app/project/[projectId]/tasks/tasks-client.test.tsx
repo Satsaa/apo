@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { AgentTasksClient } from "@/app/project/[projectId]/tasks/tasks-client";
 import {
   createAgentTaskBatchRun,
+  getConnectedExecutorStatus,
   type AgentTaskSummary,
 } from "@/lib/agent-task-api";
 import type { ProjectTaskSource } from "@/lib/projects-api";
@@ -13,7 +14,11 @@ vi.mock("@/lib/agent-task-api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/agent-task-api")>(
     "@/lib/agent-task-api",
   );
-  return { ...actual, createAgentTaskBatchRun: vi.fn() };
+  return {
+    ...actual,
+    createAgentTaskBatchRun: vi.fn(),
+    getConnectedExecutorStatus: vi.fn().mockResolvedValue({ state: "ready" }),
+  };
 });
 
 // Evidence-view endpoints: the client fetches the model/effort
@@ -131,6 +136,75 @@ describe("AgentTasksClient — native source-owned Run", () => {
     // whole request — `selection_type` and `execution_target` are derived
     // server-side and must not be sent.
     expect(Object.keys(call).sort()).toEqual(["project", "run_metadata", "task_ids"]);
+  });
+});
+
+describe("AgentTasksClient — connected executor warning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getConnectedExecutorStatus).mockResolvedValue({ state: "ready" });
+  });
+
+  const renderAndSelect = async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentTasksClient
+        tasks={[task()]}
+        error={null}
+        taskSource={taskSource}
+        isDemo={false}
+      />,
+    );
+    await user.click(screen.getAllByRole("checkbox")[0]);
+  };
+
+  it("warns, without disabling Run, when no executor is connected", async () => {
+    vi.mocked(getConnectedExecutorStatus).mockResolvedValue({ state: "not_connected" });
+    await renderAndSelect();
+
+    const warning = await screen.findByTestId("executor-run-warning");
+    expect(warning).toHaveTextContent("No connected environment");
+    expect(warning).toHaveTextContent("apo connect");
+    expect(warning).toHaveTextContent("expire after 24 hours");
+    expect(getConnectedExecutorStatus).toHaveBeenCalledWith("acme-evals");
+    const runButtons = screen.getAllByRole("button", { name: /Run/i });
+    expect(runButtons.every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it("points at apo task publish when the catalog is out of date", async () => {
+    vi.mocked(getConnectedExecutorStatus).mockResolvedValue({ state: "catalog_mismatch" });
+    await renderAndSelect();
+
+    expect(await screen.findByTestId("executor-run-warning")).toHaveTextContent(
+      "apo task publish",
+    );
+  });
+
+  it("shows nothing when an executor is ready", async () => {
+    await renderAndSelect();
+
+    await waitFor(() => expect(getConnectedExecutorStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("executor-run-warning")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing when the status endpoint fails", async () => {
+    vi.mocked(getConnectedExecutorStatus).mockRejectedValue(new Error("boom"));
+    await renderAndSelect();
+
+    await waitFor(() => expect(getConnectedExecutorStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("executor-run-warning")).not.toBeInTheDocument();
+  });
+
+  it("does not ask for the status before anything is selected", () => {
+    render(
+      <AgentTasksClient
+        tasks={[task()]}
+        error={null}
+        taskSource={taskSource}
+        isDemo={false}
+      />,
+    );
+    expect(getConnectedExecutorStatus).not.toHaveBeenCalled();
   });
 });
 
