@@ -927,7 +927,8 @@ function CheckDiff({
               {/* Reasoning delta (issue #309): the point of the compare view —
                   a reasoning-budget change shows up as a number. Row only
                   appears when at least one side reported the dimension; the
-                  sub-line links to the deepest single call. */}
+                  sub-line links to the deepest single call when that call
+                  dominates the run's reasoning. */}
               {(leftReasoning != null || rightReasoning != null) && (
                 <MetricRow
                   label="reasoning"

@@ -11,6 +11,10 @@ describe("isDominantReasoningCall", () => {
     expect(isDominantReasoningCall(199_300, 19_800)).toBe(false);
   });
 
+  it("is false when one call did all of the reasoning", () => {
+    expect(isDominantReasoningCall(5_000, 5_000)).toBe(false);
+  });
+
   it("is false when either number is unknown or the total is zero", () => {
     expect(isDominantReasoningCall(null, 4_000)).toBe(false);
     expect(isDominantReasoningCall(10_000, undefined)).toBe(false);

@@ -231,6 +231,10 @@ export default async function TaskRunDetailPage({
 
   const isRunning = ["running", "pending", "queued"].includes(taskRun.status);
   const generationErrors = taskRun.generation_execution?.errored ?? 0;
+  const reasoningDominated = isDominantReasoningCall(
+    taskRun.total_reasoning_tokens,
+    taskRun.max_call_reasoning_tokens,
+  );
   // #149 withholds the verdict only when errored generations dominate; a
   // recovered minority keeps the verdict (and the error banner below).
   const verdictSuppressed = isVerdictSuppressedByGenerations(taskRun);
@@ -408,7 +412,8 @@ export default async function TaskRunDetailPage({
               },
               // Reasoning rollup (issue #309): unknown renders as an em dash —
               // a provider that never sent the reasoning dimension must not
-              // read as "the model didn't think". Linked to the deepest call.
+              // read as "the model didn't think". Linked to the deepest call
+              // when that call dominates the run's reasoning.
               ...(taskRun.total_reasoning_tokens != null
                 ? [{
                     icon: Brain,
@@ -416,10 +421,9 @@ export default async function TaskRunDetailPage({
                     value: observationValue(
                       projectId,
                       taskRun.trace_run_id,
-                      taskRun.max_call_reasoning_call_id,
+                      reasoningDominated ? taskRun.max_call_reasoning_call_id : null,
                       formatTokenTotal(taskRun.total_reasoning_tokens),
-                      taskRun.max_call_reasoning_tokens != null &&
-                        isDominantReasoningCall(taskRun.total_reasoning_tokens, taskRun.max_call_reasoning_tokens)
+                      reasoningDominated && taskRun.max_call_reasoning_tokens != null
                         ? `max ${formatTokenTotal(taskRun.max_call_reasoning_tokens)} in a single call`
                         : undefined,
                     ),
