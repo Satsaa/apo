@@ -25,13 +25,19 @@ describe("generationUsageMetadata", () => {
   });
 
   it("shows totals and links the slowest and largest-reasoning calls", () => {
-    const items = generationUsageMetadata(usage(), TRACE).map(({ value, label, href }) => ({ value, label, href }));
+    const items = generationUsageMetadata(usage({ max_call_reasoning_tokens: 2_400 }), TRACE).map(({ value, label, href }) => ({ value, label, href }));
     expect(items).toEqual([
       { value: "58.54s", label: "model time · 21 calls", href: undefined },
       { value: "7.42s", label: "slowest call", href: `${TRACE}?observation=8c68d098872c5aab` },
       { value: "5.5k tok", label: "reasoning", href: undefined },
-      { value: "1.1k tok", label: "largest reasoning call", href: `${TRACE}?observation=2e1e24fa23cfff6c` },
+      { value: "2.4k tok", label: "largest reasoning call", href: `${TRACE}?observation=2e1e24fa23cfff6c` },
     ]);
+  });
+
+  it("leaves out the largest reasoning call when no single call dominates the total", () => {
+    const labels = generationUsageMetadata(usage(), TRACE).map((i) => i.label);
+    expect(labels).toContain("reasoning");
+    expect(labels).not.toContain("largest reasoning call");
   });
 
   it("marks reasoning partial when some generations did not report it", () => {

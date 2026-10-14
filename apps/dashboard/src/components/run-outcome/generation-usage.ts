@@ -1,5 +1,6 @@
 import { Brain, Cpu } from "lucide-react";
 import type { GenerationUsageSummary } from "@/lib/agent-task-api";
+import { isDominantReasoningCall } from "@/lib/dominant-reasoning-call";
 import { formatInterval, formatTokenTotal } from "@/lib/format";
 import type { OutcomeMetadataItem } from "./outcome-summary";
 
@@ -39,7 +40,10 @@ export function generationUsageMetadata(
       value: formatTokenTotal(usage.reasoning_tokens),
       label: `reasoning${partial}`,
     });
-    if (usage.max_call_reasoning_tokens != null && usage.reasoning_calls > 1) {
+    if (
+      usage.reasoning_calls > 1 &&
+      isDominantReasoningCall(usage.reasoning_tokens, usage.max_call_reasoning_tokens)
+    ) {
       items.push({
         value: formatTokenTotal(usage.max_call_reasoning_tokens),
         label: "largest reasoning call",

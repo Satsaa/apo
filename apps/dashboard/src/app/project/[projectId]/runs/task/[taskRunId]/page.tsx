@@ -33,6 +33,7 @@ import { TaskRunDetailBody } from "./task-run-detail-body";
 import { TaskRunAutoRefresh } from "@/components/agent-task-execution/task-run-auto-refresh";
 import { OutcomeSummary } from "@/components/run-outcome";
 import { formatTokenTotal, formatCostMicro } from "@/lib/format";
+import { isDominantReasoningCall } from "@/lib/dominant-reasoning-call";
 import { getProject } from "@/lib/projects-api";
 import GenerationExecutionNotice from "@/components/generation-execution-notice";
 import { RunJudgmentsSection } from "./run-judgments-section";
@@ -417,7 +418,8 @@ export default async function TaskRunDetailPage({
                       taskRun.trace_run_id,
                       taskRun.max_call_reasoning_call_id,
                       formatTokenTotal(taskRun.total_reasoning_tokens),
-                      taskRun.max_call_reasoning_tokens != null
+                      taskRun.max_call_reasoning_tokens != null &&
+                        isDominantReasoningCall(taskRun.total_reasoning_tokens, taskRun.max_call_reasoning_tokens)
                         ? `max ${formatTokenTotal(taskRun.max_call_reasoning_tokens)} in a single call`
                         : undefined,
                     ),

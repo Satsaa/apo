@@ -429,7 +429,7 @@ describe("CompareTaskRow reasoning rows (issue #309)", () => {
         checks_json: [],
         trace_run_id: "trace-b",
         total_reasoning_tokens: 2_000,
-        max_call_reasoning_tokens: 800,
+        max_call_reasoning_tokens: 200,
         max_call_reasoning_call_id: "obs-b1",
         total_model_time_ms: 90_000,
         max_call_latency_ms: 30_000,
@@ -460,9 +460,12 @@ describe("CompareTaskRow reasoning rows (issue #309)", () => {
     // Timing extremes stay data-only — no model-time row.
     expect(screen.queryByText("model time")).not.toBeInTheDocument();
 
-    // The max sub-line deep-links to the deepest observation.
+    // The max sub-line deep-links to the deepest observation when that call
+    // holds a large share of the run's reasoning (A: 4k of 10k), and is left
+    // out when the thinking is spread across calls (B: 200 of 2k).
     const maxLink = screen.getAllByText("max 4.0k tok")[0].closest("a");
     expect(maxLink?.getAttribute("href")).toBe("/project/p1/traces/trace-a?observation=obs-a1");
+    expect(screen.queryByText("max 200 tok")).not.toBeInTheDocument();
   });
 
   it("keeps unknown reasoning visibly distinct from a reported zero", async () => {

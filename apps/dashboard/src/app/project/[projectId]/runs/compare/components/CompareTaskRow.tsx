@@ -18,6 +18,7 @@ import { loadCheckSource, type DefinitionRef } from "@/lib/load-check-source";
 import type { TaskComparisonEvidenceLoader } from "@/lib/agent-task-view-api";
 import { cn } from "@/lib/utils";
 import { formatDuration, runDurationMs, formatCostMicro, formatTokenTotal, tokenFormat } from "@/lib/format";
+import { isDominantReasoningCall } from "@/lib/dominant-reasoning-call";
 import { extractJudgeReasoning } from "@/lib/judge-reasoning";
 import { resolveCheckBlock } from "@/lib/extract-check-block";
 import { locateAssertionsInBlock } from "@/lib/locate-assertion";
@@ -312,12 +313,14 @@ function observationHref(
   return `/project/${projectId}/traces/${run.trace_run_id}?observation=${callId}`;
 }
 
-/** Sub-line for the reasoning row: the deepest single call, linked. */
+/** Sub-line for the reasoning row: the deepest single call, linked, shown
+ *  only when that call holds a large share of the run's reasoning. */
 function maxReasoningSub(
   projectId: string,
   run: AgentTaskRunSummary | null | undefined,
 ): ReactNode {
   if (!run || run.max_call_reasoning_tokens == null) return null;
+  if (!isDominantReasoningCall(run.total_reasoning_tokens, run.max_call_reasoning_tokens)) return null;
   const text = `max ${tokenFormat(run.max_call_reasoning_tokens)} tok`;
   const href = observationHref(projectId, run, run.max_call_reasoning_call_id);
   return href ? (
