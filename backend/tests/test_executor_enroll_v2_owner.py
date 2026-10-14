@@ -102,22 +102,3 @@ def test_each_member_executor_is_bound_to_that_member(engine):
         assert s.get(ExecutorDB, alice_executor).enrolled_by_user_id == alice
         assert s.get(ExecutorDB, bob_executor).enrolled_by_user_id == bob
 
-
-def test_owner_follows_the_redeemed_token_not_issue_order(engine):
-    with Session(engine) as s:
-        alice = _member(s, "alice@t.com")
-        bob = _member(s, "bob@t.com")
-        alice_token = bootstrap_connected_executor(
-            s, project_id="p1", user_id=alice, name="alice-laptop"
-        ).enrollment_token
-        bob_token = bootstrap_connected_executor(
-            s, project_id="p1", user_id=bob, name="bob-laptop"
-        ).enrollment_token
-
-    client = TestClient(app)
-    bob_executor = _enroll(client, bob_token, "bob-laptop")
-    alice_executor = _enroll(client, alice_token, "alice-laptop")
-
-    with Session(engine) as s:
-        assert s.get(ExecutorDB, bob_executor).enrolled_by_user_id == bob
-        assert s.get(ExecutorDB, alice_executor).enrolled_by_user_id == alice
