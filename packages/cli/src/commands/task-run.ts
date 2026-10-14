@@ -182,12 +182,6 @@ function withNoVerdict(summary: LocalRunSummary): LocalRunSummary {
   return noVerdict ? { ...summary, noVerdict: true, sdkReportsNoVerdict } : summary;
 }
 
-/**
- * recorded caller execution. Hashes the real caller workspace, creates
- * + claims one Attempt, /start, runs the SDK Task locally with the Attempt JWT
- * in the child env (never the Project API key), heartbeats, and submits the
- * result/failure through the scoped protocol.
- */
 /** `--actor` / `APO_ACTOR` labels the run only when the caller sets it;
  * who ran it is recorded server-side from the credential. */
 function callerTrigger(config: Config): Record<string, string> {
@@ -196,6 +190,12 @@ function callerTrigger(config: Config): Record<string, string> {
   return trigger;
 }
 
+/**
+ * recorded caller execution. Hashes the real caller workspace, creates
+ * + claims one Attempt, /start, runs the SDK Task locally with the Attempt JWT
+ * in the child env (never the Project API key), heartbeats, and submits the
+ * result/failure through the scoped protocol.
+ */
 async function runCallerRecorded(
   config: Config,
   resolved: ResolvedTask,

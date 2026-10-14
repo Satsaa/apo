@@ -1,6 +1,15 @@
 import { parseArgs, requirePositional } from "../lib/args.ts";
 import { resolveConfig } from "../lib/config.ts";
-import { bold, dim, formatCost, formatDuration, formatJson, formatTime } from "../lib/format.ts";
+import {
+  bold,
+  dim,
+  formatCost,
+  formatDuration,
+  formatJson,
+  formatTime,
+  formatTrigger,
+  terminalSafeDeep,
+} from "../lib/format.ts";
 import { apiGet } from "../lib/api.ts";
 import { resolveBatchId } from "../lib/batch-resolve.ts";
 import { reportCommandError } from "../lib/command-error.ts";
@@ -90,7 +99,7 @@ export async function run(argv: string[]): Promise<number> {
     if (watch) {
       console.clear();
     }
-    printBatchDetail(batch);
+    printBatchDetail(terminalSafeDeep(batch));
 
     if (!watch || !["running", "queued"].includes(batch.status)) {
       return 0;
@@ -109,7 +118,7 @@ function printBatchDetail(batch: BatchDetail): void {
   for (const line of formatNeverStarted(batch)) console.log(line);
   console.log(`  Cost:     ${formatCost(batch.total_cost)}`);
   console.log(`  Created:  ${formatTime(batch.created_at)}`);
-  console.log(`  Source:   ${formatTriggerOpt(batch.trigger)}`);
+  console.log(`  Source:   ${batch.trigger ? formatTrigger(batch.trigger) : "-"}`);
   if (batch.requested_by_label) {
     console.log(`  Requested by: ${batch.requested_by_label}`);
   }
@@ -176,25 +185,4 @@ export function formatNeverStarted(batch: Pick<BatchDetail, "task_runs">): strin
     `  ${neverStarted.length} of ${total} never started:`,
     ...reasons.map(([reason, n]) => `    ${n}× ${reason}`),
   ];
-}
-
-function formatTriggerOpt(trigger: BatchDetail["trigger"]): string {
-  if (!trigger) {
-    return "-";
-  }
-
-  const identity: string[] = [];
-  if (trigger.source) identity.push(trigger.source);
-  if (trigger.actor && trigger.actor !== trigger.hostname) {
-    identity.push(trigger.actor);
-  }
-  if (trigger.hostname) identity.push(trigger.hostname);
-
-  const identityStr = identity.length > 0 ? identity.join(" · ") : null;
-  const entrypoint = trigger.entrypoint;
-
-  if (identityStr && entrypoint) {
-    return `${identityStr} · ${entrypoint}`;
-  }
-  return entrypoint ?? identityStr ?? "-";
 }

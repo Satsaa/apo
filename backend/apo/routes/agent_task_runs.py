@@ -35,7 +35,7 @@ from ..models import (
     ReportAgentTaskRunResultRequest,
     RunDB,
 )
-from ..models.db import TaskExecutionAttemptDB, UserDB
+from ..models.db import TaskExecutionAttemptDB
 from ..models.schemas import (
     as_no_verdict_reason,
     as_task_run_status,
@@ -50,7 +50,7 @@ from ..services.agent_task_batch_listing import (
     list_batch_run_summaries,
 )
 from ..services.agent_task_deliverables import derive_deliverables_json
-from ..services.human_actor import user_label
+from ..services.human_actor import requesting_user_id, user_label
 from ..services.judgments import count_judgments
 from ..services.judge_span_links import annotate_judge_span_ids
 from ..services.test_result_corrections import projected_check_report
@@ -602,22 +602,6 @@ class CallerIdentityBody(BaseModel):
     architecture: str
 
 
-def _requesting_member_id(
-    request: Request, session: Session, membership: object
-) -> str | None:
-    """The real User behind a member-authorized request, else None.
-
-    Session cookies carry the User; an API key carries the User who created
-    it. The open-dev ``"dev"`` sentinel and fallback memberships name no User
-    row, so they are dropped rather than written into the foreign key.
-    """
-    acting_user_id = cast(str | None, getattr(request.state, "user_id", None))
-    membership_user_id = getattr(membership, "user_id", None)
-    if not acting_user_id or str(acting_user_id) != str(membership_user_id):
-        return None
-    return acting_user_id if session.get(UserDB, acting_user_id) is not None else None
-
-
 class CallerCreateResponse(BaseModel):
     batch_run_id: str
     task_run_id: str
@@ -656,7 +640,7 @@ async def create_caller_batch_run_route(
     /start, heartbeat, and result. The caller owns execution; no Executor
     process is enrolled."""
     require_project_not_demo(request.project)
-    membership = enforce_project_role_from_request(
+    _ = enforce_project_role_from_request(
         http_request, session, request.project, minimum_role="member"
     )
     from apo.models.execution import (
@@ -703,7 +687,7 @@ async def create_caller_batch_run_route(
                 architecture=request.caller_identity.architecture,
             ),
             task_definition=request.task_definition,
-            requested_by_user_id=_requesting_member_id(http_request, session, membership),
+            requested_by_user_id=requesting_user_id(http_request, session),
         )
     except CallerExecutionError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))

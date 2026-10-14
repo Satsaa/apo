@@ -268,6 +268,19 @@ def test_caller_batch_records_the_api_key_creator(
     _assert_requested_by(keyed, r.json(), user_id)
 
 
+def test_ingest_key_caller_batch_names_no_requester(
+    session: Session, auth_secret: str, make_api_key_client
+) -> None:
+    """An ingest-scoped key is not a human credential (derive_human_actor refuses it)."""
+    _seed_project(session)
+    user_id = _seed_member(session)
+    keyed = make_api_key_client(user_id, "proj-caller", session, scope="ingest")
+    r = keyed.post("/v1/agent-task-batch-runs/caller", json=_caller_body())
+    assert r.status_code == 201, r.text
+    batch = session.get(AgentTaskBatchRunDB, r.json()["batch_run_id"])
+    assert batch is not None and batch.requested_by_user_id is None
+
+
 def test_open_dev_caller_batch_names_no_requester(
     client: object, session: Session, auth_secret: str
 ) -> None:

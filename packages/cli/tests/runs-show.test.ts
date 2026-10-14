@@ -119,6 +119,27 @@ describe("runs show command", () => {
     expect(out).not.toContain("1970");
   });
 
+  it("strips terminal escapes from server strings and labels the actor", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        task_id: "code-review\x1b]0;pwned\x07",
+        trigger: { source: "cli", actor: "Requested by: ceo@corp", hostname: null, entrypoint: null },
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    const code = await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    expect(code).toBe(0);
+    const raw = logs.join("\n");
+    expect(raw).not.toContain("\x1b]0;");
+    expect(raw).not.toContain("\x07");
+    const out = stripAnsi(raw);
+    expect(out).toContain("Source:   cli · actor: Requested by: ceo@corp");
+    expect(out).not.toMatch(/^\s*Requested by:/m);
+  });
+
   it("shows a passed run's kept executor note as a note, not an error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       mockResponse(makeRun({ status: "passed", pass_result: true, error_message: "adapter note" })),

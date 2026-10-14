@@ -1,6 +1,15 @@
 import { parseArgs, getFlagValue } from "../lib/args.ts";
 import { resolveConfig } from "../lib/config.ts";
-import { bold, dim, formatCost, formatJson, formatTime, yellow } from "../lib/format.ts";
+import {
+  bold,
+  dim,
+  formatCost,
+  formatJson,
+  formatTime,
+  formatTrigger,
+  terminalSafeDeep,
+  yellow,
+} from "../lib/format.ts";
 import { apiGet } from "../lib/api.ts";
 import type { CheckResult, DeliverableSummary } from "../lib/agent-task-types.ts";
 import { formatChecks, formatRunResult, secondJudgeSummary } from "../lib/checks-format.ts";
@@ -170,7 +179,7 @@ export async function run(argv: string[]): Promise<number> {
     if (showedLatest) {
       console.log(dim("(latest run)"));
     }
-    printRunDetail(runDetail, verbose);
+    printRunDetail(terminalSafeDeep(runDetail), verbose);
   }
 
   if (exitStatus) {
@@ -242,7 +251,7 @@ function printRunDetail(run: RunDetail, verbose: boolean): void {
   if (run.completed_at) {
     console.log(`  Completed: ${formatTime(run.completed_at)}`);
   }
-  console.log(`  Source:   ${formatTriggerOpt(run.trigger)}`);
+  console.log(`  Source:   ${run.trigger ? formatTrigger(run.trigger) : "-"}`);
   if (run.requested_by_label) {
     console.log(`  Requested by: ${run.requested_by_label}`);
   }
@@ -462,44 +471,4 @@ function formatFinishReasons(execution: GenerationExecution): string {
   const reasons = Object.entries(execution.error_finish_reasons)
     .map(([reason, count]) => `${reason} ×${count}`);
   return reasons.length > 0 ? dim(` (${reasons.join(", ")})`) : "";
-}
-
-function formatTriggerOpt(trigger: RunDetail["trigger"]): string {
-  if (!trigger) {
-    return "-";
-  }
-  return formatTriggerLocal({
-    source: trigger.source,
-    actor: trigger.actor,
-    hostname: trigger.hostname,
-    entrypoint: trigger.entrypoint,
-  });
-}
-
-function formatTriggerLocal(
-  trigger: {
-    source: string | null;
-    actor: string | null;
-    hostname: string | null;
-    entrypoint: string | null;
-  } | null,
-): string {
-  if (!trigger) {
-    return "-";
-  }
-
-  const identity: string[] = [];
-  if (trigger.source) identity.push(trigger.source);
-  if (trigger.actor && trigger.actor !== trigger.hostname) {
-    identity.push(trigger.actor);
-  }
-  if (trigger.hostname) identity.push(trigger.hostname);
-
-  const identityStr = identity.length > 0 ? identity.join(" · ") : null;
-  const entrypoint = trigger.entrypoint;
-
-  if (identityStr && entrypoint) {
-    return `${identityStr} · ${entrypoint}`;
-  }
-  return entrypoint ?? identityStr ?? "-";
 }

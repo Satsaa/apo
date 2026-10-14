@@ -278,6 +278,7 @@ async def create_pooled_batch_run(
     task_source: ProjectTaskSourceDB | None,
     resolved_commit_sha: str | None = None,
     queue_ttl_seconds: int | None = None,
+    requested_by_user_id: str | None = None,
 ) -> AgentTaskBatchRunDB:
     """Create a pooled Batch: Revision/Bundle + ordered queued Attempts.
 
@@ -317,6 +318,7 @@ async def create_pooled_batch_run(
             commit=False,
         )
         batch.execution_target_json = {"kind": "pool", "pool_id": pool.id}
+        batch.requested_by_user_id = requested_by_user_id
         session.add(batch)
 
         revision = await materialize_pooled_task_revision(

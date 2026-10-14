@@ -146,6 +146,9 @@ async def test_create_pooled_batch_run_creates_revision_and_queued_attempts(
     _seed_project(session, "p1")
     pool = _seed_pool(session, "p1", "pool-1")
     source = _seed_filesystem_source(session, "p1", root)
+    from apo.models.db import UserDB
+    session.add(UserDB(id="user-run-now", email="run-now@test", name="R", password_hash="x"))
+    session.commit()
 
     # Isolate to the pooled layer: stub create_batch_run's selection resolution
     # (exercised by its own tests) so we test revision + attempt creation.
@@ -178,8 +181,11 @@ async def test_create_pooled_batch_run_creates_revision_and_queued_attempts(
     batch = await create_pooled_batch_run(
         session, project_id="p1", pool_id=pool.id, selection_type="all",
         task_paths=None, task_root=str(root), grep=None, environment="default",
-        run_metadata=None, task_source=source,
+        run_metadata=None, task_source=source, requested_by_user_id="user-run-now",
     )
+
+    # Run Now on a bundled Schedule records who pressed it.
+    assert batch.requested_by_user_id == "user-run-now"
 
     # Revision materialized (bundled).
     revision = session.exec(

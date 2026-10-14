@@ -104,13 +104,17 @@ export function TriggerInline({ trigger }: { trigger: AgentTaskRunTrigger | null
   return <span>{parts.join(" · ")}</span>;
 }
 
-/** Who asked for the run, as the backend recorded it; nothing for old rows. */
+/** Who asked for the run, as the backend resolved it from the credential;
+ * labelled so the free-text trigger actor beside it can't pass for it. */
 export function RequestedByInline({ label }: { label: string | null | undefined }) {
   if (!label) return null;
   return (
     <>
       <span className="text-muted-foreground/50">·</span>
-      <span title="Requested by">by {label}</span>
+      <span>
+        <span className="text-muted-foreground">Requested by</span>{" "}
+        <span className="text-foreground">{label}</span>
+      </span>
     </>
   );
 }

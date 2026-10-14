@@ -120,8 +120,10 @@ export function formatTrigger(parts: TriggerParts): string {
 
   const identity: string[] = [];
   if (source) identity.push(source);
+  // Labelled: the actor is free text the caller chose, unlike the verified
+  // "Requested by" line, so it must not read like one.
   if (actor && actor !== hostname) {
-    identity.push(actor);
+    identity.push(`actor: ${actor}`);
   }
   if (hostname) identity.push(hostname);
 
@@ -145,6 +147,28 @@ export function formatTrigger(parts: TriggerParts): string {
 }
 
 const DIM_STRING = "\u2500";
+
+// C0 controls except tab and newline, DEL, and C1 controls. ESC and the C1
+// CSI/OSC introducers go with them, so a server-provided string can't move
+// the cursor, retitle the terminal, or print a disguised hyperlink.
+const TERMINAL_CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+
+/** Strip terminal control characters from a server-provided string. */
+export function terminalSafe(text: string): string {
+  return text.replace(TERMINAL_CONTROL, "");
+}
+
+/** `terminalSafe` over every string in a fetched payload, for human output. */
+export function terminalSafeDeep<T>(value: T): T {
+  if (typeof value === "string") return terminalSafe(value) as T;
+  if (Array.isArray(value)) return value.map((item: unknown) => terminalSafeDeep(item)) as T;
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, terminalSafeDeep(item)]),
+    ) as T;
+  }
+  return value;
+}
 
 /** "-" for a missing timestamp: `new Date(null)` would print the 1970 epoch. */
 export function formatTime(iso: string | null | undefined): string {

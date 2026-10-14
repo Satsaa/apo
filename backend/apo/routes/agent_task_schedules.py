@@ -35,6 +35,7 @@ from ..services.agent_task_scheduler import (
     validate_schedule_fields,
 )
 from ..services.demo_workspace import require_project_not_demo
+from ..services.human_actor import requesting_user_id
 from ..services.project_memberships import (
     enforce_project_role_from_request,
     readable_project_ids_for_request,
@@ -782,6 +783,7 @@ async def trigger_schedule(
                 run_metadata=run_metadata,
                 task_source=get_task_source_db(session, schedule.project),
                 queue_ttl_seconds=schedule.queue_ttl_seconds,
+                requested_by_user_id=requesting_user_id(http_request, session),
             )
         except PoolResolutionError as error:
             raise HTTPException(

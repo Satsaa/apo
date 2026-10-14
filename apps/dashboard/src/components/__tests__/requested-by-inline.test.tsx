@@ -11,7 +11,9 @@ import { RequestedByInline } from "../trigger-badge";
 describe("RequestedByInline", () => {
   it("names the requester", () => {
     render(<RequestedByInline label="runner@test.com" />);
-    expect(screen.getByTitle("Requested by").textContent).toBe("by runner@test.com");
+    expect(screen.getByText("Requested by").parentElement?.textContent).toBe(
+      "Requested by runner@test.com",
+    );
   });
 
   it("renders nothing without a requester", () => {
