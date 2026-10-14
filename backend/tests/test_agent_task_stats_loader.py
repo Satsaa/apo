@@ -283,7 +283,9 @@ def test_stats_loader_puts_a_queued_run_first_so_the_card_reads_running(
 ) -> None:
     # A task waiting in a sequential batch: its queued run (no started_at yet)
     # is its latest run on every database, ahead of the last finished one.
-    session.add_all([_batch("b-old", "project-1"), _batch("b-new", "project-1")])
+    live_batch = _batch("b-new", "project-1")
+    live_batch.created_at = datetime.now(timezone.utc)
+    session.add_all([_batch("b-old", "project-1"), live_batch])
     session.add_all(
         [
             _run("r-done", "b-old", "task-a", started_at=_OLDER),
@@ -296,12 +298,38 @@ def test_stats_loader_puts_a_queued_run_first_so_the_card_reads_running(
     stats = compute_run_stats(runs)
     assert stats.last_run_status == "pending"
     assert stats.not_started_runs == 0
+    # No verdict yet, so the queued run is outside the totals.
+    assert stats.total_runs == 1
+    assert stats.pass_rate == 1.0
+
+
+def test_stats_loader_ignores_a_pending_row_stuck_in_an_ancient_batch(
+    session: Session,
+) -> None:
+    # A pending row nobody reaped (no attempt, batch long gone) is not live:
+    # it neither reads as Running nor sits in a since window.
+    session.add_all([_batch("b-ancient", "project-1"), _batch("b-done", "project-1")])
+    session.add_all(
+        [
+            _run("r-stuck", "b-ancient", "task-a", status="pending", pass_result=None, started_at=None),
+            _run("r-done", "b-done", "task-a", started_at=_OLDER),
+        ]
+    )
+    session.commit()
+
+    stats = compute_run_stats(load_run_stat_fields(session, "project-1", ["task-a"])["task-a"])
+    assert stats.last_run_status == "passed"
+    assert stats.total_runs == 1
+    windowed = load_run_stat_fields(session, "project-1", ["task-a"], since="7d")
+    assert "task-a" not in windowed
 
 
 def test_since_scoped_stats_keep_queued_runs_like_the_run_list(session: Session) -> None:
     # The view's since window and the drill-down run list share one rule: a
     # queued run is inside every window, an expired one by its end time.
-    session.add_all([_batch("b-1", "project-1")])
+    live_batch = _batch("b-1", "project-1")
+    live_batch.created_at = datetime.now(timezone.utc)
+    session.add_all([live_batch])
     expired = _run("r-expired-old", "b-1", "task-a", status="error", pass_result=None, started_at=None)
     expired.completed_at = datetime.now(timezone.utc) - timedelta(days=30)
     session.add_all(

@@ -358,12 +358,35 @@ describe("runs show command", () => {
 
     expect(code).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("limit=1");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("started=true");
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       `http://backend.test/v1/agent-task-runs/${FULL_ID}`,
     );
     const out = stripAnsi(logs.join("\n"));
     expect(out).toContain("(latest run)");
+  });
+
+  it("skips runs that never started when the backend ignores started=true", async () => {
+    // An older backend lists unstarted runs (queued, or expired in the queue)
+    // first; the latest run is the first one that started.
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockResolvedValueOnce(
+        mockResponse([
+          { id: "run_000000000000000000000001", started_at: null },
+          { id: FULL_ID, started_at: "2026-10-14T08:00:00Z" },
+        ]),
+      )
+      .mockResolvedValueOnce(mockResponse(makeRun()));
+
+    const { restore } = captureLog();
+    const code = await run(["--backend", "http://backend.test"]);
+    restore();
+
+    expect(code).toBe(0);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `http://backend.test/v1/agent-task-runs/${FULL_ID}`,
+    );
   });
 
   it("resolves latest run of a specific task with 'last --task'", async () => {

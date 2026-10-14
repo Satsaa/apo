@@ -78,16 +78,22 @@ export async function resolveRunIdByPrefix(
   return result.item.id;
 }
 
+/**
+ * The latest run that started. The run list puts unstarted runs (queued, or
+ * expired before an executor claimed them) first, so `started=true` asks the
+ * backend to skip them; a backend that predates the filter ignores it, and the
+ * small page is filtered here instead.
+ */
 export async function resolveLatestRunId(
   backendUrl: string,
   config: ResolvedConfig,
   taskFilter?: string,
 ): Promise<string> {
-  const params: Record<string, string> = { limit: "1" };
+  const params: Record<string, string> = { limit: "20", started: "true" };
   if (config.projectId) params.project = config.projectId;
   if (taskFilter) params.task_id = taskFilter;
 
-  const runs = await apiGet<Array<{ id: string }>>(
+  const runs = await apiGet<Array<{ id: string; started_at?: string | null }>>(
     backendUrl,
     "/v1/agent-task-runs",
     params,
@@ -96,5 +102,5 @@ export async function resolveLatestRunId(
   if (runs.length === 0) {
     throw new Error("NO_RUNS");
   }
-  return runs[0].id;
+  return (runs.find((r) => r.started_at) ?? runs[0]).id;
 }

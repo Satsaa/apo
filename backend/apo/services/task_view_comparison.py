@@ -92,8 +92,16 @@ def _resolve_side(
 
     latest_by_task: dict[str, ViewRun] = {}
     for task_id, runs in runs_by_task.items():
-        completed = [r for r in runs if r.status != _ERRORED]
-        latest_by_task[task_id] = (completed or runs)[0]
+        # A live queued or running run may be frozen: the overview reads its
+        # verdict once it lands. A stuck one in an old batch never will.
+        completed = [
+            r
+            for r in runs
+            if r.status != _ERRORED and (r.live or r.status not in ("pending", "running"))
+        ]
+        errored = [r for r in runs if r.status == _ERRORED]
+        if completed or errored:
+            latest_by_task[task_id] = (completed or errored)[0]
 
     return {
         task_id: _ResolvedRun(

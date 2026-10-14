@@ -26,10 +26,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, case, desc, or_, select as sa_select
+from sqlalchemy import and_, case, desc, exists, or_, select as sa_select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
+from .executor_auth import ATTEMPT_LEASE_SECONDS, DEFAULT_QUEUE_TTL_SECONDS
 from ..models.columns import (
     AGENT_TASK_BATCH_CREATED_AT_COL,
     AGENT_TASK_BATCH_ID_COL,
@@ -84,6 +85,8 @@ class ViewRun:
     # What the judge no-verdict gate reads (issue #323) — two small scalars.
     failed_checks: int = 0
     no_verdict_reason: str | None = None
+    # Queued or running in a batch young enough to still be live; see live_run.
+    live: bool = False
 
 
 def since_cutoff(since: str | None) -> datetime | None:
@@ -105,9 +108,35 @@ def since_cutoff(since: str | None) -> datetime | None:
     return None
 
 
+# A queued run is reaped once its queue TTL passes and a running one once its
+# lease lapses, so a pending/running row in an older batch is a stuck leftover
+# (e.g. a legacy external-path run nobody finalized), not live work.
+LIVE_BATCH_WINDOW = timedelta(seconds=DEFAULT_QUEUE_TTL_SECONDS + ATTEMPT_LEASE_SECONDS)
+
+
+def _in_live_batch() -> ColumnElement[bool]:
+    # Its own batch scan, correlated on the run only, so it holds whether or
+    # not the outer query joins the batch table.
+    return (
+        exists()
+        .where(
+            AGENT_TASK_BATCH_ID_COL == AGENT_TASK_RUN_BATCH_RUN_ID_COL,
+            AGENT_TASK_BATCH_CREATED_AT_COL
+            >= datetime.now(timezone.utc) - LIVE_BATCH_WINDOW,
+        )
+        .correlate_except(AgentTaskBatchRunDB)
+    )
+
+
+def live_run() -> ColumnElement[bool]:
+    """A run still queued or running in a batch that can still be live."""
+    return and_(AGENT_TASK_RUN_STATUS_COL.in_(("pending", "running")), _in_live_batch())
+
+
 def in_since_window(cutoff: datetime) -> ColumnElement[bool]:
     """A run is inside a ``since`` window by when it started, or, if it never
-    started, by when it ended; a run still waiting to start always is.
+    started, by when it ended; a run still waiting to start in a live batch
+    always is.
 
     Shared by the Tasks view cohort and the run list so a drill-down from a
     since-scoped view shows the runs the view's stats were computed from. The
@@ -119,7 +148,7 @@ def in_since_window(cutoff: datetime) -> ColumnElement[bool]:
             AGENT_TASK_RUN_STARTED_AT_COL.is_(None),
             or_(
                 AGENT_TASK_RUN_COMPLETED_AT_COL >= cutoff,
-                AGENT_TASK_RUN_COMPLETED_AT_COL.is_(None),
+                and_(AGENT_TASK_RUN_COMPLETED_AT_COL.is_(None), _in_live_batch()),
             ),
         ),
     )
@@ -212,18 +241,16 @@ def runs_in_view(
             AGENT_TASK_RUN_DEFINITION_REVISION_COL,
             AGENT_TASK_RUN_FAILED_CHECKS_COL,
             AGENT_TASK_RUN_NO_VERDICT_REASON_COL,
+            live_run().label("live"),
         )
         .join(AgentTaskBatchRunDB, AGENT_TASK_RUN_BATCH_RUN_ID_COL == AGENT_TASK_BATCH_ID_COL)
         .where(*conditions)
-        # The first row per task is its latest run: a queued or running one
-        # first (the card reads "Running"), then the most recently started.
+        # The first row per task is its latest run: a live queued or running
+        # one first (the card reads "Running"), then the most recently started.
         # NULLs are placed explicitly because Postgres sorts them first under
         # DESC and SQLite last; ended-but-never-started rows go last.
         .order_by(
-            case(
-                (AGENT_TASK_RUN_STATUS_COL.in_(("pending", "running")), 0),
-                else_=1,
-            ),
+            case((live_run(), 0), else_=1),
             desc(AGENT_TASK_RUN_STARTED_AT_COL).nulls_last(),
             desc(AGENT_TASK_BATCH_CREATED_AT_COL),
         )
@@ -245,6 +272,7 @@ def runs_in_view(
         def_rev,
         failed_checks,
         no_verdict_reason,
+        live,
     ) in session.execute(stmt).all():
         runs.append(
             ViewRun(
@@ -262,6 +290,7 @@ def runs_in_view(
                 task_definition_revision_id=def_rev,
                 failed_checks=failed_checks,
                 no_verdict_reason=no_verdict_reason,
+                live=bool(live),
             )
         )
     return runs

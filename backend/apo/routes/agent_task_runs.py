@@ -878,6 +878,10 @@ def list_agent_task_runs(
         default=None,
         description="Keep runs whose id starts with this text (resolving a short id).",
     ),
+    started: bool | None = Query(
+        default=None,
+        description="true: only runs that started (the CLI's latest-run lookup)",
+    ),
     limit: int = Query(default=1000, ge=1, le=5000),
     session: Session = Depends(get_session),
 ):
@@ -986,6 +990,8 @@ def list_agent_task_runs(
     since_cutoff_value = since_cutoff(since)
     if since_cutoff_value is not None:
         query = query.where(in_since_window(since_cutoff_value))
+    if started:
+        query = query.where(col(AgentTaskRunDB.started_at).is_not(None))
 
     # Unstarted runs (queued, or ended before starting) first, then newest
     # started. NULLS FIRST is Postgres's own DESC order, so the started_at

@@ -74,6 +74,7 @@ class RunStatFields:
     # (issue #323) — told apart from an execution error on the Tasks page.
     judge_no_verdict: bool = False
     no_verdict_reason: str | None = None
+    live: bool = False
 
 
 def compute_run_stats(runs: Sequence[RunStatFields]) -> AgentTaskRunStats:
@@ -89,11 +90,15 @@ def compute_run_stats(runs: Sequence[RunStatFields]) -> AgentTaskRunStats:
         for r in runs
         if is_never_started_run(r.status, r.started_at, r.no_verdict_reason)
     )
-    runs = [
+    started = [
         r
         for r in runs
         if not is_never_started_run(r.status, r.started_at, r.no_verdict_reason)
     ]
+    # Queued and running runs have no verdict yet, so they stay out of the
+    # totals too; a live one still names the card's status ("Running").
+    live = next((r for r in started if r.live), None)
+    runs = [r for r in started if r.status not in ("pending", "running")]
     total = len(runs)
 
     completed = [r for r in runs if r.completed_at and r.started_at]
@@ -114,7 +119,7 @@ def compute_run_stats(runs: Sequence[RunStatFields]) -> AgentTaskRunStats:
     errored_checks = sum(r.errored_checks for r in runs)
 
     costs = [r.total_cost for r in runs if r.total_cost is not None]
-    latest = runs[0] if runs else None
+    latest = live or (runs[0] if runs else None)
 
     return AgentTaskRunStats(
         total_runs=total,
@@ -180,6 +185,7 @@ def load_run_stat_fields(
                 errored_checks=run.errored_checks,
                 judge_no_verdict=is_judge_no_verdict_run(run),
                 no_verdict_reason=run.no_verdict_reason,
+                live=run.live,
             )
         )
     return grouped

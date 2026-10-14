@@ -24,6 +24,7 @@ def _run(
     total_cost: float | None = None,
     checks: list[dict[str, object]] | None = None,
     no_verdict_reason: str | None = None,
+    live: bool = False,
 ) -> RunStatFields:
     # ``compute_run_stats`` operates on the minimal ``RunStatFields``
     # projection — it deliberately does not see the full DB row (no
@@ -43,6 +44,7 @@ def _run(
         total_checks=total,
         passed_checks=passed,
         no_verdict_reason=no_verdict_reason,
+        live=live,
     )
 
 
@@ -212,3 +214,28 @@ def test_error_without_started_at_but_with_judge_reason_still_counts() -> None:
     )
     assert stats.total_runs == 1
     assert stats.not_started_runs == 0
+
+
+def test_a_live_run_names_the_status_but_stays_out_of_the_totals() -> None:
+    # A running run has no verdict yet: the card reads Running, and the pass
+    # rate is over the finished runs only.
+    older = _NOW - timedelta(days=1)
+    runs = [
+        _run(id="running", status="running", started_at=_NOW, completed_at=None, live=True),
+        _run(id="done", status="passed", pass_result=True, started_at=older),
+    ]
+    stats = compute_run_stats(runs)
+    assert stats.last_run_status == "running"
+    assert stats.total_runs == 1
+    assert stats.pass_rate == 1.0
+
+
+def test_a_stuck_running_row_is_neither_counted_nor_the_status() -> None:
+    older = _NOW - timedelta(days=1)
+    runs = [
+        _run(id="stuck", status="running", started_at=_NOW, completed_at=None, live=False),
+        _run(id="done", status="failed", pass_result=False, started_at=older),
+    ]
+    stats = compute_run_stats(runs)
+    assert stats.last_run_status == "failed"
+    assert stats.total_runs == 1

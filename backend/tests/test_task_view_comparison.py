@@ -463,3 +463,39 @@ def test_a_side_whose_only_run_never_started_is_not_run(
     assert cell["a_run_id"] == "n-opus"
     assert cell["b_run_id"] is None
     assert cell["state"] == "not_run"
+
+
+def test_a_pending_row_stuck_in_an_ancient_batch_is_not_frozen(
+    cmp_client: TestClient, session: Session
+) -> None:
+    """A pending row in a batch older than the queue TTL will never finish;
+    the side resolves to the run that did."""
+    task = "evals/cmp-stuck-pending"
+    now = datetime.now(timezone.utc)
+    session.add(
+        AgentTaskBatchRunDB(
+            id="b-ancient", project=_PROJECT, created_at=now - timedelta(days=30),
+            status="running", total_tasks=1, task_root="/t", environment="default",
+            selection_type="task",
+        )
+    )
+    session.flush()
+    session.add_all(
+        [
+            AgentTaskRunDB(
+                id="stuck-deep", batch_run_id="b-ancient", task_id=task, task_path=f"/t/{task}",
+                status="pending", configured_model="deepseek", started_at=None,
+            ),
+            AgentTaskRunDB(
+                id="done-deep", batch_run_id="b-deep", task_id=task, task_path=f"/t/{task}",
+                status="passed", pass_result=True, configured_model="deepseek",
+                task_definition_revision_id="d1", started_at=now - timedelta(hours=3),
+                completed_at=now - timedelta(hours=3), total_checks=1, passed_checks=1,
+                failed_checks=0,
+            ),
+        ]
+    )
+    session.commit()
+
+    cell = cast(list[dict[str, object]], _create(cmp_client, [task])["resolved"])[0]
+    assert cell["b_run_id"] == "done-deep"
