@@ -64,7 +64,7 @@ from ..services.agent_task_projection import (
     to_task_run_summary,
 )
 from ..services.trace_backend import model_drift_summary, parse_model_providers
-from ..services.view_runs import in_since_window, since_cutoff
+from ..services.view_runs import in_since_window, live_run, since_cutoff
 from ..services.demo_workspace import require_project_not_demo
 from ..services.agent_task_runner import finalize_external_task_run
 from ..services.project_memberships import (
@@ -878,9 +878,12 @@ def list_agent_task_runs(
         default=None,
         description="Keep runs whose id starts with this text (resolving a short id).",
     ),
-    started: bool | None = Query(
+    exclude_not_started: bool | None = Query(
         default=None,
-        description="true: only runs that started (the CLI's latest-run lookup)",
+        description=(
+            "true: leave out runs that ended without starting (the CLI's "
+            "latest-run lookup); live queued runs stay"
+        ),
     ),
     limit: int = Query(default=1000, ge=1, le=5000),
     session: Session = Depends(get_session),
@@ -990,8 +993,10 @@ def list_agent_task_runs(
     since_cutoff_value = since_cutoff(since)
     if since_cutoff_value is not None:
         query = query.where(in_since_window(since_cutoff_value))
-    if started:
-        query = query.where(col(AgentTaskRunDB.started_at).is_not(None))
+    if exclude_not_started:
+        query = query.where(
+            or_(col(AgentTaskRunDB.started_at).is_not(None), live_run())
+        )
 
     # Unstarted runs (queued, or ended before starting) first, then newest
     # started. NULLS FIRST is Postgres's own DESC order, so the started_at

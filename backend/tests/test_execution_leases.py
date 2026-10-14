@@ -852,3 +852,49 @@ def _seed_second_batch_attempt(session: Session) -> None:
         )
     )
     session.commit()
+
+
+# -- liveness read from the attempt (view_runs.live_run) ----------------------
+
+
+def _live_flag(session: Session) -> bool:
+    from apo.models.schemas import TaskViewConfig
+    from apo.services.view_runs import runs_in_view
+
+    (run,) = runs_in_view(session, "proj-x", ["t0"], TaskViewConfig())
+    return run.live
+
+
+def test_a_heartbeating_run_in_a_30h_old_batch_is_live(session: Session) -> None:
+    atts = _seed(session, sequence_indices=[0])
+    batch = session.get(AgentTaskBatchRunDB, atts[0].batch_run_id)
+    task_run = session.get(AgentTaskRunDB, atts[0].task_run_id)
+    assert batch is not None and task_run is not None
+    batch.created_at = _now() - timedelta(hours=30)
+    task_run.status = "running"
+    task_run.started_at = _now() - timedelta(hours=1)
+    atts[0].status = "running"
+    atts[0].lease_expires_at = _now() + timedelta(seconds=60)
+    session.add_all([batch, task_run, atts[0]])
+    session.commit()
+    assert _live_flag(session) is True
+
+
+def test_a_queued_run_within_a_3_day_queue_ttl_is_live(session: Session) -> None:
+    atts = _seed(session, sequence_indices=[0])
+    batch = session.get(AgentTaskBatchRunDB, atts[0].batch_run_id)
+    assert batch is not None
+    batch.created_at = _now() - timedelta(days=2)
+    atts[0].queue_expires_at = _now() + timedelta(days=1)
+    session.add_all([batch, atts[0]])
+    session.commit()
+    assert _live_flag(session) is True
+
+
+def test_a_queued_run_past_its_queue_ttl_is_not_live(session: Session) -> None:
+    # Not yet reaped, but its attempt can no longer be claimed.
+    atts = _seed(session, sequence_indices=[0])
+    atts[0].queue_expires_at = _now() - timedelta(minutes=1)
+    session.add(atts[0])
+    session.commit()
+    assert _live_flag(session) is False

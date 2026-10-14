@@ -499,3 +499,77 @@ def test_a_pending_row_stuck_in_an_ancient_batch_is_not_frozen(
 
     cell = cast(list[dict[str, object]], _create(cmp_client, [task])["resolved"])[0]
     assert cell["b_run_id"] == "done-deep"
+
+
+def _seed_queued_side(session: Session, task: str) -> None:
+    now = datetime.now(timezone.utc)
+    session.add(
+        AgentTaskBatchRunDB(
+            id=f"b-live-{task[-4:]}", project=_PROJECT, created_at=now, status="running",
+            total_tasks=1, task_root="/t", environment="default", selection_type="task",
+        )
+    )
+    session.flush()
+    session.add(
+        AgentTaskRunDB(
+            id=f"queued-{task[-4:]}", batch_run_id=f"b-live-{task[-4:]}", task_id=task,
+            task_path=f"/t/{task}", status="pending", configured_model="deepseek",
+            task_definition_revision_id="d1", started_at=None,
+        )
+    )
+
+
+def test_a_queued_run_does_not_displace_a_finished_one(
+    cmp_client: TestClient, session: Session
+) -> None:
+    task = "evals/cmp-queued-next-to-passed"
+    now = datetime.now(timezone.utc)
+    _seed_queued_side(session, task)
+    session.add_all(
+        [
+            AgentTaskRunDB(
+                id="qp-opus", batch_run_id="b-opus", task_id=task, task_path=f"/t/{task}",
+                status="passed", pass_result=True, configured_model="claude-opus",
+                task_definition_revision_id="d1", started_at=now, completed_at=now,
+                total_checks=1, passed_checks=1, failed_checks=0,
+            ),
+            AgentTaskRunDB(
+                id="qp-deep", batch_run_id="b-deep", task_id=task, task_path=f"/t/{task}",
+                status="passed", pass_result=True, configured_model="deepseek",
+                task_definition_revision_id="d1", started_at=now - timedelta(hours=1),
+                completed_at=now - timedelta(hours=1), total_checks=1, passed_checks=1,
+                failed_checks=0,
+            ),
+        ]
+    )
+    session.commit()
+
+    cell = cast(list[dict[str, object]], _create(cmp_client, [task])["resolved"])[0]
+    assert cell["b_run_id"] == "qp-deep"
+    assert cell["state"] == "aligned"
+
+
+def test_a_side_with_only_a_queued_run_is_frozen_but_not_run(
+    cmp_client: TestClient, session: Session
+) -> None:
+    """The queued run is frozen so the overview can show its verdict once it
+    lands, but the snapshot does not call the pair aligned: if the run then
+    expires, nothing was ever compared."""
+    task = "evals/cmp-queued-only"
+    now = datetime.now(timezone.utc)
+    _seed_queued_side(session, task)
+    session.add(
+        AgentTaskRunDB(
+            id="qo-opus", batch_run_id="b-opus", task_id=task, task_path=f"/t/{task}",
+            status="passed", pass_result=True, configured_model="claude-opus",
+            task_definition_revision_id="d1", started_at=now, completed_at=now,
+            total_checks=1, passed_checks=1, failed_checks=0,
+        )
+    )
+    session.commit()
+
+    snap = _create(cmp_client, [task])
+    cell = cast(list[dict[str, object]], snap["resolved"])[0]
+    assert cell["b_run_id"] == f"queued-{task[-4:]}"
+    assert cell["state"] == "not_run"
+    assert snap["coverage"] == {"both_run": 0, "aligned": 0, "scope": 1}

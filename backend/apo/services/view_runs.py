@@ -30,7 +30,11 @@ from sqlalchemy import and_, case, desc, exists, or_, select as sa_select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
-from .executor_auth import ATTEMPT_LEASE_SECONDS, DEFAULT_QUEUE_TTL_SECONDS
+from .executor_auth import (
+    ATTEMPT_LEASE_SECONDS,
+    DEFAULT_QUEUE_TTL_SECONDS,
+    REAPER_INTERVAL_SECONDS,
+)
 from ..models.columns import (
     AGENT_TASK_BATCH_CREATED_AT_COL,
     AGENT_TASK_BATCH_ID_COL,
@@ -54,7 +58,8 @@ from ..models.columns import (
     AGENT_TASK_RUN_TOTAL_COST_COL,
     AGENT_TASK_RUN_TRACE_RUN_ID_COL,
 )
-from ..models.db import AgentTaskBatchRunDB
+from ..db_helpers import as_column
+from ..models.db import AgentTaskBatchRunDB, TaskExecutionAttemptDB
 from ..models.schemas import TaskViewConfig
 
 
@@ -108,35 +113,62 @@ def since_cutoff(since: str | None) -> datetime | None:
     return None
 
 
-# A queued run is reaped once its queue TTL passes and a running one once its
-# lease lapses, so a pending/running row in an older batch is a stuck leftover
-# (e.g. a legacy external-path run nobody finalized), not live work.
+# Runs without an attempt row (the legacy external path) have no queue TTL or
+# lease to read, so their batch's age stands in: past the default TTL plus a
+# lease, a pending/running row there is a stuck leftover, not live work.
 LIVE_BATCH_WINDOW = timedelta(seconds=DEFAULT_QUEUE_TTL_SECONDS + ATTEMPT_LEASE_SECONDS)
 
-
-def _in_live_batch() -> ColumnElement[bool]:
-    # Its own batch scan, correlated on the run only, so it holds whether or
-    # not the outer query joins the batch table.
-    return (
-        exists()
-        .where(
-            AGENT_TASK_BATCH_ID_COL == AGENT_TASK_RUN_BATCH_RUN_ID_COL,
-            AGENT_TASK_BATCH_CREATED_AT_COL
-            >= datetime.now(timezone.utc) - LIVE_BATCH_WINDOW,
-        )
-        .correlate_except(AgentTaskBatchRunDB)
-    )
+_ATTEMPT_RUN_ID = as_column(TaskExecutionAttemptDB.task_run_id)
+_ATTEMPT_STATUS = as_column(TaskExecutionAttemptDB.status)
+_ATTEMPT_QUEUE_EXPIRES = as_column(TaskExecutionAttemptDB.queue_expires_at)
+_ATTEMPT_LEASE_EXPIRES = as_column(TaskExecutionAttemptDB.lease_expires_at)
 
 
 def live_run() -> ColumnElement[bool]:
-    """A run still queued or running in a batch that can still be live."""
-    return and_(AGENT_TASK_RUN_STATUS_COL.in_(("pending", "running")), _in_live_batch())
+    """A run still queued or running that can still produce a result.
+
+    Read from its attempt: queued before its queue TTL, or leased/running
+    within its lease (plus one reaper sweep). The subqueries correlate on the
+    run only, so this holds whether or not the outer query joins the batch.
+    """
+    now = datetime.now(timezone.utc)
+    live_attempt = (
+        exists()
+        .where(
+            _ATTEMPT_RUN_ID == AGENT_TASK_RUN_ID_COL,
+            or_(
+                and_(_ATTEMPT_STATUS == "queued", _ATTEMPT_QUEUE_EXPIRES > now),
+                and_(
+                    _ATTEMPT_STATUS.in_(("leased", "running")),
+                    _ATTEMPT_LEASE_EXPIRES
+                    > now - timedelta(seconds=REAPER_INTERVAL_SECONDS),
+                ),
+            ),
+        )
+        .correlate_except(TaskExecutionAttemptDB)
+    )
+    any_attempt = (
+        exists()
+        .where(_ATTEMPT_RUN_ID == AGENT_TASK_RUN_ID_COL)
+        .correlate_except(TaskExecutionAttemptDB)
+    )
+    young_batch = (
+        exists()
+        .where(
+            AGENT_TASK_BATCH_ID_COL == AGENT_TASK_RUN_BATCH_RUN_ID_COL,
+            AGENT_TASK_BATCH_CREATED_AT_COL >= now - LIVE_BATCH_WINDOW,
+        )
+        .correlate_except(AgentTaskBatchRunDB)
+    )
+    return and_(
+        AGENT_TASK_RUN_STATUS_COL.in_(("pending", "running")),
+        or_(live_attempt, and_(~any_attempt, young_batch)),
+    )
 
 
 def in_since_window(cutoff: datetime) -> ColumnElement[bool]:
     """A run is inside a ``since`` window by when it started, or, if it never
-    started, by when it ended; a run still waiting to start in a live batch
-    always is.
+    started, by when it ended; a live run waiting to start always is.
 
     Shared by the Tasks view cohort and the run list so a drill-down from a
     since-scoped view shows the runs the view's stats were computed from. The
@@ -148,7 +180,7 @@ def in_since_window(cutoff: datetime) -> ColumnElement[bool]:
             AGENT_TASK_RUN_STARTED_AT_COL.is_(None),
             or_(
                 AGENT_TASK_RUN_COMPLETED_AT_COL >= cutoff,
-                and_(AGENT_TASK_RUN_COMPLETED_AT_COL.is_(None), _in_live_batch()),
+                and_(AGENT_TASK_RUN_COMPLETED_AT_COL.is_(None), live_run()),
             ),
         ),
     )
@@ -225,6 +257,7 @@ def runs_in_view(
     if cutoff is not None:
         conditions.append(in_since_window(cutoff))
 
+    live_label = live_run().label("live")
     stmt = (
         sa_select(
             AGENT_TASK_RUN_ID_COL,
@@ -241,7 +274,7 @@ def runs_in_view(
             AGENT_TASK_RUN_DEFINITION_REVISION_COL,
             AGENT_TASK_RUN_FAILED_CHECKS_COL,
             AGENT_TASK_RUN_NO_VERDICT_REASON_COL,
-            live_run().label("live"),
+            live_label,
         )
         .join(AgentTaskBatchRunDB, AGENT_TASK_RUN_BATCH_RUN_ID_COL == AGENT_TASK_BATCH_ID_COL)
         .where(*conditions)
@@ -250,7 +283,7 @@ def runs_in_view(
         # NULLs are placed explicitly because Postgres sorts them first under
         # DESC and SQLite last; ended-but-never-started rows go last.
         .order_by(
-            case((live_run(), 0), else_=1),
+            desc(live_label),
             desc(AGENT_TASK_RUN_STARTED_AT_COL).nulls_last(),
             desc(AGENT_TASK_BATCH_CREATED_AT_COL),
         )

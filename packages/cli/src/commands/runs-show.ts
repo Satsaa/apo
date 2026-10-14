@@ -181,8 +181,9 @@ export async function run(argv: string[]): Promise<number> {
   if (exitStatus) {
     // 0 pass / 1 fail / 2 no verdict — an `error` run has none, whether the
     // judge gave none (issue #323) or the execution failed; like `task run`.
+    // A queued or running run has none yet.
     if (runDetail.pass_result === true) return 0;
-    return runDetail.status === "error" ? 2 : 1;
+    return ["error", "pending", "running"].includes(runDetail.status) ? 2 : 1;
   }
   return 0;
 }

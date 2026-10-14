@@ -433,10 +433,12 @@ def test_task_run_list_orders_unstarted_runs_first_and_windows_them(
     ids = [r["id"] for r in client.get(base, params={"project": "proj-unstarted", "since": "7d"}).json()]
     assert set(ids[:2]) == {"r-queued", "r-expired"}
     assert ids[2:] == ["r-newer", "r-older"]
-    # The CLI's latest-run lookup asks for started runs only, so an expired run
-    # above today's runs is never "the latest run".
-    started = client.get(base, params={"project": "proj-unstarted", "started": "true", "limit": "1"}).json()
-    assert [r["id"] for r in started] == ["r-newer"]
+    # The CLI's latest-run lookup leaves out runs that ended without starting,
+    # so an expired run is not "the latest run"; a live queued one still is.
+    lookup = {"project": "proj-unstarted", "exclude_not_started": "true"}
+    ids = [r["id"] for r in client.get(base, params=lookup).json()]
+    assert ids[0] == "r-queued"
+    assert "r-expired" not in ids and "r-expired-old" not in ids
 
 
 def test_batch_run_list_filter_matches_only_when_one_child_satisfies_all_dimensions(

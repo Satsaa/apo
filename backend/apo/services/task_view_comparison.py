@@ -36,6 +36,7 @@ from .view_runs import ViewRun, runs_in_view
 # Status that means "the run did not complete" (no usable verdict). Mirrors
 # ``compute_run_stats``, which counts "error" separately from "failed".
 _ERRORED = "error"
+_ACTIVE = ("pending", "running")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,16 +93,15 @@ def _resolve_side(
 
     latest_by_task: dict[str, ViewRun] = {}
     for task_id, runs in runs_by_task.items():
-        # A live queued or running run may be frozen: the overview reads its
-        # verdict once it lands. A stuck one in an old batch never will.
-        completed = [
-            r
-            for r in runs
-            if r.status != _ERRORED and (r.live or r.status not in ("pending", "running"))
-        ]
+        # Outcomes first. A live queued/running run is frozen only when the
+        # side has nothing else (the overview reads its verdict once it
+        # lands); it counts as not run. A stuck one never finishes: skipped.
+        done = [r for r in runs if r.status not in (_ERRORED, *_ACTIVE)]
         errored = [r for r in runs if r.status == _ERRORED]
-        if completed or errored:
-            latest_by_task[task_id] = (completed or errored)[0]
+        live = [r for r in runs if r.live]
+        pick = done or errored or live
+        if pick:
+            latest_by_task[task_id] = pick[0]
 
     return {
         task_id: _ResolvedRun(
@@ -136,7 +136,7 @@ def _comparison_state(
     the task tree would flip it, making two runs from different days almost
     never ``aligned`` even when the specific task's definition is byte-identical.
     """
-    if a is None or b is None:
+    if a is None or b is None or a.status in _ACTIVE or b.status in _ACTIVE:
         return "not_run"
     if a.task_definition_revision_id != b.task_definition_revision_id:
         return "different_definition"
@@ -176,7 +176,7 @@ def create_comparison(
         a = side_a.get(task_id)
         b = side_b.get(task_id)
         state = _comparison_state(a, b)
-        if a is not None and b is not None:
+        if state != "not_run":
             both_run += 1
         if state == "aligned":
             aligned_count += 1

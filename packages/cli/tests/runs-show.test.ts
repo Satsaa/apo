@@ -358,7 +358,7 @@ describe("runs show command", () => {
 
     expect(code).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("started=true");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("exclude_not_started=true");
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       `http://backend.test/v1/agent-task-runs/${FULL_ID}`,
     );
@@ -366,15 +366,15 @@ describe("runs show command", () => {
     expect(out).toContain("(latest run)");
   });
 
-  it("skips runs that never started when the backend ignores started=true", async () => {
+  it("skips runs that never started when the backend ignores exclude_not_started", async () => {
     // An older backend lists unstarted runs (queued, or expired in the queue)
     // first; the latest run is the first one that started.
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock
       .mockResolvedValueOnce(
         mockResponse([
-          { id: "run_000000000000000000000001", started_at: null },
-          { id: FULL_ID, started_at: "2026-10-14T08:00:00Z" },
+          { id: "run_000000000000000000000001", started_at: null, status: "error" },
+          { id: FULL_ID, started_at: "2026-10-14T08:00:00Z", status: "passed" },
         ]),
       )
       .mockResolvedValueOnce(mockResponse(makeRun()));
@@ -1026,5 +1026,33 @@ describe("runs show serving host + throughput (issue #307)", () => {
     const out = stripAnsi(logs.join("\n"));
     expect(out).not.toContain("Hosts:");
     expect(out).not.toContain("Speed:");
+  });
+});
+
+describe("runs show --exit-status on a queued latest run", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reports no verdict (2), not the previous run's PASS", async () => {
+    const queued = "run_00000000000000000000000q";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockResolvedValueOnce(
+        mockResponse([
+          { id: queued, started_at: null, status: "pending" },
+          { id: FULL_ID, started_at: "2026-10-14T08:00:00Z", status: "passed" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        mockResponse(makeRun({ id: queued, status: "pending", pass_result: null, started_at: null })),
+      );
+
+    const { restore } = captureLog();
+    const code = await run(["--exit-status", "--backend", "http://backend.test"]);
+    restore();
+
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`http://backend.test/v1/agent-task-runs/${queued}`);
+    expect(code).toBe(2);
   });
 });
