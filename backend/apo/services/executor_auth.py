@@ -185,6 +185,9 @@ def exchange_enrollment_token(
             "runtimes": dict(capabilities.runtimes),
         },
         max_concurrency=capabilities.max_concurrency,
+        # Claims match target_user_id against this, so it must come from the
+        # token being redeemed: every member's token shares one Pool.
+        enrolled_by_user_id=row.created_by_user_id or None,
         enrolled_at=now,
         created_at=now,
         updated_at=now,

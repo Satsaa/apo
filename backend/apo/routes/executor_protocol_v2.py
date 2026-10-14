@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
-from sqlmodel import Session, col, select
+from sqlmodel import Session
 
 from ..db import get_session
 from ..models.schemas import AgentTaskRunConfiguration
@@ -29,7 +29,6 @@ from ..models.db import (
     AgentTaskBatchRunDB,
     AgentTaskRunDB,
     ExecutorDB,
-    ExecutorEnrollmentTokenDB,
     TaskExecutionAttemptDB,
     TaskRevisionDB,
 )
@@ -189,18 +188,6 @@ async def enroll_v2(
             status.HTTP_410_GONE if exc.kind in ("token_expired", "token_used") else status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"kind": exc.kind, "message": str(exc)},
         )
-
-    # copy the bootstrap token's created_by_user_id to enrolled_by_user_id
-    token_row = session.exec(
-        select(ExecutorEnrollmentTokenDB).where(
-            col(ExecutorEnrollmentTokenDB.executor_pool_id) == executor.executor_pool_id,
-            col(ExecutorEnrollmentTokenDB.used_at).is_not(None),
-        )
-    ).first()
-    if token_row is not None and token_row.created_by_user_id:
-        executor.enrolled_by_user_id = token_row.created_by_user_id
-        session.add(executor)
-        session.commit()
 
     return EnrollV2Response(
         executor_id=executor.id,
