@@ -184,7 +184,8 @@ class TestDispatchCreatesOneOccurrence:
         # The Batch is source-owned, queued, owner-routed, with a 24h deadline.
         batch = session.get(AgentTaskBatchRunDB, occs[0].batch_run_id)
         assert batch.execution_target_json == {"kind": "source_owned"}
-        assert batch.requested_by_user_id == owner.id
+        # Owner-routed, but nobody asked for a cron Occurrence.
+        assert batch.requested_by_user_id is None
         attempts = session.exec(
             select(TaskExecutionAttemptDB).where(TaskExecutionAttemptDB.batch_run_id == batch.id)
         ).all()

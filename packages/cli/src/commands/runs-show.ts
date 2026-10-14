@@ -7,6 +7,7 @@ import {
   formatJson,
   formatTime,
   formatTrigger,
+  type TriggerParts,
   terminalSafeDeep,
   yellow,
 } from "../lib/format.ts";
@@ -51,12 +52,7 @@ type RunDetail = {
   failed_checks: number;
   errored_checks?: number;
   no_verdict_reason?: "judge" | "generations" | "executor" | null;
-  trigger: {
-    source: string | null;
-    actor: string | null;
-    hostname: string | null;
-    entrypoint: string | null;
-  } | null;
+  trigger: TriggerParts | null;
   /** The authenticated User who asked for the parent Batch. */
   requested_by_label?: string | null;
   checks_json: CheckResult[] | null;

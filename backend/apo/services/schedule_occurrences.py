@@ -64,6 +64,7 @@ def deliver_due_occurrence(
     schedule: AgentTaskScheduleDB,
     now: datetime,
     kind: str = "scheduled",
+    requested_by_user_id: str | None = None,
 ) -> OccurrenceDeliveryResult:
     """Deliver one due Occurrence for a source-owned Schedule.
 
@@ -72,6 +73,9 @@ def deliver_due_occurrence(
     Schedule; later due times while one is active are missed. Resolves the
     current Task Catalog selection each time and pauses the Schedule on an
     invalid/empty selection. Does NOT commit — the caller owns the transaction.
+
+    ``requested_by_user_id`` is the admin who pressed Run Now; a cron
+    Occurrence has none. The Execution Owner is the target either way.
     """
     scheduled_for = schedule.next_run_at or now
 
@@ -115,6 +119,7 @@ def deliver_due_occurrence(
         session,
         project_id=schedule.project,
         user_id=_require_owner(schedule),
+        requested_by_user_id=requested_by_user_id,
         task_ids=task_ids,
         environment=schedule.environment,
         run_metadata=_schedule_run_metadata(schedule, now=now),

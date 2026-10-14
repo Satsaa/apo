@@ -429,6 +429,7 @@ def create_source_owned_batch_run(
     *,
     project_id: str,
     user_id: str,
+    requested_by_user_id: str | None,
     task_ids: list[str],
     environment: str = "default",
     run_metadata: dict[str, object] | None = None,
@@ -449,6 +450,11 @@ def create_source_owned_batch_run(
     deadline: an explicit ``queue_deadline`` (used by the scheduler so all
     Attempts in one Occurrence share ``occurrence + 24h``), else
     ``created_at + 24 hours``.
+
+    ``user_id`` is the routing target (whose Connected Executors run it);
+    ``requested_by_user_id`` is who asked for it, null for an unattended
+    scheduled Occurrence. They differ on a Schedule: the owner runs it, the
+    cron or another admin's Run Now asks for it.
 
     ``commit=False`` lets the scheduler compose Occurrence + Batch + cadence
     advancement in one transaction without performing irreversible external
@@ -478,7 +484,7 @@ def create_source_owned_batch_run(
         task_root=None,
         grep=None,
         environment=environment,
-        requested_by_user_id=user_id,
+        requested_by_user_id=requested_by_user_id,
         run_metadata=run_metadata or {},
         status="queued",
         execution_target_json={"kind": "source_owned"},

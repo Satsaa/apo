@@ -119,6 +119,31 @@ describe("runs show command", () => {
     expect(out).not.toContain("1970");
   });
 
+  it("appends the CI repository, PR and short commit to the Source line", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse(makeRun({
+        trigger: {
+          source: "ci",
+          actor: null,
+          hostname: null,
+          entrypoint: "github-actions",
+          repository: "acme/service",
+          pr_number: "42",
+          commit_sha: "71cc0e9abcdef",
+        },
+      })),
+    );
+    const { logs, restore } = captureLog();
+
+    const code = await run([FULL_ID, "--backend", "http://backend.test"]);
+    restore();
+
+    expect(code).toBe(0);
+    expect(stripAnsi(logs.join("\n"))).toContain(
+      "Source:   ci · github-actions · acme/service#42 @ 71cc0e9",
+    );
+  });
+
   it("strips terminal escapes from server strings and labels the actor", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       mockResponse(makeRun({

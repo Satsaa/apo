@@ -118,7 +118,8 @@ def test_run_due_schedules_once_creates_occurrence_and_source_owned_batch(bound_
 
         batch = session.get(AgentTaskBatchRunDB, occs[0].batch_run_id)
         assert batch.execution_target_json == {"kind": "source_owned"}  # pyright: ignore[reportOptionalMemberAccess]
-        assert batch.requested_by_user_id == owner_id  # pyright: ignore[reportOptionalMemberAccess]
+        # The owner is the target; nobody asked for a cron Occurrence.
+        assert batch.requested_by_user_id is None  # pyright: ignore[reportOptionalMemberAccess]
         runs = list(
             session.exec(
                 select(AgentTaskRunDB).where(AgentTaskRunDB.batch_run_id == batch.id)  # pyright: ignore[reportOptionalMemberAccess]
@@ -295,6 +296,46 @@ def test_trigger_route_creates_manual_occurrence(bound_engine):
     body2 = second.json()
     assert body2["created"] is False
     assert body2["batch_run_id"] == body1["batch_run_id"]
+
+
+def test_run_now_records_the_presser_and_still_targets_the_owner(bound_engine):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from apo.api import app
+    from apo.db import get_session
+    from apo.models.db import AgentTaskBatchRunDB
+
+    engine, _ = bound_engine
+    owner_id = _seed_project_member(engine, email="owner@test.com")
+    presser_id = _seed_project_member(engine, email="presser@test.com")
+    _seed_catalog(engine)
+    schedule_id = _create_source_owned_schedule_row(engine, owner_id)
+
+    class Inject(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request.state.user_id = presser_id
+            request.state.auth_method = "cookie"
+            request.state.is_admin = False
+            return await call_next(request)
+
+    test_app = FastAPI()
+    test_app.include_router(app.router)
+    test_app.add_middleware(Inject)
+    test_app.dependency_overrides[get_session] = lambda: Session(engine)
+    client = TestClient(test_app)
+
+    resp = client.post(f"/v1/agent-task-schedules/{schedule_id}/trigger")
+
+    assert resp.status_code == 200, resp.text
+    batch_id = resp.json()["batch_run_id"]
+    with Session(engine) as session:
+        batch = session.get(AgentTaskBatchRunDB, batch_id)
+        assert batch is not None and batch.requested_by_user_id == presser_id
+        attempts = session.exec(
+            select(TaskExecutionAttemptDB).where(TaskExecutionAttemptDB.batch_run_id == batch_id)
+        ).all()
+        assert attempts and all(a.target_user_id == owner_id for a in attempts)
 
 
 def test_occurrences_history_is_membership_scoped(bound_engine):

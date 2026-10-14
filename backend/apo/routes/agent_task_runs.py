@@ -375,6 +375,7 @@ async def create_agent_task_batch_run(
             session,
             project_id=body.project,
             user_id=str(acting_user_id),
+            requested_by_user_id=str(acting_user_id),
             task_ids=body.task_ids,
             environment=body.environment,
             run_metadata=body.run_metadata,

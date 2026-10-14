@@ -8,6 +8,7 @@ import {
   formatJson,
   formatTime,
   formatTrigger,
+  type TriggerParts,
   terminalSafeDeep,
 } from "../lib/format.ts";
 import { apiGet } from "../lib/api.ts";
@@ -46,12 +47,7 @@ type BatchDetail = {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
-  trigger: {
-    source: string | null;
-    actor: string | null;
-    hostname: string | null;
-    entrypoint: string | null;
-  } | null;
+  trigger: TriggerParts | null;
   /** The authenticated User who asked for the Batch; null on older rows. */
   requested_by_label?: string | null;
   task_runs: TaskRunSummary[];

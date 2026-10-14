@@ -729,7 +729,11 @@ async def trigger_schedule(
     # the active Batch) without shifting the cadence. Legacy bundled keeps
     # the pooled create-and-trigger path.
     if schedule.execution_kind == "source_owned":
-        return _trigger_source_owned_schedule(session, schedule=schedule)
+        return _trigger_source_owned_schedule(
+            session,
+            schedule=schedule,
+            requested_by_user_id=requesting_user_id(http_request, session),
+        )
 
     now = datetime.now(timezone.utc)
 
@@ -809,7 +813,10 @@ async def trigger_schedule(
 
 
 def _trigger_source_owned_schedule(
-    session: Session, *, schedule: AgentTaskScheduleDB
+    session: Session,
+    *,
+    schedule: AgentTaskScheduleDB,
+    requested_by_user_id: str | None,
 ) -> TriggerScheduleResponse:
     """Run Now: return active work or create one manual Occurrence.
 
@@ -852,7 +859,13 @@ def _trigger_source_owned_schedule(
     schedule.next_run_at = now
     session.add(schedule)
     session.flush()
-    result = deliver_due_occurrence(session, schedule=schedule, now=now, kind="manual")
+    result = deliver_due_occurrence(
+        session,
+        schedule=schedule,
+        now=now,
+        kind="manual",
+        requested_by_user_id=requested_by_user_id,
+    )
     # Run Now must not shift the normal cadence: restore next_run_at.
     schedule.next_run_at = _cadence_next_run(schedule, from_time=now)
     schedule.last_triggered_at = now
