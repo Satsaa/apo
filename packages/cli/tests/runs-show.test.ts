@@ -1034,7 +1034,7 @@ describe("runs show --exit-status on a queued latest run", () => {
     vi.restoreAllMocks();
   });
 
-  it("reports no verdict (2), not the previous run's PASS", async () => {
+  it("reports a run still in progress (1, as documented), not the previous run's PASS", async () => {
     const queued = "run_00000000000000000000000q";
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock
@@ -1053,6 +1053,6 @@ describe("runs show --exit-status on a queued latest run", () => {
     restore();
 
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`http://backend.test/v1/agent-task-runs/${queued}`);
-    expect(code).toBe(2);
+    expect(code).toBe(1);
   });
 });
