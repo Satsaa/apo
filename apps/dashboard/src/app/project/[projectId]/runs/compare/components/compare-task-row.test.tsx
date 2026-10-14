@@ -604,3 +604,87 @@ describe("CompareTaskRow check source for generated-title checks (issue #178)", 
     expect(marker?.right).toBe(true);
   });
 });
+
+// ─── reopening from memory ──────────────────────────────────────────────────
+
+import { getAgentTaskRun } from "@/lib/agent-task-api";
+
+describe("CompareTaskRow reopened rows and checks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    viewerProps = {};
+  });
+
+  const renderRow = (props: { open: boolean; task?: ComparisonTask; evidenceLoader?: ReturnType<typeof vi.fn> }) => (
+    <CompareTaskRow
+      task={props.task ?? makeTask()}
+      expanded={new Set(props.open ? [(props.task ?? makeTask()).taskId] : [])}
+      onToggleExpand={noopToggle}
+      projectId="proj"
+      evidenceLoader={props.evidenceLoader}
+    />
+  );
+
+  it("renders a reopened row's checks at once, without loading the evidence again", async () => {
+    const evidenceLoader = vi.fn().mockResolvedValue({
+      left: { id: "run-a", checks_json: [{ id: "C-1", pass: true }] },
+      right: { id: "run-b", checks_json: [{ id: "C-1", pass: false }] },
+    });
+    const { rerender } = render(renderRow({ open: true, evidenceLoader }));
+    await screen.findByText("C-1");
+
+    rerender(renderRow({ open: false, evidenceLoader }));
+    expect(screen.queryByText("C-1")).not.toBeInTheDocument();
+    rerender(renderRow({ open: true, evidenceLoader }));
+
+    expect(screen.queryByText("Loading checks…")).not.toBeInTheDocument();
+    expect(screen.getByText("C-1")).toBeInTheDocument();
+    expect(evidenceLoader).toHaveBeenCalledOnce();
+  });
+
+  it("reuses finished run details on reopen without an evidence loader", async () => {
+    vi.mocked(getAgentTaskRun).mockImplementation(async (id: string) => ({
+      id,
+      status: "passed",
+      checks_json: [{ id: "C-2", pass: true }],
+    }) as unknown as AgentTaskRunDetail);
+    const task = makeTask({
+      taskId: "task-runs",
+      left: { run: { id: "run-reopen-a", status: "passed", total_checks: 1, passed_checks: 1, failed_checks: 0 } as unknown as ComparisonTask["left"]["run"] },
+      right: { run: { id: "run-reopen-b", status: "passed", total_checks: 1, passed_checks: 1, failed_checks: 0 } as unknown as ComparisonTask["right"]["run"] },
+    });
+    const { rerender } = render(renderRow({ open: true, task }));
+    await screen.findByText("C-2");
+
+    rerender(renderRow({ open: false, task }));
+    rerender(renderRow({ open: true, task }));
+
+    expect(screen.queryByText("Loading checks…")).not.toBeInTheDocument();
+    expect(screen.getByText("C-2")).toBeInTheDocument();
+    expect(getAgentTaskRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders a reopened check's source at once, without loading it again", async () => {
+    vi.mocked(loadCheckSource).mockResolvedValue({ content: tableDrivenFile, language: "typescript" });
+    const evidenceLoader = vi.fn().mockResolvedValue({
+      left: {
+        id: "run-a",
+        task_definition: { files: [{ path: "reopen.eval.ts" }] },
+        checks_json: [{ id: "literal-title-check", pass: true }],
+      },
+      right: { id: "run-b", checks_json: [{ id: "literal-title-check", pass: false }] },
+    });
+    render(renderRow({ open: true, evidenceLoader }));
+
+    fireEvent.click(await screen.findByLabelText("Expand"));
+    await waitFor(() => expect(viewerProps.code).toContain("literal-title-check"));
+
+    fireEvent.click(screen.getByLabelText("Collapse"));
+    viewerProps = {};
+    fireEvent.click(screen.getByLabelText("Expand"));
+
+    expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
+    await waitFor(() => expect(viewerProps.code).toContain("literal-title-check"));
+    expect(loadCheckSource).toHaveBeenCalledOnce();
+  });
+});

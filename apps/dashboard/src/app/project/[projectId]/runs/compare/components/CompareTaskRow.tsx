@@ -6,15 +6,21 @@ import dynamic from "next/dynamic";
 import { ChevronRight, ExternalLink } from "lucide-react";
 
 import {
-  getAgentTaskRun,
-  readTaskDefinitionSource,
-  readTaskFile,
   type AgentTaskRunDetail,
   type AgentTaskRunSummary,
   type CheckAssertionResult,
   type CheckResult,
 } from "@/lib/agent-task-api";
-import { loadCheckSource, type DefinitionRef } from "@/lib/load-check-source";
+import { loadCheckSource, type CheckSource, type DefinitionRef } from "@/lib/load-check-source";
+import {
+  checkSources,
+  loadComparisonEvidence,
+  loadDefinitionSource,
+  loadTaskFile,
+  loadTaskRunDetail,
+  peekComparisonEvidence,
+  peekTaskRunDetail,
+} from "@/lib/check-evidence-cache";
 import type { TaskComparisonEvidenceLoader } from "@/lib/agent-task-view-api";
 import { cn } from "@/lib/utils";
 import { formatDuration, runDurationMs, formatCostMicro, formatTokenTotal, tokenFormat } from "@/lib/format";
@@ -636,15 +642,31 @@ type CheckPairResult =
   | { ok: true; left: AgentTaskRunDetail | null; right: AgentTaskRunDetail | null }
   | { ok: false; message: string };
 
+type CheckPairInput = {
+  taskId: string;
+  leftId: string | undefined;
+  rightId: string | undefined;
+  initialLeft: AgentTaskRunDetail | null;
+  initialRight: AgentTaskRunDetail | null;
+  evidenceLoader?: TaskComparisonEvidenceLoader;
+};
+
+const pairResult = (left: AgentTaskRunDetail | null, right: AgentTaskRunDetail | null): CheckPairResult =>
+  left || right
+    ? { ok: true, left, right }
+    : { ok: false, message: "Could not load check details for either run." };
+
 /**
  * Fetch both sides' check details for an expanded comparison row.
  * Prefer the frozen-pair evidence loader (comparison views) over
  * individual run fetches. The evidence loader resolves the exact frozen pair
- * server-side and never accepts arbitrary run IDs from the browser.
+ * server-side and never accepts arbitrary run IDs from the browser. Both
+ * paths read through the page's check-evidence cache, so reopening a row
+ * costs no request.
  *
- * Returns the in-flight promise plus an `abort` that both cancels the
- * request and marks its result as stale, so callers never settle superseded
- * loads into state.
+ * Returns the in-flight promise plus an `abort` that marks its result as
+ * stale, so callers never settle superseded loads into state, and releases
+ * the cached loads: a load nobody else waits on is cancelled.
  */
 function fetchCheckPair({
   taskId,
@@ -653,58 +675,53 @@ function fetchCheckPair({
   initialLeft,
   initialRight,
   evidenceLoader,
-}: {
-  taskId: string;
-  leftId: string | undefined;
-  rightId: string | undefined;
-  initialLeft: AgentTaskRunDetail | null;
-  initialRight: AgentTaskRunDetail | null;
-  evidenceLoader?: TaskComparisonEvidenceLoader;
-}): { promise: Promise<CheckPairResult>; abort: () => void } {
-  if (evidenceLoader) {
-    const controller = new AbortController();
-    const promise = evidenceLoader(taskId, controller.signal)
-      .then(
-        ({ left, right }): CheckPairResult =>
-          left || right
-            ? { ok: true, left, right }
-            : { ok: false, message: "Could not load check details for either run." },
-      )
-      .catch((err: unknown): CheckPairResult => ({
-        ok: false,
-        message: err instanceof Error ? err.message : "Could not load check details.",
-      }));
-    return { promise, abort: () => controller.abort() };
-  }
-
+}: CheckPairInput): { promise: Promise<CheckPairResult>; abort: () => void } {
   let cancelled = false;
-  const promise = Promise.all([
-    initialLeft
-      ? Promise.resolve(initialLeft)
-      : leftId
-        ? getAgentTaskRun(leftId).catch(() => null)
-        : Promise.resolve(null),
-    initialRight
-      ? Promise.resolve(initialRight)
-      : rightId
-        ? getAgentTaskRun(rightId).catch(() => null)
-        : Promise.resolve(null),
-  ]).then(([left, right]): CheckPairResult => {
-    if (cancelled) {
-      // Aborted mid-flight — report as an error the (already-superseded)
-      // caller will discard, so stale data never settles into state.
-      return { ok: false, message: "Aborted." };
-    }
-    return left || right
-      ? { ok: true, left, right }
-      : { ok: false, message: "Could not load check details for either run." };
-  });
+  const releases: Array<() => void> = [];
+  const held = <T,>({ promise, release }: { promise: Promise<T>; release: () => void }): Promise<T> => {
+    releases.push(release);
+    return promise;
+  };
+  const loaded: Promise<CheckPairResult> = evidenceLoader
+    ? held(loadComparisonEvidence(evidenceLoader, taskId)).then(
+        ({ left, right }) => pairResult(left, right),
+        (err: unknown): CheckPairResult => ({
+          ok: false,
+          message: err instanceof Error ? err.message : "Could not load check details.",
+        }),
+      )
+    : Promise.all([
+        initialLeft ?? (leftId ? held(loadTaskRunDetail(leftId)).catch(() => null) : null),
+        initialRight ?? (rightId ? held(loadTaskRunDetail(rightId)).catch(() => null) : null),
+      ]).then(([left, right]) => pairResult(left, right));
+  const promise = loaded.then((result): CheckPairResult =>
+    // Superseded mid-flight: report an error the caller will discard, so
+    // stale data never settles into state.
+    cancelled ? { ok: false, message: "Aborted." } : result,
+  );
   return {
     promise,
     abort: () => {
       cancelled = true;
+      releases.forEach((release) => release());
     },
   };
+}
+
+/** The pair from memory when both sides are already loaded, else null. */
+function peekCheckPair({
+  taskId,
+  leftId,
+  rightId,
+  initialLeft,
+  initialRight,
+  evidenceLoader,
+}: CheckPairInput): { left: AgentTaskRunDetail | null; right: AgentTaskRunDetail | null } | null {
+  if (evidenceLoader) return peekComparisonEvidence(evidenceLoader, taskId) ?? null;
+  const left = initialLeft ?? (leftId ? peekTaskRunDetail(leftId) : null);
+  const right = initialRight ?? (rightId ? peekTaskRunDetail(rightId) : null);
+  if (left === undefined || right === undefined || (!left && !right)) return null;
+  return { left, right };
 }
 
 /** Aligned checks for a differing task — lazily loaded on expand. */
@@ -729,7 +746,12 @@ function CheckDiff({
     | { status: "loading" }
     | { status: "error"; message: string }
     | { status: "ready"; left: AgentTaskRunDetail | null; right: AgentTaskRunDetail | null }
-  >({ status: "loading" });
+  >(() => {
+    // A row opened again renders its checks on the first frame.
+    const cached = peekCheckPair({ taskId, leftId, rightId, initialLeft, initialRight, evidenceLoader });
+    return cached ? { status: "ready", ...cached } : { status: "loading" };
+  });
+  const loadedOnMountRef = useRef(state.status === "ready");
 
   // Latest-ref for the parent-provided loader: the load effect must not
   // re-fire (and re-fetch) just because the parent re-created the callback.
@@ -768,6 +790,10 @@ function CheckDiff({
   }, [taskId, leftId, rightId, initialLeft, initialRight]);
 
   useEffect(() => {
+    if (loadedOnMountRef.current) {
+      loadedOnMountRef.current = false;
+      return;
+    }
     load();
     return () => abortInFlightRef.current?.();
   }, [load]);
@@ -1113,46 +1139,74 @@ function CheckSourceWithResults({
   // the reveal state and renders the panel. Cleared implicitly when the check
   // row collapses (this component unmounts).
   const [revealed, setRevealed] = useState<{ line: number; side: "A" | "B" } | null>(null);
+  // Issue #178: generated-title checks (table-driven evals) never appear
+  // literally in the source, so `{ id }` alone extracted nothing and the view
+  // fell back to the whole file — with the gutter markers landing on an
+  // unrelated check's lines. Both runs' results carry the anchor; prefer
+  // whichever side recorded one.
+  const blockQuery = useMemo(
+    () => ({ id: checkId, anchorFrom: [leftCheck, rightCheck] }),
+    [checkId, leftCheck, rightCheck],
+  );
+  // Only a pinned definition or a file at a commit is fixed; a working-tree
+  // read is fetched fresh on every opening.
+  const sourceKey =
+    definitionRefs.length > 0 || commitSha
+      ? JSON.stringify([projectId, taskId, checkId, sourceFile ?? null, commitSha, definitionRefs])
+      : null;
+  const viewOf = useCallback(
+    (source: CheckSource): { status: "ready"; code: string; language: string } => ({
+      status: "ready",
+      code: resolveCheckBlock(source.content, blockQuery)?.code ?? source.content,
+      language: source.language ?? "typescript",
+    }),
+    [blockQuery],
+  );
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
     | { status: "ready"; code: string; language: string }
-  >({ status: "loading" });
+  >(() => {
+    // A check opened again renders its source on the first frame.
+    const cached = sourceKey ? checkSources.peek(sourceKey) : undefined;
+    return cached ? viewOf(cached) : { status: "loading" };
+  });
+  const loadedOnMountRef = useRef(state.status === "ready");
 
   useEffect(() => {
+    if (loadedOnMountRef.current) {
+      loadedOnMountRef.current = false;
+      return;
+    }
     let cancelled = false;
-    const controller = new AbortController();
+    let release = () => {};
+    const load = () =>
+      loadCheckSource({
+        taskId,
+        recordedSourceFile: sourceFile,
+        commitSha,
+        definitionRefs,
+        containsKnownCheck: (content) => resolveCheckBlock(content, blockQuery) !== null,
+        deps: {
+          readDefinitionSource: loadDefinitionSource,
+          readTaskFile: (id, candidate, sha) => loadTaskFile(id, candidate, projectId, sha),
+        },
+      });
 
     (async () => {
       try {
-        // Issue #178: generated-title checks (table-driven evals) never
-        // appear literally in the source, so `{ id }` alone extracted
-        // nothing and the view fell back to the whole file — with the
-        // gutter markers landing on an unrelated check's lines. Both runs'
-        // results carry the anchor; prefer whichever side recorded one.
-        const blockQuery = { id: checkId, anchorFrom: [leftCheck, rightCheck] };
-        const source = await loadCheckSource({
-          taskId,
-          recordedSourceFile: sourceFile,
-          commitSha,
-          definitionRefs,
-          containsKnownCheck: (content) => resolveCheckBlock(content, blockQuery) !== null,
-          deps: {
-            readDefinitionSource: (runId, filePath) =>
-              readTaskDefinitionSource(runId, filePath, controller.signal),
-            readTaskFile: (id, candidate, sha) =>
-              readTaskFile(id, candidate, projectId, sha, controller.signal),
-          },
-        });
-        if (cancelled || controller.signal.aborted) return;
-        const block = resolveCheckBlock(source.content, blockQuery);
-        setState({
-          status: "ready",
-          code: block?.code ?? source.content,
-          language: source.language ?? "typescript",
-        });
+        let pending: Promise<CheckSource>;
+        if (sourceKey) {
+          const held = checkSources.get(sourceKey, load);
+          release = held.release;
+          pending = held.promise;
+        } else {
+          pending = load();
+        }
+        const source = await pending;
+        if (!cancelled) setState(viewOf(source));
       } catch (error) {
-        if (cancelled || controller.signal.aborted) return;
+        if (cancelled) return;
         setState({
           status: "error",
           message: error instanceof Error ? error.message : "Could not load check source.",
@@ -1162,9 +1216,9 @@ function CheckSourceWithResults({
 
     return () => {
       cancelled = true;
-      controller.abort();
+      release();
     };
-  }, [checkId, sourceFile, taskId, projectId, commitSha, definitionRefs, leftCheck, rightCheck]);
+  }, [sourceKey, sourceFile, taskId, projectId, commitSha, definitionRefs, blockQuery, viewOf]);
 
   // Locate each run's assertions onto lines of the source block. Builds a
   // map: line number → { left?, right? } assertion results. Empty when the
