@@ -10,6 +10,7 @@ import { parseArgs, getFlagValue } from "../lib/args.ts";
 import { resolveConfig } from "../lib/config.ts";
 import { discoverTaskMeta } from "../lib/task-meta.ts";
 import { toPublishedTask } from "../lib/task-catalog.ts";
+import { prepareTaskDefinition, type TaskDefinitionDocument } from "../lib/task-definition.ts";
 import { computeCatalogDigest } from "../lib/task-catalog-digest.ts";
 import { loadExecutorState, saveExecutorState } from "../lib/executor-state.ts";
 import { walkWorkspaceForRevision } from "../lib/task-revision.ts";
@@ -360,6 +361,17 @@ async function executeAssignment(
     throw new Error(`Task ${assignment.task_id} not found locally`);
   }
 
+  // The catalog digest covers metadata only, so the eval source executed here
+  // can differ from the published one the Run was pinned to; report it.
+  let taskDefinition: TaskDefinitionDocument;
+  try {
+    taskDefinition = prepareTaskDefinition(task).document;
+  } catch (err) {
+    const message = `could not prepare Task definition: ${(err as Error).message}`;
+    await fail("task_import", message);
+    throw new Error(message);
+  }
+
   // 3. Hash the current configured Task root and read sanitized Git provenance.
   const walked = walkWorkspaceForRevision({ rootDir: taskRoot });
   const git = readGitProvenance(taskRoot);
@@ -378,6 +390,7 @@ async function executeAssignment(
       task_root_label: taskRoot.split("/").pop() || "tasks",
       file_count: walked.manifest.summary.fileCount,
       uncompressed_size_bytes: walked.manifest.summary.uncompressedSizeBytes,
+      task_definition: taskDefinition,
     },
   });
 

@@ -14,6 +14,7 @@ import hashlib
 import json
 from typing import Any, cast
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from apo.models.db import (
@@ -98,13 +99,12 @@ def ensure_task_definition_revision(
     validated = validate_task_definition_document(document, task_id=task_id)
     digest = compute_task_definition_digest(validated)
 
-    existing = session.exec(
-        select(TaskDefinitionRevisionDB).where(
-            TaskDefinitionRevisionDB.project == project_id,
-            TaskDefinitionRevisionDB.task_id == task_id,
-            TaskDefinitionRevisionDB.content_sha256 == digest,
-        )
-    ).first()
+    lookup = select(TaskDefinitionRevisionDB).where(
+        TaskDefinitionRevisionDB.project == project_id,
+        TaskDefinitionRevisionDB.task_id == task_id,
+        TaskDefinitionRevisionDB.content_sha256 == digest,
+    )
+    existing = session.exec(lookup).first()
     if existing is not None:
         return existing
 
@@ -119,8 +119,16 @@ def ensure_task_definition_revision(
         source_files_json=cast(list[dict[str, object]], validated["files"]),
         source_size_bytes=size_bytes,
     )
-    session.add(rev)
-    session.flush()
+    # A concurrent request may insert the same revision first; the savepoint
+    # keeps the caller's transaction usable so the winner's row can be reused.
+    try:
+        with session.begin_nested():
+            session.add(rev)
+    except IntegrityError:
+        winner = session.exec(lookup).first()
+        if winner is None:
+            raise
+        return winner
     return rev
 
 

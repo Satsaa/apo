@@ -15,6 +15,12 @@ import type { SourceOwnedAssignment } from "../src/lib/connected-executor.ts";
 const fixedDigest = "sha256:matched";
 const fixedHash = "a".repeat(64);
 
+const executedDefinition = {
+  schema_version: 1,
+  files: [{ path: "refund.eval.ts", content: "task('refund', {});\n" }],
+};
+let prepareError: Error | undefined;
+
 vi.mock("../src/lib/task-meta.ts", () => ({
   discoverTaskMeta: () => [
     { id: "support/refund", path: "/ws/tasks/support/refund", display_name: "refund" },
@@ -24,6 +30,12 @@ vi.mock("../src/lib/task-catalog.ts", () => ({
   toPublishedTask: (t: { id: string }) => ({ task_id: t.id }),
 }));
 vi.mock("../src/lib/task-catalog-digest.ts", () => ({ computeCatalogDigest: () => fixedDigest }));
+vi.mock("../src/lib/task-definition.ts", () => ({
+  prepareTaskDefinition: () => {
+    if (prepareError) throw prepareError;
+    return { document: executedDefinition };
+  },
+}));
 vi.mock("../src/lib/task-revision.ts", () => ({
   walkWorkspaceForRevision: () => ({
     contentSha256: fixedHash,
@@ -129,10 +141,26 @@ describe("connector assignment execution", () => {
     expect(attestation.uncompressed_size_bytes).toBe(1234);
     expect(attestation.base_commit_sha).toBe("deadbeef");
     expect(attestation.repository_url).toBe("https://github.com/o/r.git");
+    expect(attestation.task_definition).toEqual(executedDefinition);
 
     const result = fetchCalls.find((c) => c.url.endsWith("/result"))!.body as Record<string, unknown>;
     expect(result.pass_result).toBe(true);
     expect(result.completion_id).toContain("att-1");
+  });
+
+  it("fails the Attempt as task_import when the eval source cannot be prepared", async () => {
+    prepareError = new Error("symlink_eval_file: refund.eval.ts is a symlink");
+    try {
+      await expect(
+        exec!("http://cp", "/ws", { ...assignment }, new AbortController().signal),
+      ).rejects.toThrow(/could not prepare Task definition/);
+    } finally {
+      prepareError = undefined;
+    }
+
+    expect(fetchCalls.some((c) => c.url.endsWith("/source-attestation"))).toBe(false);
+    const failure = fetchCalls.find((c) => c.url.endsWith("/failure"))!.body as Record<string, unknown>;
+    expect(failure.failure_kind).toBe("task_import");
   });
 
   it("submits the full result payload (deliverables, transcript, run_configuration)", async () => {

@@ -8,6 +8,7 @@
 
 import type { StoredExecutorState } from "./executor-state.ts";
 import { ResultSubmissionHttpError, boundedResponseDetail } from "./result-submission.ts";
+import type { TaskDefinitionDocument } from "./task-definition.ts";
 
 export interface EnrollResponse {
   executor_id: string;
@@ -54,6 +55,8 @@ export interface SourceAttestation {
   task_root_label: string | null;
   file_count: number;
   uncompressed_size_bytes: number;
+  /** The executed Task's canonical eval source; the Run is pinned to it. */
+  task_definition?: TaskDefinitionDocument;
 }
 
 function v2Base(backendUrl: string): string {

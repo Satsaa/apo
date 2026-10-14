@@ -20,7 +20,12 @@ from typing import Literal, cast
 
 from sqlmodel import Session, col, func, or_, select
 
-from apo.models.db import AgentTaskBatchRunDB, AgentTaskNoteDB, AgentTaskRunDB
+from apo.models.db import (
+    AgentTaskBatchRunDB,
+    AgentTaskNoteDB,
+    AgentTaskRunDB,
+    TaskDefinitionRevisionDB,
+)
 from apo.models.schemas import TaskNote, TaskNoteScope
 from apo.services.human_actor import HumanActor, user_labels
 from apo.services.project_task_inventory import get_inventory_row
@@ -247,10 +252,30 @@ def _validate_body(body: str) -> str:
 
 
 def _current_definition_revision(session: Session, project: str, task_id: str) -> str | None:
-    """The catalog's pinned revision, else the latest Run's."""
+    """The newer of the catalog's pinned revision and the latest Run's.
+
+    A note written while iterating with ``apo task run`` is about the local
+    source that Run executed, which can be newer than what was last published.
+    """
     row = get_inventory_row(session, project, task_id)
-    if row is not None and row.task_definition_revision_id:
-        return row.task_definition_revision_id
+    pinned = row.task_definition_revision_id if row is not None else None
+    latest_run = _latest_run_revision(session, project, task_id)
+    if pinned is None or latest_run is None or latest_run == pinned:
+        return pinned or latest_run
+    revisions = {
+        rev.id: rev
+        for rev in session.exec(
+            select(TaskDefinitionRevisionDB).where(
+                col(TaskDefinitionRevisionDB.id).in_([pinned, latest_run])
+            )
+        ).all()
+    }
+    if pinned not in revisions or latest_run not in revisions:
+        return pinned if pinned in revisions else latest_run
+    return latest_run if revisions[latest_run].created_at > revisions[pinned].created_at else pinned
+
+
+def _latest_run_revision(session: Session, project: str, task_id: str) -> str | None:
     statement = (
         select(AgentTaskRunDB.task_definition_revision_id)
         .join(AgentTaskBatchRunDB, col(AgentTaskBatchRunDB.id) == col(AgentTaskRunDB.batch_run_id))

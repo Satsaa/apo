@@ -171,14 +171,20 @@ describe("real apo connect scene", () => {
     expect(attestation.content_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(attestation.file_count).toBeGreaterThan(0);
 
+    // The executed eval source, as `apo task run` and publish send it.
+    const executed = attestation.task_definition as { files: { path: string }[] };
+    expect(executed.files).toHaveLength(1);
+    expect(executed.files[0].path).toMatch(/^[^/]+\.eval\.ts$/);
+
     // Full result payload from the isolated child.
     const result = requests.find((r) => r.path.includes("/result"))!.body as Record<string, unknown>;
     expect(result.completion_id).toContain("att-scene");
     expect(result.deliverables).toEqual({ result: "fixture-output" });
     expect(result.run_configuration).toEqual({ model: "deterministic-fixture", effort: "low" });
 
-    // No source/path/env/credential values leak in the execution payloads
-    // (attestation + result bodies). The bootstrap/heartbeat auth headers
+    // No path/env/credential values leak in the execution payloads
+    // (attestation + result bodies); the eval source above is the one
+    // intended exception. The bootstrap/heartbeat auth headers
     // legitimately carry the user key / executor credential; OTLP trace
     // attributes are a separate telemetry stream.
     const executionBodies = requests

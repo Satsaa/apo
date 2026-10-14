@@ -238,6 +238,30 @@ class TestRevisionAnchor:
 
         assert resp.json()["task_definition_revision_id"] == newer
 
+    def test_a_local_run_on_newer_source_outranks_the_catalog_pin(
+        self, client: TestClient, session: Session
+    ) -> None:
+        _seed_project(session)
+        _pin_catalog(session, _revision(session, "published"))
+        local = _revision(session, "local edit")
+        _seed_run(session, local, "run-local", NOW)
+
+        resp = _add(client, task_id=TASK)
+
+        assert resp.json()["task_definition_revision_id"] == local
+
+    def test_a_catalog_pin_newer_than_the_latest_run_wins(
+        self, client: TestClient, session: Session
+    ) -> None:
+        _seed_project(session)
+        _seed_run(session, _revision(session, "old run"), "run-old", NOW)
+        published = _revision(session, "published later")
+        _pin_catalog(session, published)
+
+        resp = _add(client, task_id=TASK)
+
+        assert resp.json()["task_definition_revision_id"] == published
+
     def test_editing_the_body_re_anchors_to_the_current_revision(
         self, client: TestClient, session: Session
     ) -> None:

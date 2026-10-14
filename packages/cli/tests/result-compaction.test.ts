@@ -17,6 +17,12 @@ import type { SourceOwnedAssignment } from "../src/lib/connected-executor.ts";
 const fixedDigest = "sha256:matched";
 const fixedHash = "a".repeat(64);
 
+const executedDefinition = {
+  schema_version: 1,
+  files: [{ path: "refund.eval.ts", content: "task('refund', {});\n" }],
+};
+const prepareError: Error | undefined = undefined;
+
 vi.mock("../src/lib/task-meta.ts", () => ({
   discoverTaskMeta: () => [
     { id: "support/refund", path: "/ws/tasks/support/refund", display_name: "refund" },
@@ -26,6 +32,12 @@ vi.mock("../src/lib/task-catalog.ts", () => ({
   toPublishedTask: (t: { id: string }) => ({ task_id: t.id }),
 }));
 vi.mock("../src/lib/task-catalog-digest.ts", () => ({ computeCatalogDigest: () => fixedDigest }));
+vi.mock("../src/lib/task-definition.ts", () => ({
+  prepareTaskDefinition: () => {
+    if (prepareError) throw prepareError;
+    return { document: executedDefinition };
+  },
+}));
 vi.mock("../src/lib/task-revision.ts", () => ({
   walkWorkspaceForRevision: () => ({
     contentSha256: fixedHash,

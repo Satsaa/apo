@@ -87,6 +87,41 @@ class TestEnsureRevision:
         assert rev1.source_files_json[0]["content"] == "v1\n"
 
 
+    def test_losing_a_concurrent_insert_reuses_the_winner(self, session, monkeypatch):
+        """Two publishes of the same new source race past the lookup; the
+        loser hits the unique constraint and must return the winner's row
+        with its own transaction still usable."""
+        session.add(ProjectDB(id="p1", name="P", created_by="u"))
+        session.commit()
+        doc = _doc("raced\n")
+        winner = ensure_task_definition_revision(session, project_id="p1", task_id="demo", document=doc)
+        session.commit()
+
+        class _Miss:
+            def first(self):
+                return None
+
+        real_exec = session.exec
+        calls = {"n": 0}
+
+        def exec_missing_once(statement, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Miss()
+            return real_exec(statement, *args, **kwargs)
+
+        monkeypatch.setattr(session, "exec", exec_missing_once)
+        session.add(ProjectDB(id="p2", name="P2", created_by="u"))
+
+        loser = ensure_task_definition_revision(session, project_id="p1", task_id="demo", document=doc)
+        session.commit()
+
+        assert loser.id == winner.id
+        assert session.get(ProjectDB, "p2") is not None
+        rows = real_exec(select(TaskDefinitionRevisionDB)).all()
+        assert len(rows) == 1
+
+
 class TestValidation:
     def test_rejects_nul(self, session):
         session.add(ProjectDB(id="p1", name="P", created_by="u"))

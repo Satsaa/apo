@@ -48,6 +48,10 @@ from ..services.execution_leases import (
     start_attempt,
 )
 from ..services.source_owned_executor import check_catalog_eligibility
+from ..services.task_definition_revisions import (
+    TaskDefinitionValidationError,
+    ensure_task_definition_revision,
+)
 
 router = APIRouter(prefix="/v1/executor-protocol/v2", tags=["executor-protocol-v2"])
 
@@ -159,6 +163,10 @@ class SourceAttestationRequest(BaseModel):
     task_root_label: str | None = None
     file_count: int = 0
     uncompressed_size_bytes: int = 0
+    # The executed Task's canonical *.eval.ts. When present, the Run is
+    # re-pinned to it: the catalog pin copied at enqueue time names what was
+    # published, which a stale worktree or a later publish can contradict.
+    task_definition: dict[str, object] | None = None
 
 
 class SourceAttestationResponse(BaseModel):
@@ -346,6 +354,8 @@ async def source_attestation(
     if attempt.task_revision_id:
         existing_rev = session.get(TaskRevisionDB, attempt.task_revision_id)
         if existing_rev is not None and existing_rev.content_sha256 == body.content_sha256:
+            _pin_executed_definition(session, attempt, body.task_definition)
+            session.commit()
             return SourceAttestationResponse(
                 task_revision_id=existing_rev.id,
                 content_sha256=existing_rev.content_sha256,
@@ -355,6 +365,8 @@ async def source_attestation(
                 status.HTTP_409_CONFLICT,
                 detail={"kind": "attestation_conflict", "message": "different attestation already attached"},
             )
+
+    _pin_executed_definition(session, attempt, body.task_definition)
 
     # Create attested revision
     revision = TaskRevisionDB(
@@ -382,6 +394,29 @@ async def source_attestation(
         task_revision_id=revision.id,
         content_sha256=revision.content_sha256,
     )
+
+
+def _pin_executed_definition(
+    session: Session,
+    attempt: TaskExecutionAttemptDB,
+    document: dict[str, object] | None,
+) -> None:
+    if document is None:
+        return
+    task_run = session.get(AgentTaskRunDB, attempt.task_run_id)
+    if task_run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task run not found")
+    try:
+        revision = ensure_task_definition_revision(
+            session, project_id=attempt.project, task_id=task_run.task_id, document=document,
+        )
+    except TaskDefinitionValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"kind": exc.kind, "message": str(exc)},
+        ) from exc
+    task_run.task_definition_revision_id = revision.id
+    session.add(task_run)
 
 
 # ---------------------------------------------------------------------------
