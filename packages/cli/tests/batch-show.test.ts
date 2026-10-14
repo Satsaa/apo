@@ -51,6 +51,20 @@ describe("formatNeverStarted", () => {
     ]);
   });
 
+  it("reads the first non-blank line, caps its length, and lists the largest group first", () => {
+    const long = "x".repeat(200);
+    const runs = [
+      makeRun({ status: "error", started_at: null, error_message: long }),
+      makeRun({ status: "error", started_at: null, error_message: `\n  ${TTL}\nstack` }),
+      makeRun({ status: "error", started_at: null, error_message: TTL }),
+    ];
+    expect(formatNeverStarted({ task_runs: runs })).toEqual([
+      "  3 of 3 never started:",
+      `    2× ${TTL}`,
+      `    1× ${"x".repeat(120)}`,
+    ]);
+  });
+
   it("ignores runs still waiting in the queue", () => {
     expect(formatNeverStarted({ task_runs: [makeRun({ status: "pending", started_at: null })] })).toEqual([]);
   });
