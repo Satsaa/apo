@@ -1,6 +1,11 @@
 import type { Config } from "./config.ts";
 import { apiGet } from "./api.ts";
-import { findByPrefix, isCanonicalBatchId, UnresolvedIdError } from "./prefix.ts";
+import {
+  findByPrefix,
+  formatCandidates,
+  isCanonicalBatchId,
+  UnresolvedIdError,
+} from "./prefix.ts";
 
 /**
  * A complete batch id, usable verbatim — a canonical id (`bch_` + 24 hex) or
@@ -35,22 +40,29 @@ export async function resolveBatchId(
   // The backend returns a paginated payload ({data: [...]}); accept a bare
   // array from older deployments too.
   const payload = await apiGet<
-    Array<{ id: string }> | { data: Array<{ id: string }> }
+    Array<{ id: string }> | { data: Array<{ id: string }>; total_count?: number }
   >(backendUrl, "/v1/agent-task-batch-runs", params, config);
   const batches = Array.isArray(payload) ? payload : payload.data;
   const result = findByPrefix(batches, prefix, (b) => b.id);
   if (result.status === "none") {
+    const scope = config.projectId ? ` in project ${config.projectId}` : "";
     throw new UnresolvedIdError(
-      `No batch id starts with "${prefix}". Check the id, or use the full ` +
-        `batch id (a backend older than id-prefix search only looks at its ` +
-        `100 most recent batches).`,
+      `No batch id starts with "${prefix}"${scope}. Check the id, or use the ` +
+        `full batch id (a backend older than id-prefix search only looks at ` +
+        `its 100 most recent batches).`,
     );
   }
   if (result.status === "ambiguous") {
+    // total_count counts the prefix matches only when the backend applied
+    // the filter, i.e. when every row it returned matches.
+    const serverFiltered =
+      !Array.isArray(payload) && result.items.length === batches.length;
+    const total = serverFiltered ? payload.total_count : undefined;
     throw new Error(
-      `Batch ID prefix "${prefix}" matches multiple batches: ${result.items
-        .map((b) => b.id)
-        .join(", ")}`,
+      `Batch ID prefix "${prefix}" matches multiple batches: ${formatCandidates(
+        result.items.map((b) => b.id),
+        total,
+      )}`,
     );
   }
   return result.item.id;

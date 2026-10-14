@@ -45,6 +45,19 @@ export function findByPrefix<T>(
   return { status: "ambiguous", items: matches };
 }
 
+const MAX_LISTED_CANDIDATES = 10;
+
+/**
+ * The ids an ambiguous prefix matched, capped so a two-character prefix does
+ * not print hundreds of ids. `total` is the full match count when it is known
+ * to exceed the ids at hand (the server's count of a page it filtered).
+ */
+export function formatCandidates(ids: string[], total = ids.length): string {
+  const shown = ids.slice(0, MAX_LISTED_CANDIDATES);
+  const more = Math.max(total, ids.length) - shown.length;
+  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(", ");
+}
+
 function commonPrefixLength(a: string, b: string): number {
   const max = Math.min(a.length, b.length);
   let i = 0;

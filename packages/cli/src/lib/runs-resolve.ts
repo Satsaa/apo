@@ -6,7 +6,12 @@
  */
 import type { resolveConfig } from "../lib/config.ts";
 import { apiGet } from "./api.ts";
-import { findByPrefix, isCanonicalRunId, UnresolvedIdError } from "./prefix.ts";
+import {
+  findByPrefix,
+  formatCandidates,
+  isCanonicalRunId,
+  UnresolvedIdError,
+} from "./prefix.ts";
 
 type ResolvedConfig = ReturnType<typeof resolveConfig>;
 
@@ -56,17 +61,18 @@ export async function resolveRunIdByPrefix(
   );
   const result = findByPrefix(runs, prefix, (r) => r.id);
   if (result.status === "none") {
+    const scope = config.projectId ? ` in project ${config.projectId}` : "";
     throw new UnresolvedIdError(
-      `No run id starts with "${prefix}". Check the id, or use the full run id ` +
+      `No run id starts with "${prefix}"${scope}. Check the id, or use the full run id ` +
         `(a backend older than id-prefix search only looks at its 1000 most ` +
         `recent runs).`,
     );
   }
   if (result.status === "ambiguous") {
     throw new Error(
-      `Run ID prefix "${prefix}" matches multiple runs: ${result.items
-        .map((r) => r.id)
-        .join(", ")}`,
+      `Run ID prefix "${prefix}" matches multiple runs: ${formatCandidates(
+        result.items.map((r) => r.id),
+      )}`,
     );
   }
   return result.item.id;

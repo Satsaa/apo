@@ -190,6 +190,38 @@ describe("resolveBatchId full-id recognition (issue #298)", () => {
     expect((error as Error).message).toContain(other);
   });
 
+  it("lists at most ten candidates and counts the rest from total_count", async () => {
+    const ids = Array.from(
+      { length: 12 },
+      (_, i) => `bch_0123${i.toString(16).padStart(20, "0")}`,
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ data: ids.map((id) => ({ id })), total_count: 140 }),
+    );
+
+    const error = await resolveBatchId(
+      "http://backend.test",
+      "bch_0123",
+      testConfig(),
+    ).catch((e: unknown) => e);
+
+    const message = (error as Error).message;
+    expect(message).toContain(ids[9]);
+    expect(message).not.toContain(ids[10]);
+    expect(message).toContain("and 130 more");
+  });
+
+  it("names the project when a scoped prefix matches nothing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(mockResponse({ data: [] }));
+
+    const error = await resolveBatchId("http://backend.test", "bch_dead", {
+      ...testConfig(),
+      projectId: "proj-x",
+    }).catch((e: unknown) => e);
+
+    expect((error as Error).message).toContain("in project proj-x");
+  });
+
   it("passes legacy batch ids of 32+ chars through verbatim", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
