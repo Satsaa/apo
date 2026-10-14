@@ -433,3 +433,33 @@ def test_both_sides_pinned_bypasses_exclusion(cmp_client: TestClient) -> None:
     cell = cast(list[dict[str, object]], snap["resolved"])[0]
     assert cell["a_run_id"] == "s1-opus"
     assert cell["b_run_id"] == "s1-deep"
+
+
+def test_a_side_whose_only_run_never_started_is_not_run(
+    cmp_client: TestClient, session: Session
+) -> None:
+    """A deepseek run that expired in the queue has no outcome: the comparison
+    reads that side as not run, as the task card does, not as an error."""
+    task = "evals/cmp-never-started"
+    now = datetime.now(timezone.utc)
+    session.add_all(
+        [
+            AgentTaskRunDB(
+                id="n-opus", batch_run_id="b-opus", task_id=task, task_path=f"/t/{task}",
+                status="passed", pass_result=True, configured_model="claude-opus",
+                task_definition_revision_id="d1", started_at=now, completed_at=now,
+                total_checks=1, passed_checks=1, failed_checks=0,
+            ),
+            AgentTaskRunDB(
+                id="n-deep-expired", batch_run_id="b-deep", task_id=task, task_path=f"/t/{task}",
+                status="error", pass_result=None, configured_model="deepseek",
+                no_verdict_reason="executor", started_at=None, completed_at=now,
+            ),
+        ]
+    )
+    session.commit()
+
+    cell = cast(list[dict[str, object]], _create(cmp_client, [task])["resolved"])[0]
+    assert cell["a_run_id"] == "n-opus"
+    assert cell["b_run_id"] is None
+    assert cell["state"] == "not_run"

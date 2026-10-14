@@ -381,8 +381,8 @@ class IngestionResponse(SQLModel):
 
 
 class AgentTaskRunStats(SQLModel):
-    # Runs that ended without starting (never claimed, cancelled or lost
-    # before start) are counted here and nowhere else in these stats.
+    # Runs that ended without starting (never claimed, cancelled, or rejected
+    # before start) are counted in not_started_runs and nowhere else here.
     total_runs: int = 0
     not_started_runs: int = 0
     passed_runs: int = 0

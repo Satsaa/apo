@@ -1,5 +1,7 @@
 export type AgentTaskRunStats = {
   total_runs: number;
+  /** Runs that ended without starting; outside every other count. */
+  not_started_runs?: number;
   passed_runs: number;
   failed_runs: number;
   errored_runs: number;

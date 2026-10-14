@@ -525,6 +525,21 @@ def test_expired_queued_becomes_executor_unavailable(session: Session) -> None:
     assert batch is not None and batch.status == "error"
 
 
+def test_abandoned_caller_batch_stays_completed_when_it_expires(session: Session) -> None:
+    # A caller run (apo task run) that never reached /start has nobody waiting
+    # on it; "error" would fire batch_run.failed automations a day later.
+    atts = _seed(session, sequence_indices=[0])
+    batch = session.get(AgentTaskBatchRunDB, atts[0].batch_run_id)
+    assert batch is not None
+    batch.execution_target_json = {"kind": "caller"}
+    atts[0].queue_expires_at = _now() - timedelta(seconds=1)
+    session.add_all([batch, atts[0]])
+    session.commit()
+    assert recover_expired_attempts(session, now=_now()).failed_unavailable == 1
+    session.refresh(batch)
+    assert batch.status == "completed"
+
+
 def test_batch_with_a_started_run_still_completes_when_the_rest_expire(
     session: Session,
 ) -> None:

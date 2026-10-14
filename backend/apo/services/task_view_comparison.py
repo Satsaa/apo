@@ -30,6 +30,7 @@ from ..models.schemas import (
     TaskViewConfig,
     as_no_verdict_reason,
 )
+from .lifecycle import is_never_started_run
 from .view_runs import ViewRun, runs_in_view
 
 # Status that means "the run did not complete" (no usable verdict). Mirrors
@@ -81,8 +82,12 @@ def _resolve_side(
 
     # cohort is already DESC by started_at, so the first run seen per task is
     # the most recent. Group preserving that order, then pick latest-completed.
+    # A run that never started has no outcome; leaving it out keeps a task
+    # whose only runs expired in the queue "not run", as its card reads.
     runs_by_task: dict[str, list[ViewRun]] = {}
     for run in cohort:
+        if is_never_started_run(run.status, run.started_at, run.no_verdict_reason):
+            continue
         runs_by_task.setdefault(run.task_id, []).append(run)
 
     latest_by_task: dict[str, ViewRun] = {}

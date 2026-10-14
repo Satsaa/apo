@@ -394,13 +394,13 @@ def test_task_run_list_filters_since_window_over_started_at(
     assert {r["id"] for r in client.get(base, params={"project": "proj-since", "since": "nope"}).json()} == {"r-fresh", "r-stale"}
 
 
-def test_task_run_list_places_unstarted_runs_by_when_they_ended(
+def test_task_run_list_orders_unstarted_runs_first_and_windows_them(
     client: TestClient,
     session: Session,
 ) -> None:
-    """A run that expired in the queue has no started_at; it keeps its place by
-    completion time (inside a since window, between older and newer runs), and
-    a still-queued run lists first, on SQLite and Postgres alike."""
+    """Runs without a started_at (expired in the queue, or still queued) list
+    first on SQLite and Postgres alike, then started runs newest first. A since
+    window keeps a queued run and judges an expired one by when it ended."""
     now = datetime.now(timezone.utc)
     session.add_all([_batch("b", "proj-unstarted", now)])
     expired = _run("r-expired", "b", "task-1", now - timedelta(hours=2))
@@ -413,6 +413,10 @@ def test_task_run_list_places_unstarted_runs_by_when_they_ended(
     queued.pass_result = None
     queued.started_at = None
     queued.completed_at = None
+    old_expired = _run("r-expired-old", "b", "task-1", now - timedelta(days=9))
+    old_expired.status = "error"
+    old_expired.pass_result = None
+    old_expired.started_at = None
     session.add_all(
         [
             _run("r-newer", "b", "task-1", now - timedelta(hours=1)),
@@ -420,13 +424,15 @@ def test_task_run_list_places_unstarted_runs_by_when_they_ended(
             _run("r-older", "b", "task-1", now - timedelta(hours=3)),
             _run("r-stale", "b", "task-1", now - timedelta(days=9)),
             queued,
+            old_expired,
         ]
     )
     session.commit()
 
     base = "/v1/agent-task-runs"
     ids = [r["id"] for r in client.get(base, params={"project": "proj-unstarted", "since": "7d"}).json()]
-    assert ids == ["r-queued", "r-newer", "r-expired", "r-older"]
+    assert set(ids[:2]) == {"r-queued", "r-expired"}
+    assert ids[2:] == ["r-newer", "r-older"]
 
 
 def test_batch_run_list_filter_matches_only_when_one_child_satisfies_all_dimensions(

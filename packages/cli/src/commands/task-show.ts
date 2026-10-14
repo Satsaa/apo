@@ -70,6 +70,9 @@ export async function run(argv: string[]): Promise<number> {
       const avg = stats.avg_duration_ms != null ? ` · avg ${(stats.avg_duration_ms / 1000).toFixed(1)}s` : "";
       console.log(`  Runs:        ${stats.total_runs} total · ${stats.passed_runs} passed · ${stats.failed_runs} failed · ${stats.errored_runs} errored (${Math.round(stats.pass_rate * 100)}% pass)${avg}`);
     }
+    if (task.run_stats?.not_started_runs) {
+      console.log(dim(`  Not started: ${task.run_stats.not_started_runs} (ended before an executor started them)`));
+    }
     if (task.latest_run) {
       console.log(dim(`  Latest run:  ${task.latest_run.id} — ${task.latest_run.status}`));
     }

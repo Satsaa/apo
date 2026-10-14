@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import desc, or_, select as sa_select
+from sqlalchemy import and_, case, desc, or_, select as sa_select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
@@ -105,6 +105,26 @@ def since_cutoff(since: str | None) -> datetime | None:
     return None
 
 
+def in_since_window(cutoff: datetime) -> ColumnElement[bool]:
+    """A run is inside a ``since`` window by when it started, or, if it never
+    started, by when it ended; a run still waiting to start always is.
+
+    Shared by the Tasks view cohort and the run list so a drill-down from a
+    since-scoped view shows the runs the view's stats were computed from. The
+    started_at arm is the indexed one; the NULL arms add the unstarted rows.
+    """
+    return or_(
+        AGENT_TASK_RUN_STARTED_AT_COL >= cutoff,
+        and_(
+            AGENT_TASK_RUN_STARTED_AT_COL.is_(None),
+            or_(
+                AGENT_TASK_RUN_COMPLETED_AT_COL >= cutoff,
+                AGENT_TASK_RUN_COMPLETED_AT_COL.is_(None),
+            ),
+        ),
+    )
+
+
 def runs_in_view(
     session: Session,
     project_id: str,
@@ -174,7 +194,7 @@ def runs_in_view(
         conditions.append(AGENT_TASK_RUN_TRACE_RUN_ID_COL.in_(matching_traces))
     cutoff = since_cutoff(view.since)
     if cutoff is not None:
-        conditions.append(AGENT_TASK_RUN_STARTED_AT_COL >= cutoff)
+        conditions.append(in_since_window(cutoff))
 
     stmt = (
         sa_select(
@@ -195,10 +215,15 @@ def runs_in_view(
         )
         .join(AgentTaskBatchRunDB, AGENT_TASK_RUN_BATCH_RUN_ID_COL == AGENT_TASK_BATCH_ID_COL)
         .where(*conditions)
-        # NULLs last on every dialect (Postgres defaults DESC to NULLs first,
-        # SQLite to last), so "first row per task" is the most recent run that
-        # started on either database; unstarted rows follow, newest batch first.
+        # The first row per task is its latest run: a queued or running one
+        # first (the card reads "Running"), then the most recently started.
+        # NULLs are placed explicitly because Postgres sorts them first under
+        # DESC and SQLite last; ended-but-never-started rows go last.
         .order_by(
+            case(
+                (AGENT_TASK_RUN_STATUS_COL.in_(("pending", "running")), 0),
+                else_=1,
+            ),
             desc(AGENT_TASK_RUN_STARTED_AT_COL).nulls_last(),
             desc(AGENT_TASK_BATCH_CREATED_AT_COL),
         )

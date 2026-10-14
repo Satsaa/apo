@@ -276,3 +276,41 @@ def test_stats_loader_orders_unstarted_runs_after_started_ones(
     assert stats.total_runs == 1
     assert stats.not_started_runs == 1
     assert stats.last_run_status == "passed"
+
+
+def test_stats_loader_puts_a_queued_run_first_so_the_card_reads_running(
+    session: Session,
+) -> None:
+    # A task waiting in a sequential batch: its queued run (no started_at yet)
+    # is its latest run on every database, ahead of the last finished one.
+    session.add_all([_batch("b-old", "project-1"), _batch("b-new", "project-1")])
+    session.add_all(
+        [
+            _run("r-done", "b-old", "task-a", started_at=_OLDER),
+            _run("r-queued", "b-new", "task-a", status="pending", pass_result=None, started_at=None),
+        ]
+    )
+    session.commit()
+
+    runs = load_run_stat_fields(session, "project-1", ["task-a"])["task-a"]
+    stats = compute_run_stats(runs)
+    assert stats.last_run_status == "pending"
+    assert stats.not_started_runs == 0
+
+
+def test_since_scoped_stats_keep_queued_runs_like_the_run_list(session: Session) -> None:
+    # The view's since window and the drill-down run list share one rule: a
+    # queued run is inside every window, an expired one by its end time.
+    session.add_all([_batch("b-1", "project-1")])
+    expired = _run("r-expired-old", "b-1", "task-a", status="error", pass_result=None, started_at=None)
+    expired.completed_at = datetime.now(timezone.utc) - timedelta(days=30)
+    session.add_all(
+        [
+            _run("r-queued", "b-1", "task-a", status="pending", pass_result=None, started_at=None),
+            expired,
+        ]
+    )
+    session.commit()
+
+    runs = load_run_stat_fields(session, "project-1", ["task-a"], since="7d")["task-a"]
+    assert [r.status for r in runs] == ["pending"]

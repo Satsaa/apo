@@ -64,7 +64,7 @@ from ..services.agent_task_projection import (
     to_task_run_summary,
 )
 from ..services.trace_backend import model_drift_summary, parse_model_providers
-from ..services.view_runs import since_cutoff
+from ..services.view_runs import in_since_window, since_cutoff
 from ..services.demo_workspace import require_project_not_demo
 from ..services.agent_task_runner import finalize_external_task_run
 from ..services.project_memberships import (
@@ -894,8 +894,8 @@ def list_agent_task_runs(
     dimensions AND. A run with an unreported configuration (NULL
     columns) never matches ``model``/``effort``. ``since`` is a
     ``"Nh"``/``"Nd"`` window over ``started_at`` (``completed_at`` for a run
-    that never started; still-queued runs always match) (the same
-    vocabulary the Tasks evidence views use), so a task-detail drill-down
+    that never started; still-queued runs always match; the same
+    rule the Tasks evidence views use), so a task-detail drill-down
     can show exactly the cohort the view was scoped to.
 
     The list is scoped to the caller's readable Projects. An
@@ -904,7 +904,7 @@ def list_agent_task_runs(
     development open-dev mode).
 
     ``limit`` caps the response (default 1000, max 5000) over the
-    newest-first order (still-queued runs first) — the endpoint answers "the newest N
+    ``started_at``-descending order, unstarted runs first — the endpoint answers "the newest N
     runs for this filter", never an unbounded dump. The default keeps
     every current caller whole (the dashboard reads one task's history
     at a time); an explicit ``limit`` is there for API consumers with
@@ -983,18 +983,16 @@ def list_agent_task_runs(
             .correlate(AgentTaskRunDB)
         )
         query = query.where(col(AgentTaskRunDB.trace_run_id).in_(matching_traces))
-    # A run that never started has no started_at; it is placed by when it
-    # ended (queue expiry, cancellation) instead of vanishing from a ``since``
-    # window. Still-queued runs have neither and sort first on every dialect.
-    run_time = func.coalesce(
-        as_column(cast(object, AgentTaskRunDB.started_at)),
-        as_column(cast(object, AgentTaskRunDB.completed_at)),
-    )
     since_cutoff_value = since_cutoff(since)
     if since_cutoff_value is not None:
-        query = query.where(or_(run_time >= since_cutoff_value, run_time.is_(None)))
+        query = query.where(in_since_window(since_cutoff_value))
 
-    query = query.order_by(desc(run_time).nulls_first())
+    # Unstarted runs (queued, or ended before starting) first, then newest
+    # started. NULLS FIRST is Postgres's own DESC order, so the started_at
+    # index still serves it; spelling it out makes SQLite agree.
+    query = query.order_by(
+        desc(as_column(cast(object, AgentTaskRunDB.started_at))).nulls_first()
+    )
     query = query.limit(limit)
     task_runs = session.exec(query).all()
     triggers = _load_batch_triggers(session, [tr.batch_run_id for tr in task_runs])

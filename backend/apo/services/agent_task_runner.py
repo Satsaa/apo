@@ -326,12 +326,18 @@ def update_batch_run_status(session: Session, batch: AgentTaskBatchRunDB) -> Non
 
     all_done = all(tr.status in TASK_RUN_TERMINAL for tr in task_runs)
     if all_done and task_runs:
-        # A batch none of whose runs started (no executor claimed them, or
-        # each died before start) did not complete; a user cancellation did
-        # finish as asked, so it keeps "completed".
-        none_started = batch.cancelled_tasks == 0 and all(
-            is_never_started_run(tr.status, tr.started_at, tr.no_verdict_reason)
-            for tr in task_runs
+        # A queued batch none of whose runs started (no executor claimed them)
+        # did not complete, and "error" fires batch_run.failed for whoever is
+        # waiting on it. A user cancellation finished as asked, and a caller
+        # batch (`apo task run`) abandoned before start has no one to tell.
+        target = batch.execution_target_json or {}
+        none_started = (
+            batch.cancelled_tasks == 0
+            and target.get("kind") != "caller"
+            and all(
+                is_never_started_run(tr.status, tr.started_at, tr.no_verdict_reason)
+                for tr in task_runs
+            )
         )
         batch.status = "error" if none_started else "completed"
         batch.completed_at = datetime.now(timezone.utc)

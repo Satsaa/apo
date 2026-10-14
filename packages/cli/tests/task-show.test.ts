@@ -39,6 +39,7 @@ function mockDetail(): Record<string, unknown> {
       total_checks: 10,
       checks_pass_rate: 0.5,
       avg_cost: 0.0002,
+      not_started_runs: 3,
     },
     latest_run: {
       id: "run_db3993122048ce4a55a06e2b",
@@ -78,6 +79,7 @@ describe("task show", () => {
     expect(code).toBe(0);
     expect(out).toContain("Name:        data-extraction");
     expect(out).toContain("Runs:        5 total · 2 passed · 2 failed · 1 errored (40% pass) · avg 3.2s");
+    expect(out).toContain("Not started: 3 (ended before an executor started them)");
     expect(out).toContain("run_db3993122048ce4a55a06e2b");
     expect(out).toContain("Tags:        documents, smoke");
   });
