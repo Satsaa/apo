@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, case, desc, exists, or_, select as sa_select
+from sqlalchemy import and_, desc, exists, or_, select as sa_select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import Session
 
