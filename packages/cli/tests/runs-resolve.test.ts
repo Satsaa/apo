@@ -71,7 +71,19 @@ describe("resolveRunId full-id recognition (issue #298)", () => {
 
     expect(id).toBe(CANONICAL_RUN_ID);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1/agent-task-runs");
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/v1/agent-task-runs");
+    expect(url.searchParams.get("id_prefix")).toBe("run_7e99");
+  });
+
+  it("still finds the run when an older backend ignores id_prefix", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse([{ id: "run_ffff0000000000000000000a" }, { id: CANONICAL_RUN_ID }]),
+    );
+
+    const id = await resolveRunId("http://backend.test", "run_7e99", testConfig());
+
+    expect(id).toBe(CANONICAL_RUN_ID);
   });
 
   it("does not fabricate a backend 404 when a prefix matches nothing", async () => {
@@ -143,7 +155,46 @@ describe("resolveBatchId full-id recognition (issue #298)", () => {
 
     expect(id).toBe(CANONICAL_BATCH_ID);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1/agent-task-batch-runs");
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/v1/agent-task-batch-runs");
+    expect(url.searchParams.get("id_prefix")).toBe("bch_0123");
+    expect(url.searchParams.get("page_size")).toBe("100");
+  });
+
+  it("still finds the batch when an older backend ignores id_prefix", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({
+        data: [{ id: "bch_ffff00000000000000000000" }, { id: CANONICAL_BATCH_ID }],
+      }),
+    );
+
+    const id = await resolveBatchId("http://backend.test", "bch_0123", testConfig());
+
+    expect(id).toBe(CANONICAL_BATCH_ID);
+  });
+
+  it("names every candidate when a batch prefix is ambiguous", async () => {
+    const other = "bch_0123ffffffffffffffffffff";
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      mockResponse({ data: [{ id: CANONICAL_BATCH_ID }, { id: other }] }),
+    );
+
+    const error = await resolveBatchId(
+      "http://backend.test",
+      "bch_0123",
+      testConfig(),
+    ).catch((e: unknown) => e);
+
+    expect((error as Error).message).toContain("matches multiple batches");
+    expect((error as Error).message).toContain(CANONICAL_BATCH_ID);
+    expect((error as Error).message).toContain(other);
+  });
+
+  it("passes legacy batch ids of 32+ chars through verbatim", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    expect(await resolveBatchId("http://backend.test", LEGACY_ID, testConfig())).toBe(LEGACY_ID);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not fabricate a backend 404 when a prefix matches nothing", async () => {

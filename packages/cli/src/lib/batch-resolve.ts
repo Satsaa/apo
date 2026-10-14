@@ -16,7 +16,9 @@ export function isFullBatchId(input: string): boolean {
 /** Resolve a Batch Run ID from a full id or unique prefix.
  *
  * Full ids pass through untouched; shorter inputs are matched against the
- * batch list (`--project` scoped when configured).
+ * batch list (`--project` scoped when configured). The backend filters by
+ * `id_prefix` and skips its facets; a backend from before that parameter
+ * ignores it and returns its newest page, so the match also runs here.
  */
 export async function resolveBatchId(
   backendUrl: string,
@@ -27,7 +29,7 @@ export async function resolveBatchId(
     return prefix;
   }
 
-  const params: Record<string, string> = {};
+  const params: Record<string, string> = { id_prefix: prefix, page_size: "100" };
   if (config.projectId) params.project = config.projectId;
 
   // The backend returns a paginated payload ({data: [...]}); accept a bare
@@ -39,9 +41,9 @@ export async function resolveBatchId(
   const result = findByPrefix(batches, prefix, (b) => b.id);
   if (result.status === "none") {
     throw new UnresolvedIdError(
-      `No batch matching "${prefix}" in the recent batches (prefixes are ` +
-        `resolved against the most recent batches only). Use the full batch id ` +
-        `to address older batches.`,
+      `No batch id starts with "${prefix}". Check the id, or use the full ` +
+        `batch id (a backend older than id-prefix search only looks at its ` +
+        `100 most recent batches).`,
     );
   }
   if (result.status === "ambiguous") {

@@ -701,9 +701,13 @@ async def create_caller_batch_run_route(
 
 
 @router.get("/agent-task-batch-runs", response_model=PaginatedBatchRunSummary)
-async def list_agent_task_batch_runs(
+def list_agent_task_batch_runs(
     request: Request,
     project: str | None = Query(default=None),
+    id_prefix: str | None = Query(
+        default=None,
+        description="Keep batches whose id starts with this text. Skips the facets, so resolving a short id stays cheap.",
+    ),
     status: str | None = Query(default=None),
     q: str | None = Query(default=None),
     model: str | None = Query(default=None),
@@ -718,6 +722,10 @@ async def list_agent_task_batch_runs(
     session: Session = Depends(get_session),
 ):
     """List batch runs with server-side filtering and pagination.
+
+    Sync by design, like ``list_agent_task_runs``: the facets scan every
+    batch in scope with sync SQL, which must run in the threadpool rather
+    than block the event loop.
 
     The list is scoped to the caller's readable Projects. An
     explicit ``project`` is authorized before use; omitting it returns
@@ -742,6 +750,7 @@ async def list_agent_task_batch_runs(
         session,
         BatchRunListFilters(
             project_ids=project_ids,
+            id_prefix=id_prefix,
             statuses=status_list,
             search=q,
             since=since,
@@ -845,6 +854,10 @@ def list_agent_task_runs(
         description="Repeatable serving provider/route filter; matches the observed provider or route on the run's trace calls (issue #307)",
     ),
     since: str | None = Query(default=None),
+    id_prefix: str | None = Query(
+        default=None,
+        description="Keep runs whose id starts with this text (resolving a short id).",
+    ),
     limit: int = Query(default=1000, ge=1, le=5000),
     session: Session = Depends(get_session),
 ):
@@ -899,6 +912,8 @@ def list_agent_task_runs(
         # the unified filter bar can write one convention everywhere.
         statuses = [s.strip().lower() for raw in status for s in raw.split(",") if s.strip()]
         query = query.where(col(AgentTaskRunDB.status).in_(statuses))
+    if id_prefix:
+        query = query.where(col(AgentTaskRunDB.id).startswith(id_prefix, autoescape=True))
     if task_id:
         query = query.where(AgentTaskRunDB.task_id == task_id)
     if batch_run_id:

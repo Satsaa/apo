@@ -145,6 +145,59 @@ def test_batch_list_search_matches_id(session: Session):
     assert ids == ["alpha-1"]
 
 
+def test_batch_list_id_prefix_matches_leading_characters(session: Session):
+    session.add(_batch("bch_2b15aa"))
+    session.add(_batch("bch_2b16bb"))
+    session.add(_batch("xbch_2b15"))
+    session.commit()
+
+    ids, total, _ = _query_batches(
+        session, BatchRunListFilters(id_prefix="bch_2b15")
+    )
+    assert ids == ["bch_2b15aa"]
+    assert total == 1
+
+
+def test_batch_list_id_prefix_treats_wildcards_literally(session: Session):
+    # "_" and "%" are LIKE wildcards; a prefix must match them as text.
+    session.add(_batch("bch_1"))
+    session.add(_batch("bchx1"))
+    session.add(_batch("b%c"))
+    session.add(_batch("bzzc"))
+    session.commit()
+
+    ids, _, _ = _query_batches(session, BatchRunListFilters(id_prefix="bch_"))
+    assert ids == ["bch_1"]
+    ids, _, _ = _query_batches(session, BatchRunListFilters(id_prefix="b%"))
+    assert ids == ["b%c"]
+
+
+def test_batch_list_id_prefix_stays_in_project_scope(session: Session):
+    session.add(_batch("bch_a1", project="proj-a"))
+    session.add(_batch("bch_a2", project="proj-b"))
+    session.commit()
+
+    ids, _, _ = _query_batches(
+        session, BatchRunListFilters(project_ids=["proj-a"], id_prefix="bch_a")
+    )
+    assert ids == ["bch_a1"]
+
+
+def test_batch_list_id_prefix_skips_facets(session: Session):
+    session.add(_batch("bch_f1"))
+    session.add(_task_run("r1", "bch_f1", model="m1"))
+    session.commit()
+
+    page = list_batch_run_summaries(
+        session,
+        BatchRunListFilters(id_prefix="bch_f"),
+        BatchRunListPagination(page=0, page_size=10),
+    )
+    assert [b.id for b in page.data] == ["bch_f1"]
+    assert page.model_facets == []
+    assert page.provider_facets == []
+
+
 def test_batch_list_search_matches_environment(session: Session):
     session.add(_batch("b1", environment="staging"))
     session.add(_batch("b2", environment="prod"))

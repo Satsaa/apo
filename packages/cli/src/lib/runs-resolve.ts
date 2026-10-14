@@ -43,7 +43,9 @@ export async function resolveRunIdByPrefix(
   prefix: string,
   config: ResolvedConfig,
 ): Promise<string> {
-  const params: Record<string, string> = {};
+  // `id_prefix` filters server-side; a backend from before it ignores the
+  // parameter and returns its newest runs, so the match also runs here.
+  const params: Record<string, string> = { id_prefix: prefix };
   if (config.projectId) params.project = config.projectId;
 
   const runs = await apiGet<Array<{ id: string }>>(
@@ -55,8 +57,9 @@ export async function resolveRunIdByPrefix(
   const result = findByPrefix(runs, prefix, (r) => r.id);
   if (result.status === "none") {
     throw new UnresolvedIdError(
-      `No run matching "${prefix}" in the recent runs (prefixes are resolved ` +
-        `against the most recent runs only). Use the full run id to address older runs.`,
+      `No run id starts with "${prefix}". Check the id, or use the full run id ` +
+        `(a backend older than id-prefix search only looks at its 1000 most ` +
+        `recent runs).`,
     );
   }
   if (result.status === "ambiguous") {

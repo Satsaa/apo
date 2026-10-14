@@ -278,6 +278,43 @@ def test_task_run_list_single_status_param_still_filters(
     assert {r["id"] for r in client.get("/v1/agent-task-runs", params={"project": "proj-status", "status": "passed"}).json()} == {"r-pass"}
 
 
+def test_task_run_list_id_prefix_matches_leading_characters_literally(
+    client: TestClient,
+    session: Session,
+) -> None:
+    """``id_prefix`` resolves a short id: leading characters only, and
+    ``_``/``%`` match as text rather than as LIKE wildcards."""
+    now = datetime.now(timezone.utc)
+    session.add_all([_batch("b", "proj-prefix", now)])
+    session.add_all(
+        [
+            _run("run_ab1", "b", "task-1", now),
+            _run("runxab2", "b", "task-1", now),
+            _run("xrun_ab3", "b", "task-1", now),
+        ]
+    )
+    session.commit()
+
+    params = {"project": "proj-prefix", "id_prefix": "run_ab"}
+    assert {r["id"] for r in client.get("/v1/agent-task-runs", params=params).json()} == {"run_ab1"}
+
+
+def test_batch_list_id_prefix_route_returns_matches_without_facets(
+    client: TestClient,
+    session: Session,
+) -> None:
+    now = datetime.now(timezone.utc)
+    session.add_all([_batch("bch_aa1", "p", now), _batch("bch_bb2", "p", now)])
+    session.add_all([_configured_run("r1", "bch_aa1", "terra", "high", now)])
+    session.commit()
+
+    body = client.get(
+        "/v1/agent-task-batch-runs", params={"project": "p", "id_prefix": "bch_aa"}
+    ).json()
+    assert [b["id"] for b in body["data"]] == ["bch_aa1"]
+    assert body["model_facets"] == []
+
+
 def test_task_run_list_status_filter_is_case_insensitive_on_input(
     client: TestClient,
     session: Session,

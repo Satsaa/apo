@@ -73,6 +73,8 @@ class PaginatedBatchRunSummary(BaseModel):
 class BatchRunListFilters:
     project: str | None = None
     project_ids: list[str] | None = None  # readable-Project scope
+    # Short-id resolution: a prefix match that skips the facets.
+    id_prefix: str | None = None
     statuses: list[str] = field(default_factory=list)
     search: str | None = None
     since: str | None = None
@@ -105,8 +107,12 @@ def list_batch_run_summaries(
     model/effort filtering) so the dropdown is stable.
     """
     base = _apply_base_filters(select(AgentTaskBatchRunDB), filters)
-    model_facets = _compute_model_facets(session, base, _single_project(filters))
-    provider_facets = _compute_provider_facets(session, base)
+    if filters.id_prefix:
+        model_facets: list[ModelFacetOption] = []
+        provider_facets: list[ProviderFacetOption] = []
+    else:
+        model_facets = _compute_model_facets(session, base, _single_project(filters))
+        provider_facets = _compute_provider_facets(session, base)
     filtered = _apply_config_filters(base, filters.models, filters.efforts)
     filtered = _apply_provider_filter(filtered, filters.providers)
 
@@ -163,6 +169,10 @@ def _apply_base_filters(
         base = base.where(col(AgentTaskBatchRunDB.project).in_(filters.project_ids))
     elif filters.project:
         base = base.where(AgentTaskBatchRunDB.project == filters.project)
+    if filters.id_prefix:
+        base = base.where(
+            col(AgentTaskBatchRunDB.id).startswith(filters.id_prefix, autoescape=True)
+        )
     if filters.statuses:
         base = base.where(col(AgentTaskBatchRunDB.status).in_(filters.statuses))
     # Same ``Nh``/``Nd`` vocabulary the evidence-view cohort uses, so a date
