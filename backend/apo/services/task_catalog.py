@@ -17,6 +17,11 @@ from typing import Any
 from sqlmodel import Session, select
 
 from ..models.db import ProjectTaskInventoryDB, ProjectTaskSourceDB
+from .task_definition_revisions import (
+    TaskDefinitionValidationError,
+    ensure_task_definition_revision,
+    validate_task_definition_document,
+)
 
 _MAX_TASKS = 5000
 _MAX_TASK_ID_BYTES = 512
@@ -102,7 +107,7 @@ def validate_catalog_request(tasks: list[dict[str, Any]]) -> list[dict[str, Any]
                 raise ValueError(f"Task {i}: duplicate tag '{tag}'")
             seen_tags.add(tag)
 
-        normalized.append({
+        entry: dict[str, Any] = {
             "task_id": task_id,
             "display_name": display_name,
             "task_path": task_path,
@@ -110,15 +115,29 @@ def validate_catalog_request(tasks: list[dict[str, Any]]) -> list[dict[str, Any]
             "adapter_name": adapter_name,
             "has_checks": bool(task.get("has_checks", False)),
             "tags": sorted(tags),
-        })
+        }
+        definition = task.get("definition")
+        if definition is not None:
+            try:
+                entry["definition"] = validate_task_definition_document(
+                    definition, task_id=task_id
+                )
+            except TaskDefinitionValidationError as exc:
+                raise ValueError(f"Task {i}: {exc}") from exc
+        normalized.append(entry)
 
     normalized.sort(key=lambda t: t["task_id"])
     return normalized
 
 
 def compute_catalog_digest(normalized_tasks: list[dict[str, Any]]) -> str:
-    """Compute the canonical SHA-256 digest of the normalized catalog."""
-    doc = {"schema_version": 1, "tasks": normalized_tasks}
+    """Compute the canonical SHA-256 digest of the normalized catalog.
+
+    Commits to task metadata only, never to ``definition``: it must equal the
+    CLI's computeCatalogDigest, which ``apo connect`` reports and claims gate on.
+    """
+    metadata = [{k: v for k, v in t.items() if k != "definition"} for t in normalized_tasks]
+    doc = {"schema_version": 1, "tasks": metadata}
     payload = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
@@ -132,37 +151,37 @@ def publish_catalog(
     """Atomically replace a Project's task catalog.
 
     When tasks carry a ``definition`` document (schema v2), the
-    canonical source is validated, deduplicated into immutable
-    TaskDefinitionRevisionDB rows, and pinned on the inventory pointer.
-    The catalog digest commits to the definition digest.
+    canonical source is deduplicated into immutable TaskDefinitionRevisionDB
+    rows and pinned on the inventory pointer. The catalog digest stays over
+    metadata only (see ``compute_catalog_digest``), so a source-only edit
+    re-pins revisions without moving the digest executors match on.
     Returns the TaskCatalog response dict.
     """
-    from apo.services.task_definition_revisions import (
-        ensure_task_definition_revision,
-    )
-
-    # Build the digest projection: for v2 tasks, substitute definition_digest
-    # for the source-bearing definition object.
-    digest_tasks: list[dict[str, Any]] = []
+    revision_ids: dict[str, str | None] = {}
     for task in normalized_tasks:
-        dt = {k: v for k, v in task.items() if k != "definition"}
         definition = task.get("definition")
-        if isinstance(definition, dict):
-            rev = ensure_task_definition_revision(
+        revision_ids[task["task_id"]] = (
+            ensure_task_definition_revision(
                 session, project_id=project_id, task_id=task["task_id"], document=definition,
-            )
-            dt["definition_digest"] = rev.content_sha256
-        digest_tasks.append(dt)
+            ).id
+            if isinstance(definition, dict)
+            else None
+        )
 
-    digest = compute_catalog_digest_v2(digest_tasks)
+    digest = compute_catalog_digest(normalized_tasks)
     now = datetime.now(timezone.utc)
 
-    # Check for idempotent re-publish (same digest → no-op)
     existing = session.exec(
         select(ProjectTaskSourceDB).where(ProjectTaskSourceDB.project == project_id)
     ).first()
 
-    if existing and existing.catalog_digest == digest and existing.source_type == "published":
+    if (
+        existing
+        and existing.catalog_digest == digest
+        and existing.source_type == "published"
+        and _pinned_revisions(session, existing.id) == revision_ids
+    ):
+        session.commit()
         return {
             "project": project_id,
             "schema_version": 2,
@@ -206,13 +225,6 @@ def publish_catalog(
         session.delete(row)
 
     for task in normalized_tasks:
-        definition = task.get("definition")
-        rev_id: str | None = None
-        if isinstance(definition, dict):
-            rev = ensure_task_definition_revision(
-                session, project_id=project_id, task_id=task["task_id"], document=definition,
-            )
-            rev_id = rev.id
         inv = ProjectTaskInventoryDB(
             project=project_id,
             task_source_id=existing.id,
@@ -223,7 +235,7 @@ def publish_catalog(
             task_path=task["task_path"],
             has_checks=task["has_checks"],
             source_type="published",
-            task_definition_revision_id=rev_id,
+            task_definition_revision_id=revision_ids[task["task_id"]],
         )
         session.add(inv)
 
@@ -256,20 +268,11 @@ def publish_catalog(
     return result
 
 
-def compute_catalog_digest_v2(digest_tasks: list[dict[str, Any]]) -> str:
-    """Compute the canonical SHA-256 digest of the v2 catalog.
-
-    Uses schema_version 2 and includes ``definition_digest`` instead of
-    source-bearing ``definition`` objects. Falls back to schema v1 shape
-    when no task carries a definition_digest.
-    """
-    has_definitions = any("definition_digest" in t for t in digest_tasks)
-    doc = {
-        "schema_version": 2 if has_definitions else 1,
-        "tasks": digest_tasks,
-    }
-    payload = json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
+def _pinned_revisions(session: Session, source_id: str | None) -> dict[str, str | None]:
+    rows = session.exec(
+        select(ProjectTaskInventoryDB).where(ProjectTaskInventoryDB.task_source_id == source_id)
+    ).all()
+    return {row.task_id: row.task_definition_revision_id for row in rows}
 
 
 def get_catalog_status(session: Session, project_id: str) -> dict[str, Any] | None:
