@@ -79,6 +79,68 @@ describe("useConnectedExecutorState", () => {
     await waitFor(() => expect(getConnectedExecutorStatus).toHaveBeenCalledTimes(1));
   });
 
+  it("drops the previous project's answer when the project changes", async () => {
+    vi.mocked(getConnectedExecutorStatus).mockResolvedValueOnce({ state: "offline" });
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useConnectedExecutorState(projectId, true),
+      { initialProps: { projectId: "acme" } },
+    );
+    await waitFor(() => expect(result.current).toBe("offline"));
+
+    vi.mocked(getConnectedExecutorStatus).mockReturnValue(new Promise(() => {}));
+    rerender({ projectId: "other" });
+    expect(result.current).toBeNull();
+    expect(getConnectedExecutorStatus).toHaveBeenLastCalledWith("other", expect.any(AbortSignal));
+  });
+
+  it("polls again once the previous request has settled", async () => {
+    vi.useFakeTimers();
+    vi.mocked(getConnectedExecutorStatus).mockResolvedValue({ state: "ready" });
+    renderHook(() => useConnectedExecutorState("acme", true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(getConnectedExecutorStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts a hung request so polling resumes", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    vi.mocked(getConnectedExecutorStatus).mockImplementation(
+      (_projectId, signal) =>
+        new Promise((_resolve, reject) => {
+          if (signal) signals.push(signal);
+          signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    renderHook(() => useConnectedExecutorState("acme", true));
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(signals[0].aborted).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(getConnectedExecutorStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts the request in flight on unmount", () => {
+    let signal: AbortSignal | undefined;
+    vi.mocked(getConnectedExecutorStatus).mockImplementation((_projectId, s) => {
+      signal = s;
+      return new Promise(() => {});
+    });
+    const { unmount } = renderHook(() => useConnectedExecutorState("acme", true));
+    unmount();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("does not start a poll while one is in flight", () => {
     vi.useFakeTimers();
     vi.mocked(getConnectedExecutorStatus).mockReturnValue(new Promise(() => {}));

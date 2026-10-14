@@ -8,6 +8,8 @@ import {
 } from "@/lib/agent-task-api";
 
 const POLL_MS = 15_000;
+/** A hung request must not hold the in-flight guard and stop polling. */
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface ExecutorRunWarning {
   title: string;
@@ -64,11 +66,13 @@ export function useConnectedExecutorState(
     setState(null);
     if (!enabled) return;
     let cancelled = false;
-    let inFlight = false;
+    let inFlight: AbortController | null = null;
     const load = () => {
       if (inFlight || document.hidden) return;
-      inFlight = true;
-      getConnectedExecutorStatus(projectId)
+      const controller = new AbortController();
+      inFlight = controller;
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      getConnectedExecutorStatus(projectId, controller.signal)
         .then((res) => {
           if (!cancelled) setState(res.state);
         })
@@ -77,7 +81,8 @@ export function useConnectedExecutorState(
           if (!cancelled) setState(null);
         })
         .finally(() => {
-          inFlight = false;
+          clearTimeout(timeout);
+          if (inFlight === controller) inFlight = null;
         });
     };
     const onVisibility = () => {
@@ -89,6 +94,7 @@ export function useConnectedExecutorState(
     return () => {
       cancelled = true;
       clearInterval(timer);
+      inFlight?.abort();
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [projectId, enabled]);

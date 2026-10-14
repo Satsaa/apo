@@ -166,7 +166,7 @@ describe("AgentTasksClient — connected executor warning", () => {
     expect(warning).toHaveTextContent("No connected environment");
     expect(warning).toHaveTextContent("apo connect");
     expect(warning).toHaveTextContent("expire after 24 hours");
-    expect(getConnectedExecutorStatus).toHaveBeenCalledWith("acme-evals");
+    expect(getConnectedExecutorStatus).toHaveBeenCalledWith("acme-evals", expect.any(AbortSignal));
     const runButtons = screen.getAllByRole("button", { name: /Run/i });
     expect(runButtons.every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
   });

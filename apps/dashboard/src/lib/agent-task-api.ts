@@ -875,8 +875,11 @@ export const listTaskRuns = (
  * the state that decides whether "Run selected" will start. */
 export const getConnectedExecutorStatus = (
   projectId: string,
+  signal?: AbortSignal,
 ): Promise<{ state: ConnectedEnvironmentState }> =>
-  apiClient(`/v1/projects/${encodeURIComponent(projectId)}/connected-executor-status`);
+  apiClient(`/v1/projects/${encodeURIComponent(projectId)}/connected-executor-status`, {
+    signal,
+  });
 
 export const createAgentTaskBatchRun = (
   request: CreateAgentTaskBatchRunRequest,
