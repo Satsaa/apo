@@ -276,6 +276,51 @@ class TestAnthropicReasoning:
         )
         assert result == {"input": 50, "output": 250, "reasoning": 150}
 
+    def test_semconv_attribute_wins_over_ai_sdk_alias(self) -> None:
+        result = normalize_usage(
+            {
+                "gen_ai.usage.output_tokens": 100,
+                "gen_ai.usage.reasoning.output_tokens": 30,
+                "ai.usage.reasoningTokens": 60,
+            },
+            "anthropic",
+        )
+        assert result == {"output": 70, "reasoning": 30}
+
+    def test_reasoning_without_an_output_count_is_dropped(self) -> None:
+        """The AI SDK 6 root ``ai.streamText`` span: its output sits under
+        ``ai.usage.outputTokens``, which no normalizer reads, and its child
+        span carries the full usage. Keeping its reasoning would price it on
+        top of the child."""
+        result = normalize_usage(
+            {
+                "ai.response.providerMetadata": '{"anthropic": {}}',
+                "ai.usage.inputTokens": 1000,
+                "ai.usage.outputTokens": 500,
+                "ai.usage.reasoningTokens": 200,
+            },
+            model_name="claude-opus-5-5",
+        )
+        assert "reasoning" not in result
+
+    def test_reasoning_is_capped_at_output(self) -> None:
+        result = normalize_usage(
+            {
+                "gen_ai.usage.input_tokens": 10,
+                "gen_ai.usage.output_tokens": 100,
+                "gen_ai.usage.reasoning.output_tokens": 150,
+            },
+            "anthropic",
+        )
+        assert result == {"input": 10, "output": 0, "reasoning": 100}
+
+    def test_bedrock_reasoning_without_output_is_dropped(self) -> None:
+        result = normalize_usage(
+            {"gen_ai.usage.input_tokens": 10, "gen_ai.usage.reasoning.output_tokens": 5},
+            "bedrock",
+        )
+        assert result == {"input": 10}
+
     def test_without_reasoning_attribute_output_is_unchanged(self) -> None:
         result = normalize_usage(
             {"gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 90},

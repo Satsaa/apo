@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._shared import apply_non_overlap, get_int
+from ._shared import apply_non_overlap, get_int, set_output_reasoning
 
 
 def normalize(attrs: dict[str, Any]) -> dict[str, int]:
@@ -40,8 +40,7 @@ def normalize(attrs: dict[str, Any]) -> dict[str, int]:
         usage["cache_write_5m"] = cache_creation
 
     reasoning = get_int(attrs, "gen_ai.usage.reasoning.output_tokens")
-    if reasoning is not None:
-        usage["reasoning"] = reasoning
+    set_output_reasoning(usage, reasoning)
 
     # Bedrock input is inclusive of cache_read -> subtract.
     return apply_non_overlap(usage, input_includes_cache=True, output_includes_reasoning=True)

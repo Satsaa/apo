@@ -52,6 +52,20 @@ def get_json_dict(attrs: dict[str, Any], key: str) -> dict[str, Any] | None:
     return None
 
 
+def set_output_reasoning(usage: dict[str, int], reasoning: int | None) -> None:
+    """Record ``reasoning`` as the part of an already-read output count.
+
+    A span with a reasoning count but no output count (e.g. the AI SDK's root
+    ``ai.streamText`` span, whose output is under a key the normalizer doesn't
+    read; its child span carries the full usage) would otherwise price
+    reasoning-only usage on top of the child. The count is capped at output so
+    the split never prices more tokens than the provider reported.
+    """
+    if reasoning is None or "output" not in usage:
+        return
+    usage["reasoning"] = min(max(reasoning, 0), usage["output"])
+
+
 def apply_non_overlap(
     usage: dict[str, int], *, input_includes_cache: bool, output_includes_reasoning: bool
 ) -> dict[str, int]:
@@ -66,8 +80,10 @@ def apply_non_overlap(
 
     Providers differ in whether their reported ``input_tokens`` /
     ``output_tokens`` are inclusive of the subsets:
-      - OpenAI, Gemini, Bedrock: inclusive (OTel GenAI semconv) -> subtract.
+      - OpenAI, Gemini, Bedrock: input inclusive of cache (OTel GenAI
+        semconv) -> subtract.
       - Anthropic: input_tokens is already net of cache -> do NOT subtract.
+      - Reasoning is inside output on every provider, Anthropic included.
 
     Floors at 0 (no negative token counts). Returns the same dict.
     """

@@ -31,5 +31,5 @@ INPUT_FAMILY: frozenset[UsageKey] = frozenset(
 )
 
 # The output-side family. Reasoning is billed on the output side but is a
-# distinct dimension (OpenAI o-series, Gemini thinking models).
+# distinct dimension (OpenAI o-series, Gemini thinking, Claude extended thinking).
 OUTPUT_FAMILY: frozenset[UsageKey] = frozenset({UsageKey.OUTPUT, UsageKey.REASONING})

@@ -177,6 +177,64 @@ def test_claude_thinking_tokens_roll_up_without_changing_cost(
     assert usage_json["max_reasoning_call_id"] == "0000000000000002"
 
 
+def test_ai_sdk_root_span_does_not_price_reasoning_twice(session: Session) -> None:
+    """AI SDK 6 stamps the step's usage on both the root ``ai.streamText`` span
+    and its ``doStream`` child, the root without an output count the anthropic
+    normalizer reads. Only the child is priced, and reasoning is counted once."""
+    _ = load_default_prices(session)
+    metadata = {"key": "ai.response.providerMetadata", "value": {"stringValue": '{"anthropic": {}}'}}
+
+    def int_attr(key: str, value: int) -> dict[str, object]:
+        return {"key": key, "value": {"intValue": str(value)}}
+
+    model = {"key": "ai.model.id", "value": {"stringValue": "claude-opus-5-5"}}
+    sdk_usage = [
+        int_attr("ai.usage.inputTokens", 1000),
+        int_attr("ai.usage.outputTokens", 500),
+        int_attr("ai.usage.reasoningTokens", 200),
+    ]
+    outer: dict[str, object] = {
+        "traceId": TRACE_ID,
+        "spanId": "0000000000000001",
+        "parentSpanId": ROOT_SPAN_ID,
+        "name": "ai.streamText",
+        "startTimeUnixNano": str(START_NS),
+        "endTimeUnixNano": str(START_NS + 2_000 * MS),
+        "status": {"code": 1},
+        "attributes": [model, metadata, *sdk_usage],
+    }
+    inner: dict[str, object] = {
+        "traceId": TRACE_ID,
+        "spanId": "0000000000000002",
+        "parentSpanId": "0000000000000001",
+        "name": "ai.streamText.doStream",
+        "startTimeUnixNano": str(START_NS),
+        "endTimeUnixNano": str(START_NS + 2_000 * MS),
+        "status": {"code": 1},
+        "attributes": [
+            model,
+            metadata,
+            *sdk_usage,
+            {"key": "gen_ai.system", "value": {"stringValue": "anthropic"}},
+            {"key": "gen_ai.request.model", "value": {"stringValue": "claude-opus-5-5"}},
+            int_attr("gen_ai.usage.input_tokens", 1000),
+            int_attr("gen_ai.usage.output_tokens", 500),
+        ],
+    }
+    _ingest(session, [outer, inner])
+    calls = {c.id: c for c in session.exec(select(LoggedCallDB)).all()}
+
+    assert not (calls["0000000000000001"].raw_usage or {}).get("reasoning")
+    assert calls["0000000000000002"].raw_usage == {"input": 1000, "output": 300, "reasoning": 200}
+    child_cost = calls["0000000000000002"].cost
+    assert child_cost is not None and child_cost > 0
+    assert sum(c.cost or 0 for c in calls.values()) == child_cost
+
+    usage_json = _aggregate(session).generation_usage_json
+    assert usage_json is not None
+    assert usage_json["reasoning_tokens"] == 200
+
+
 def _cost_before_the_split(session: Session, call: LoggedCallDB, usage: dict[str, int]) -> int:
     """What the call was priced at when the anthropic normalizer ignored
     reasoning: thinking tokens inside a gross output count."""

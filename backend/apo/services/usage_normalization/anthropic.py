@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._shared import apply_non_overlap, get_int
+from ._shared import apply_non_overlap, get_int, set_output_reasoning
 
 
 def normalize(attrs: dict[str, Any]) -> dict[str, int]:
@@ -68,8 +68,7 @@ def normalize(attrs: dict[str, Any]) -> dict[str, int]:
     reasoning = get_int(attrs, "gen_ai.usage.reasoning.output_tokens")
     if reasoning is None:
         reasoning = get_int(attrs, "ai.usage.reasoningTokens")
-    if reasoning is not None:
-        usage["reasoning"] = reasoning
+    set_output_reasoning(usage, reasoning)
 
     # Anthropic input_tokens is already net of cache; output includes thinking.
     return apply_non_overlap(usage, input_includes_cache=False, output_includes_reasoning=True)
