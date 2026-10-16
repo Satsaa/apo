@@ -3,7 +3,8 @@
 """Bedrock usage normalization.
 
 Bedrock reports ``input_tokens`` *inclusive* of cache_read (OTel GenAI
-semconv). cache_creation is the cache-write bucket. See
+semconv). cache_creation is the cache-write bucket. Reasoning (Claude's
+extended thinking) is a subset of output, as on Anthropic's own API. See
 ``wayfinder/assets/03-normalizer-research.md`` §3.
 """
 
@@ -38,5 +39,9 @@ def normalize(attrs: dict[str, Any]) -> dict[str, int]:
         # Bedrock has no TTL split; default to the 5m tier.
         usage["cache_write_5m"] = cache_creation
 
+    reasoning = get_int(attrs, "gen_ai.usage.reasoning.output_tokens")
+    if reasoning is not None:
+        usage["reasoning"] = reasoning
+
     # Bedrock input is inclusive of cache_read -> subtract.
-    return apply_non_overlap(usage, input_includes_cache=True, output_includes_reasoning=False)
+    return apply_non_overlap(usage, input_includes_cache=True, output_includes_reasoning=True)

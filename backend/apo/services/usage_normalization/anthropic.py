@@ -5,7 +5,13 @@
 Anthropic reports ``input_tokens`` *exclusive* of cache (input_tokens is the
 non-cached portion; cache_read / cache_creation are reported separately and
 are NOT part of input_tokens). So the non-overlap invariant does NOT subtract
-cache from input here. Output has no reasoning subset on Anthropic.
+cache from input here.
+
+Extended thinking is billed as output: ``output_tokens`` includes it, and the
+API reports the thinking share as ``output_tokens_details.thinking_tokens``,
+which emitters publish as ``gen_ai.usage.reasoning.output_tokens``. Like the
+other providers, reasoning is split out of output (and priced at the output
+rate unless a model has its own reasoning price).
 
 The 5m/1h ephemeral TTL split: ``cache_creation.input_tokens`` is the total
 cache-write count; ``ephemeral_5m`` + ``ephemeral_1h`` are subsets of it. The
@@ -59,5 +65,11 @@ def normalize(attrs: dict[str, Any]) -> dict[str, int]:
             # No TTL breakdown at all -> default to the 5m tier.
             usage["cache_write_5m"] = cache_creation_total
 
-    # Anthropic input_tokens is already net of cache; output has no reasoning.
-    return apply_non_overlap(usage, input_includes_cache=False, output_includes_reasoning=False)
+    reasoning = get_int(attrs, "gen_ai.usage.reasoning.output_tokens")
+    if reasoning is None:
+        reasoning = get_int(attrs, "ai.usage.reasoningTokens")
+    if reasoning is not None:
+        usage["reasoning"] = reasoning
+
+    # Anthropic input_tokens is already net of cache; output includes thinking.
+    return apply_non_overlap(usage, input_includes_cache=False, output_includes_reasoning=True)

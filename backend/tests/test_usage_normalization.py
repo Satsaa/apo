@@ -236,6 +236,54 @@ class TestNonOverlapSubtraction:
         assert result["reasoning"] == 300
 
 
+class TestAnthropicReasoning:
+    """Claude's extended thinking is part of output_tokens. The anthropic
+    normalizer used to drop the reasoning attribute, so every Claude run showed
+    unknown reasoning while the span carried the count."""
+
+    def test_bare_claude_name_splits_reasoning_out_of_output(self) -> None:
+        result = normalize_usage(
+            {
+                "gen_ai.system": "anthropic",
+                "gen_ai.usage.input_tokens": 2,
+                "gen_ai.usage.output_tokens": 432,
+                "gen_ai.usage.reasoning.output_tokens": 104,
+            },
+            model_name="claude-opus-5-5",
+        )
+        assert result == {"input": 2, "output": 328, "reasoning": 104}
+
+    def test_reported_zero_reasoning_is_known_zero(self) -> None:
+        result = normalize_usage(
+            {
+                "gen_ai.usage.input_tokens": 2,
+                "gen_ai.usage.output_tokens": 254,
+                "gen_ai.usage.reasoning.output_tokens": 0,
+            },
+            "anthropic",
+        )
+        assert result == {"input": 2, "output": 254, "reasoning": 0}
+
+    def test_ai_sdk_reasoning_tokens(self) -> None:
+        result = normalize_usage(
+            {
+                "ai.response.providerMetadata": '{"anthropic": {}}',
+                "ai.usage.promptTokens": 50,
+                "ai.usage.completionTokens": 400,
+                "ai.usage.reasoningTokens": 150,
+            },
+            model_name="claude-sonnet-5-5",
+        )
+        assert result == {"input": 50, "output": 250, "reasoning": 150}
+
+    def test_without_reasoning_attribute_output_is_unchanged(self) -> None:
+        result = normalize_usage(
+            {"gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 90},
+            "anthropic",
+        )
+        assert result == {"input": 10, "output": 90}
+
+
 class TestInputIncludesCacheMarker:
     """apo SDK judge spans carry the whole prompt in input_tokens. Without the
     marker, an Anthropic model name picks the anthropic normalizer, which reads

@@ -11,11 +11,13 @@ import json
 
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
-from apo.models.db import AgentTaskRunDB
+from apo.models.db import AgentTaskRunDB, LoggedCallDB
 from apo.services.agent_task_projection import to_task_run_summary
 from apo.services.otlp_receiver import OtlpReceiver
+from apo.services.pricing.compute import compute_cost
+from apo.services.pricing.loader import load_default_prices
 from apo.services.trace_backend import NativeTraceBackend
 
 TRACE_ID = "30930930930930930930930930930930"
@@ -124,6 +126,106 @@ def test_trace_without_generations_has_no_usage_summary(session: Session) -> Non
     _ingest(session, [_tool("0000000000000001", duration_ms=5_000)])
 
     assert _aggregate(session).generation_usage_json is None
+
+
+# Three generations of a real Opus 5.5 run (apo run_512edb1448b9bba0b1f3b1a0),
+# with the usage attributes bind's pi runtime stamps: both cache spellings and
+# both reasoning spellings. The runtime logged 42, 104 and 0 thinking tokens.
+_CLAUDE_CALLS: list[dict[str, int]] = [
+    {"input": 4, "output": 365, "cache_read": 0, "cache_write": 33746, "reasoning": 42},
+    {"input": 2, "output": 432, "cache_read": 33746, "cache_write": 5314, "reasoning": 104},
+    {"input": 2, "output": 254, "cache_read": 39060, "cache_write": 4832, "reasoning": 0},
+]
+
+
+def test_claude_thinking_tokens_roll_up_without_changing_cost(
+    session: Session,
+) -> None:
+    """Claude reasoning used to be dropped by the anthropic normalizer, so the
+    run read "unknown". It is split out of output and priced at the output
+    rate, so each call costs what it did before the split."""
+    _ = load_default_prices(session)
+    _ingest(
+        session,
+        [
+            _claude_generation(f"000000000000000{i + 1}", usage)
+            for i, usage in enumerate(_CLAUDE_CALLS)
+        ],
+    )
+    calls = {c.id: c for c in session.exec(select(LoggedCallDB)).all()}
+    first = calls["0000000000000001"]
+    assert first.raw_usage == {
+        "input": 4,
+        "output": 323,
+        "cache_read": 0,
+        "cache_write_1h": 0,
+        "cache_write_5m": 33746,
+        "reasoning": 42,
+    }
+    assert first.completion_tokens == 365
+
+    for i, usage in enumerate(_CLAUDE_CALLS):
+        call = calls[f"000000000000000{i + 1}"]
+        assert call.cost is not None and call.cost > 0
+        assert call.cost == _cost_before_the_split(session, call, usage)
+
+    usage_json = _aggregate(session).generation_usage_json
+    assert usage_json is not None
+    assert usage_json["reasoning_tokens"] == 146
+    assert usage_json["reasoning_calls"] == 3
+    assert usage_json["max_call_reasoning_tokens"] == 104
+    assert usage_json["max_reasoning_call_id"] == "0000000000000002"
+
+
+def _cost_before_the_split(session: Session, call: LoggedCallDB, usage: dict[str, int]) -> int:
+    """What the call was priced at when the anthropic normalizer ignored
+    reasoning: thinking tokens inside a gross output count."""
+    assert call.created_at is not None
+    result = compute_cost(
+        session,
+        "claude-opus-5-5",
+        {
+            "input": usage["input"],
+            "output": usage["output"],
+            "cache_read": usage["cache_read"],
+            "cache_write_1h": 0,
+            "cache_write_5m": usage["cache_write"],
+        },
+        "p1",
+        call.created_at,
+    )
+    assert result is not None
+    return result.total
+
+
+def _claude_generation(span_id: str, usage: dict[str, int]) -> dict[str, object]:
+    def int_attr(key: str, value: int) -> dict[str, object]:
+        return {"key": key, "value": {"intValue": str(value)}}
+
+    attributes: list[dict[str, object]] = [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+        {"key": "gen_ai.system", "value": {"stringValue": "anthropic"}},
+        {"key": "gen_ai.request.model", "value": {"stringValue": "claude-opus-5-5"}},
+        int_attr("gen_ai.usage.input_tokens", usage["input"]),
+        int_attr("gen_ai.usage.output_tokens", usage["output"]),
+        int_attr("gen_ai.usage.cache_read.input_tokens", usage["cache_read"]),
+        int_attr("gen_ai.usage.cache_read_input_tokens", usage["cache_read"]),
+        int_attr("gen_ai.usage.cache_creation.input_tokens", usage["cache_write"]),
+        int_attr("gen_ai.usage.cache_creation_input_tokens", usage["cache_write"]),
+        int_attr("gen_ai.usage.cache_creation.ephemeral_1h_input_tokens", 0),
+        int_attr("gen_ai.usage.reasoning.output_tokens", usage["reasoning"]),
+        int_attr("gen_ai.usage.reasoning_tokens", usage["reasoning"]),
+    ]
+    return {
+        "traceId": TRACE_ID,
+        "spanId": span_id,
+        "parentSpanId": ROOT_SPAN_ID,
+        "name": "gen_ai.chat claude-opus-5-5",
+        "startTimeUnixNano": str(START_NS),
+        "endTimeUnixNano": str(START_NS + 1_000 * MS),
+        "status": {"code": 1},
+        "attributes": attributes,
+    }
 
 
 def _aggregate(session: Session) -> AgentTaskRunDB:

@@ -1,0 +1,17 @@
+{
+  "description": "Claude extended thinking served by Bedrock. reasoning.output_tokens is a subset of output_tokens, cache_read a subset of input_tokens.",
+  "source": "bedrock",
+  "provider": "bedrock",
+  "input": {
+    "gen_ai.usage.input_tokens": 1000,
+    "gen_ai.usage.output_tokens": 500,
+    "gen_ai.usage.cache_read.input_tokens": 300,
+    "gen_ai.usage.reasoning.output_tokens": 120
+  },
+  "expected": {
+    "input": 700,
+    "output": 380,
+    "cache_read": 300,
+    "reasoning": 120
+  }
+}

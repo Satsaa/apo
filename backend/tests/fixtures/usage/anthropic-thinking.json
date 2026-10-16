@@ -1,0 +1,19 @@
+{
+  "description": "Claude extended thinking. Anthropic's output_tokens includes the thinking tokens, reported as output_tokens_details.thinking_tokens and emitted as reasoning.output_tokens. Non-overlap: output excludes reasoning; input stays net of cache.",
+  "source": "anthropic",
+  "provider": "anthropic",
+  "input": {
+    "gen_ai.usage.input_tokens": 4,
+    "gen_ai.usage.output_tokens": 365,
+    "gen_ai.usage.cache_read.input_tokens": 0,
+    "gen_ai.usage.cache_creation.input_tokens": 33746,
+    "gen_ai.usage.reasoning.output_tokens": 42
+  },
+  "expected": {
+    "input": 4,
+    "output": 323,
+    "cache_read": 0,
+    "cache_write_5m": 33746,
+    "reasoning": 42
+  }
+}
