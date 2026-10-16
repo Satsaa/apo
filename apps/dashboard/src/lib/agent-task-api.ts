@@ -1,6 +1,7 @@
 import { apiClient } from "./api-client";
 import { ApiError } from "./api-error";
 import type { DeliverableSummary } from "./agent-task-deliverables-api";
+import type { ProjectTaskSourceType } from "./projects-api";
 
 // ============================================================================
 // Types
@@ -646,7 +647,7 @@ export interface TaskFileListResponse {
   files: TaskFileEntry[];
   /** "published": the list holds only the uploaded eval file; the task's
    * other files stay in the publisher's checkout at `task_path`. */
-  source_type?: string | null;
+  source_type?: ProjectTaskSourceType | null;
 }
 
 export interface TaskFileContentResponse {

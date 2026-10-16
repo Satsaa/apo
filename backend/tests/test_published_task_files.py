@@ -118,3 +118,29 @@ def test_catalog_without_definitions_lists_nothing(
     assert resp.status_code == 200, resp.text
     assert resp.json()["files"] == []
     assert resp.json()["source_type"] == "published"
+
+
+def test_non_member_cannot_list_or_read(
+    session: Session, make_authed_client: Callable[..., TestClient]
+) -> None:
+    _seed(session)
+    _publish(make_authed_client(_USER, session), _SOURCE)
+    session.add(UserDB(id="outsider", email="outsider@test", name="outsider", password_hash="x"))
+    session.commit()
+    outsider = make_authed_client("outsider", session, is_admin=False)
+
+    assert outsider.get(_files_url()).status_code in (403, 404)
+    assert outsider.get(_files_url("alpha.eval.ts")).status_code in (403, 404)
+
+
+def test_member_who_is_not_admin_reads_the_source(
+    session: Session, make_authed_client: Callable[..., TestClient]
+) -> None:
+    _seed(session)
+    client = make_authed_client(_USER, session, is_admin=False)
+    _publish(make_authed_client(_USER, session), _SOURCE)
+
+    resp = client.get(_files_url("alpha.eval.ts"))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["content"] == _SOURCE

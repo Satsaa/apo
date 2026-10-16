@@ -147,7 +147,7 @@ export function TaskRunDetailBody({
             )}
             {!checksSource && checks.length > 0 && sourceType === "published" && (
               <p className="text-[11px] text-muted-foreground/70">
-                Check source remains on the machine that executed this task — published task catalogs carry metadata only.
+                Check source remains on the machine that executed this task — a published task catalog uploads only the eval file.
               </p>
             )}
 

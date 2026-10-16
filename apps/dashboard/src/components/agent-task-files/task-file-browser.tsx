@@ -122,6 +122,15 @@ export function TaskFileBrowser({
     [taskId, projectId, commitSha]
   );
 
+  const onlyFile =
+    state.files.length === 1 && state.files[0].type === "file" ? state.files[0].path : null;
+
+  useEffect(() => {
+    if (onlyFile !== null && state.selectedPath === null) {
+      void handleSelect(onlyFile);
+    }
+  }, [onlyFile, state.selectedPath, handleSelect]);
+
   if (state.error) {
     return (
       <Alert variant="destructive">
@@ -144,8 +153,8 @@ export function TaskFileBrowser({
   if (published && state.files.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-3 text-[13px] text-muted-foreground">
-        This task was published without its eval file, so there is nothing to show here.
-        Its files are in the publisher&apos;s checkout at{" "}
+        This task was published without its eval file. Run <span className="font-mono">apo task publish</span>{" "}
+        again with a current apo CLI to upload it. Its files are in the publisher&apos;s task folder{" "}
         <span className="font-mono">{state.taskPath}</span>.
       </div>
     );
@@ -168,7 +177,7 @@ export function TaskFileBrowser({
     <div className="flex flex-col gap-2">
       <p className="text-[12px] text-muted-foreground">
         Published catalogs upload only the eval file. The task&apos;s other files are in the
-        publisher&apos;s checkout at <span className="font-mono">{state.taskPath}</span>.
+        publisher&apos;s task folder <span className="font-mono">{state.taskPath}</span>.
       </p>
       {browser}
     </div>

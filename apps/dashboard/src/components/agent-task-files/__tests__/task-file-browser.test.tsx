@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import { TaskFileBrowser } from "../task-file-browser";
-import { listTaskFiles, type TaskFileEntry } from "@/lib/agent-task-api";
+import { listTaskFiles, readTaskFile, type TaskFileEntry } from "@/lib/agent-task-api";
 
 vi.mock("@/lib/agent-task-api", () => ({
   listTaskFiles: vi.fn(),
@@ -20,6 +20,14 @@ const evalFile: TaskFileEntry = {
 describe("TaskFileBrowser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(readTaskFile).mockResolvedValue({
+      name: "alpha.eval.ts",
+      path: "alpha.eval.ts",
+      content: "task('alpha', {});",
+      size_bytes: 18,
+      language: "typescript",
+      lines: 1,
+    });
   });
 
   it("shows a published task's eval file and says where the other files are", async () => {
@@ -34,6 +42,21 @@ describe("TaskFileBrowser", () => {
     expect(await screen.findByText("alpha.eval.ts")).toBeInTheDocument();
     expect(screen.getByText(/Published catalogs upload only the eval file/)).toBeInTheDocument();
     expect(screen.getByText("chat/alpha")).toBeInTheDocument();
+  });
+
+  it("opens a task's only file without a click", async () => {
+    vi.mocked(listTaskFiles).mockResolvedValueOnce({
+      task_id: "chat/alpha",
+      task_path: "chat/alpha",
+      files: [evalFile],
+      source_type: "published",
+    });
+    render(<TaskFileBrowser taskId="chat/alpha" projectId="p1" />);
+
+    await waitFor(() =>
+      expect(readTaskFile).toHaveBeenCalledWith("chat/alpha", "alpha.eval.ts", "p1", undefined),
+    );
+    expect(readTaskFile).toHaveBeenCalledTimes(1);
   });
 
   it("explains a published task that has no eval file instead of showing an empty browser", async () => {

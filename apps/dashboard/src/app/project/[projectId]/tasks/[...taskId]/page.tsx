@@ -208,9 +208,7 @@ export default async function TaskDetailPage({
         </div>
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
           {task ? (
-            <>
-              <Badge variant="outline" className="font-mono text-[10px]">{task.folder_path || "(root)"}</Badge>
-            </>
+            <Badge variant="outline" className="font-mono text-[10px]">{task.folder_path || "(root)"}</Badge>
           ) : null}
           <Badge variant="outline" className="text-[10px]">
             {scopeActive

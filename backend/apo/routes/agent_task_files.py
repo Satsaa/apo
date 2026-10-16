@@ -10,6 +10,7 @@ task source.
 
 import os
 from pathlib import Path
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -52,6 +53,9 @@ EXTENSION_LANGUAGE_MAP: dict[str, str] = {
 }
 
 
+SourceType = Literal["git", "filesystem", "demo", "published"]
+
+
 class TaskFileEntry(BaseModel):
     name: str
     path: str
@@ -66,7 +70,7 @@ class TaskFileListResponse(BaseModel):
     files: list[TaskFileEntry]
     # "published" means the list holds only the uploaded eval source; the
     # task's other files stay in the publisher's checkout.
-    source_type: str | None = None
+    source_type: SourceType | None = None
 
 
 class TaskFileContentResponse(BaseModel):
@@ -80,6 +84,10 @@ class TaskFileContentResponse(BaseModel):
 
 def _detect_language(extension: str) -> str:
     return EXTENSION_LANGUAGE_MAP.get(extension.lower(), "text")
+
+
+def _count_lines(content: str) -> int:
+    return content.count("\n") + (0 if content.endswith("\n") else 1) if content else 0
 
 
 def _load_project_for_request(
@@ -182,7 +190,7 @@ def _read_file_response(task_dir: Path, file_path: str) -> TaskFileContentRespon
 
     ext = resolved.suffix
     language = _detect_language(ext)
-    lines = content.count("\n") + (0 if content.endswith("\n") else 1) if content else 0
+    lines = _count_lines(content)
 
     return TaskFileContentResponse(
         name=resolved.name,
@@ -205,7 +213,7 @@ def _published_source_files(
     if row.task_definition_revision_id is None:
         return []
     revision = session.get(TaskDefinitionRevisionDB, row.task_definition_revision_id)
-    if revision is None:
+    if revision is None or (revision.project, revision.task_id) != (row.project, row.task_id):
         return []
     return list(revision.source_files_json or [])
 
@@ -247,7 +255,7 @@ def _read_published_file_response(
             content=content,
             size_bytes=len(content.encode("utf-8")),
             language=_detect_language(Path(file_path).suffix),
-            lines=content.count("\n") + (0 if content.endswith("\n") else 1) if content else 0,
+            lines=_count_lines(content),
         )
     raise HTTPException(
         status_code=404,
@@ -291,7 +299,7 @@ async def list_project_task_files(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     response = _build_file_list_response(task_id, task_dir, row.task_path)
-    response.source_type = source.source_type
+    response.source_type = cast(SourceType, source.source_type)
     return response
 
 
