@@ -314,6 +314,24 @@ class TestAnthropicReasoning:
         )
         assert result == {"input": 10, "output": 0, "reasoning": 100}
 
+    def test_negative_counts_never_price_extra_tokens(self) -> None:
+        assert normalize_usage(
+            {"gen_ai.usage.output_tokens": 100, "gen_ai.usage.reasoning.output_tokens": -5},
+            "anthropic",
+        ) == {"output": 100, "reasoning": 0}
+        negative_output = normalize_usage(
+            {"gen_ai.usage.output_tokens": -3, "gen_ai.usage.reasoning.output_tokens": 2},
+            "anthropic",
+        )
+        assert negative_output["reasoning"] == 0
+
+    def test_bedrock_reasoning_is_capped_at_output(self) -> None:
+        result = normalize_usage(
+            {"gen_ai.usage.output_tokens": 40, "gen_ai.usage.reasoning.output_tokens": 90},
+            "bedrock",
+        )
+        assert result == {"output": 0, "reasoning": 40}
+
     def test_bedrock_reasoning_without_output_is_dropped(self) -> None:
         result = normalize_usage(
             {"gen_ai.usage.input_tokens": 10, "gen_ai.usage.reasoning.output_tokens": 5},

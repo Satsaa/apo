@@ -63,7 +63,7 @@ def set_output_reasoning(usage: dict[str, int], reasoning: int | None) -> None:
     """
     if reasoning is None or "output" not in usage:
         return
-    usage["reasoning"] = min(max(reasoning, 0), usage["output"])
+    usage["reasoning"] = min(max(reasoning, 0), max(usage["output"], 0))
 
 
 def apply_non_overlap(
