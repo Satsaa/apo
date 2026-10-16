@@ -644,6 +644,9 @@ export interface TaskFileListResponse {
   task_id: string;
   task_path: string;
   files: TaskFileEntry[];
+  /** "published": the list holds only the uploaded eval file; the task's
+   * other files stay in the publisher's checkout at `task_path`. */
+  source_type?: string | null;
 }
 
 export interface TaskFileContentResponse {

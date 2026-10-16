@@ -186,7 +186,6 @@ export default async function TaskDetailPage({
   // Off-catalog task that still has run history — show the evidence.
   const inCatalog = task !== null;
   const displayName = task ? task.display_name : taskId;
-  const fileCount = task ? (task.has_checks ? 1 : 0) + 1 : 0;
 
   return (
     <div className="mx-auto w-full max-w-6xl flex flex-col">
@@ -211,7 +210,6 @@ export default async function TaskDetailPage({
           {task ? (
             <>
               <Badge variant="outline" className="font-mono text-[10px]">{task.folder_path || "(root)"}</Badge>
-              <Badge variant="outline" className="text-[10px]">{fileCount} files</Badge>
             </>
           ) : null}
           <Badge variant="outline" className="text-[10px]">
@@ -265,9 +263,6 @@ export default async function TaskDetailPage({
             {inCatalog ? (
               <TabsTrigger value="files" className="px-4 text-[13px]">
                 Files
-                <Badge variant="outline" className="ml-1.5 text-[10px] px-1.5 py-0">
-                  {fileCount}
-                </Badge>
               </TabsTrigger>
             ) : null}
           </TabsList>

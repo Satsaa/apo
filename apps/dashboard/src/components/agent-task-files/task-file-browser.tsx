@@ -20,6 +20,8 @@ interface TaskFileBrowserProps {
 
 type FileBrowserState = {
   files: TaskFileEntry[];
+  sourceType: string | null;
+  taskPath: string | null;
   loading: boolean;
   error: string | null;
   selectedPath: string | null;
@@ -29,7 +31,7 @@ type FileBrowserState = {
 
 type FileBrowserAction =
   | { type: "FETCH_START" }
-  | { type: "FETCH_SUCCESS"; files: TaskFileEntry[] }
+  | { type: "FETCH_SUCCESS"; response: TaskFileListResponse }
   | { type: "FETCH_ERROR"; error: string }
   | { type: "SELECT_FILE"; path: string }
   | { type: "VIEWER_SUCCESS"; content: TaskFileContentResponse }
@@ -40,7 +42,13 @@ function fileBrowserReducer(state: FileBrowserState, action: FileBrowserAction):
     case "FETCH_START":
       return { ...state, loading: true, error: null };
     case "FETCH_SUCCESS":
-      return { ...state, files: action.files, loading: false };
+      return {
+        ...state,
+        files: action.response.files,
+        sourceType: action.response.source_type ?? null,
+        taskPath: action.response.task_path,
+        loading: false,
+      };
     case "FETCH_ERROR":
       return { ...state, error: action.error, loading: false };
     case "SELECT_FILE":
@@ -59,6 +67,8 @@ export function TaskFileBrowser({
 }: TaskFileBrowserProps) {
   const [state, dispatch] = useReducer(fileBrowserReducer, {
     files: [],
+    sourceType: null,
+    taskPath: null,
     loading: true,
     error: null,
     selectedPath: null,
@@ -78,7 +88,7 @@ export function TaskFileBrowser({
           commitSha,
         );
         if (!cancelled) {
-          dispatch({ type: "FETCH_SUCCESS", files: response.files });
+          dispatch({ type: "FETCH_SUCCESS", response });
         }
       } catch (e: unknown) {
         if (!cancelled) {
@@ -115,7 +125,7 @@ export function TaskFileBrowser({
   if (state.error) {
     return (
       <Alert variant="destructive">
-        <AlertTitle>Error</AlertTitle>
+        <AlertTitle>Couldn&apos;t load task files</AlertTitle>
         <AlertDescription>{state.error}</AlertDescription>
       </Alert>
     );
@@ -129,7 +139,19 @@ export function TaskFileBrowser({
     );
   }
 
-  return (
+  const published = state.sourceType === "published";
+
+  if (published && state.files.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-card px-4 py-3 text-[13px] text-muted-foreground">
+        This task was published without its eval file, so there is nothing to show here.
+        Its files are in the publisher&apos;s checkout at{" "}
+        <span className="font-mono">{state.taskPath}</span>.
+      </div>
+    );
+  }
+
+  const browser = (
     <div className="flex max-h-[600px] min-h-[400px] flex-col rounded-lg border border-border bg-card overflow-hidden md:flex-row">
       <div className="max-h-44 shrink-0 overflow-y-auto border-b border-border/60 md:max-h-none md:w-[280px] md:border-b-0 md:border-r">
         <TaskFileList files={state.files} selectedPath={state.selectedPath} onSelect={handleSelect} />
@@ -137,6 +159,18 @@ export function TaskFileBrowser({
       <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
         <TaskFileViewer file={state.fileContent} error={state.viewerError} />
       </div>
+    </div>
+  );
+
+  if (!published) return browser;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[12px] text-muted-foreground">
+        Published catalogs upload only the eval file. The task&apos;s other files are in the
+        publisher&apos;s checkout at <span className="font-mono">{state.taskPath}</span>.
+      </p>
+      {browser}
     </div>
   );
 }
