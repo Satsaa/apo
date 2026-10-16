@@ -4,8 +4,7 @@
 
 Bedrock reports ``input_tokens`` *inclusive* of cache_read (OTel GenAI
 semconv). cache_creation is the cache-write bucket. Reasoning (Claude's
-extended thinking) is a subset of output, as on Anthropic's own API. See
-``wayfinder/assets/03-normalizer-research.md`` §3.
+extended thinking) is a subset of output, as on Anthropic's own API.
 """
 
 from __future__ import annotations

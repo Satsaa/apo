@@ -8,7 +8,7 @@ GenAI non-overlap invariant (cache/reasoning subtracted from input/output).
 
 Provider detection is a multi-signal hierarchy (most-authoritative first):
    1. ``ai.response.providerMetadata`` key-membership (carries Anthropic 5m/1h)
-   2. ``gen_ai.system`` attribute
+   2. ``gen_ai.provider.name`` or legacy ``gen_ai.system`` attribute
    3. model-name prefix heuristic (``anthropic/``, ``openai/``, …)
    4. bare model-family heuristic (``claude-*``, ``gpt-*``, ``o1/o3-*``, ``gemini-*``)
    5. generic fallback
@@ -61,11 +61,12 @@ _METADATA_KEYS: dict[str, str] = {
     "gemini": "gemini",
 }
 
-# gen_ai.system value -> provider.
-_SYSTEM_PROVIDERS: dict[str, str] = {
+# Current ``gen_ai.provider.name`` and legacy ``gen_ai.system`` values.
+_PROVIDER_NAMES: dict[str, str] = {
     "openai": "openai",
     "anthropic": "anthropic",
     "bedrock": "bedrock",
+    "aws.bedrock": "bedrock",
     "gemini": "gemini",
     "google": "gemini",
     "vertex_ai": "gemini",
@@ -116,10 +117,10 @@ def detect_provider(attrs: dict[str, Any], model_name: str | None) -> str:
             if key in metadata:
                 return provider
 
-    # 2. gen_ai.system attribute.
-    system = get_str(attrs, "gen_ai.system")
-    if system and system.lower() in _SYSTEM_PROVIDERS:
-        return _SYSTEM_PROVIDERS[system.lower()]
+    # 2. Current provider attribute, then its legacy predecessor.
+    provider_name = get_str(attrs, "gen_ai.provider.name") or get_str(attrs, "gen_ai.system")
+    if provider_name and provider_name.lower() in _PROVIDER_NAMES:
+        return _PROVIDER_NAMES[provider_name.lower()]
 
     # 3. model-name prefix heuristic.
     if model_name:
@@ -174,6 +175,7 @@ def normalize_usage(
     if _input_includes_cache(attrs):
         return _normalize_input_includes_cache(attrs)
     detected = provider or detect_provider(attrs, model_name)
+    detected = _PROVIDER_NAMES.get(detected.lower(), detected)
     if detected == "openai":
         return openai.normalize(attrs)
     if detected == "anthropic":

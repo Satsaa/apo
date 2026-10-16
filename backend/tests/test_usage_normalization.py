@@ -85,6 +85,19 @@ class TestDetectProvider:
         attrs = {"ai.response.providerMetadata": '{"anthropic": {}}'}
         assert detect_provider(attrs, "claude-3") == "anthropic"
 
+    def test_current_bedrock_provider_attr(self) -> None:
+        assert detect_provider({"gen_ai.provider.name": "aws.bedrock"}, None) == "bedrock"
+
+    def test_explicit_current_bedrock_provider_name(self) -> None:
+        result = normalize_usage(
+            {
+                "gen_ai.usage.output_tokens": 40,
+                "gen_ai.usage.reasoning.output_tokens": 12,
+            },
+            provider="aws.bedrock",
+        )
+        assert result == {"output": 28, "reasoning": 12}
+
     def test_model_name_prefix_fallback(self) -> None:
         assert detect_provider({}, "anthropic/claude-3") == "anthropic"
 
@@ -331,6 +344,25 @@ class TestAnthropicReasoning:
             "bedrock",
         )
         assert result == {"output": 0, "reasoning": 40}
+
+    def test_bedrock_semconv_provider_uses_bedrock_normalizer(self) -> None:
+        result = normalize_usage(
+            {
+                "gen_ai.provider.name": "aws.bedrock",
+                "gen_ai.usage.input_tokens": 100,
+                "gen_ai.usage.output_tokens": 40,
+                "gen_ai.usage.cache_read.input_tokens": 20,
+                "gen_ai.usage.cache_creation.input_tokens": 10,
+                "gen_ai.usage.reasoning.output_tokens": 12,
+            },
+        )
+        assert result == {
+            "input": 80,
+            "output": 28,
+            "cache_read": 20,
+            "cache_write_5m": 10,
+            "reasoning": 12,
+        }
 
     def test_bedrock_reasoning_without_output_is_dropped(self) -> None:
         result = normalize_usage(

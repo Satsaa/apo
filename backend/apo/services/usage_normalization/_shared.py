@@ -75,8 +75,8 @@ def apply_non_overlap(
     subset of ``input_tokens`` and ``reasoning`` is a subset of
     ``output_tokens``. Only those two subsets are subtracted — cache_write
     buckets are NEVER part of input_tokens (they are prompt-cache *creation*,
-    a distinct billed dimension), so they are not subtracted. (This fixes
-    langfuse's Bedrock double-counting bug noted in the research asset.)
+    a distinct billed dimension), so they are not subtracted. Subtracting them
+    would bill the same Bedrock cache-write tokens twice.
 
     Providers differ in whether their reported ``input_tokens`` /
     ``output_tokens`` are inclusive of the subsets:

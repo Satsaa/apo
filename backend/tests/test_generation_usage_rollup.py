@@ -128,9 +128,9 @@ def test_trace_without_generations_has_no_usage_summary(session: Session) -> Non
     assert _aggregate(session).generation_usage_json is None
 
 
-# Three generations of a real Opus 5.5 run (apo run_512edb1448b9bba0b1f3b1a0),
-# with the usage attributes bind's pi runtime stamps: both cache spellings and
-# both reasoning spellings. The runtime logged 42, 104 and 0 thinking tokens.
+# Three generations captured from a real Opus 5.5 run, with the usage
+# attributes bind's pi runtime stamps: both cache spellings and both reasoning
+# spellings. The runtime logged 42, 104 and 0 thinking tokens.
 _CLAUDE_CALLS: list[dict[str, int]] = [
     {"input": 4, "output": 365, "cache_read": 0, "cache_write": 33746, "reasoning": 42},
     {"input": 2, "output": 432, "cache_read": 33746, "cache_write": 5314, "reasoning": 104},
