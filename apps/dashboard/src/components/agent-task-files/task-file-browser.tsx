@@ -9,6 +9,7 @@ import {
   type TaskFileListResponse,
   type TaskFileContentResponse,
 } from "@/lib/agent-task-api";
+import type { ProjectTaskSourceType } from "@/lib/projects-api";
 import { TaskFileList } from "./task-file-list";
 import { TaskFileViewer } from "./task-file-viewer";
 
@@ -20,7 +21,7 @@ interface TaskFileBrowserProps {
 
 type FileBrowserState = {
   files: TaskFileEntry[];
-  sourceType: string | null;
+  sourceType: ProjectTaskSourceType | null;
   taskPath: string | null;
   loading: boolean;
   error: string | null;
@@ -40,7 +41,17 @@ type FileBrowserAction =
 function fileBrowserReducer(state: FileBrowserState, action: FileBrowserAction): FileBrowserState {
   switch (action.type) {
     case "FETCH_START":
-      return { ...state, loading: true, error: null };
+      return {
+        ...state,
+        files: [],
+        sourceType: null,
+        taskPath: null,
+        loading: true,
+        error: null,
+        selectedPath: null,
+        fileContent: null,
+        viewerError: null,
+      };
     case "FETCH_SUCCESS":
       return {
         ...state,

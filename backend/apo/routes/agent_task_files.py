@@ -10,7 +10,7 @@ task source.
 
 import os
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -54,6 +54,11 @@ EXTENSION_LANGUAGE_MAP: dict[str, str] = {
 
 
 SourceType = Literal["git", "filesystem", "demo", "published"]
+
+
+class PublishedSourceFile(TypedDict):
+    path: str
+    content: str
 
 
 class TaskFileEntry(BaseModel):
@@ -204,7 +209,7 @@ def _read_file_response(task_dir: Path, file_path: str) -> TaskFileContentRespon
 
 def _published_source_files(
     session: Session, row: ProjectTaskInventoryDB
-) -> list[dict[str, object]]:
+) -> list[PublishedSourceFile]:
     """The eval source a published catalog pinned for this task, if any.
 
     A published catalog uploads each task's ``*.eval.ts`` and nothing else,
@@ -215,7 +220,13 @@ def _published_source_files(
     revision = session.get(TaskDefinitionRevisionDB, row.task_definition_revision_id)
     if revision is None or (revision.project, revision.task_id) != (row.project, row.task_id):
         return []
-    return list(revision.source_files_json or [])
+    files: list[PublishedSourceFile] = []
+    for file in revision.source_files_json or []:
+        path = file.get("path")
+        content = file.get("content")
+        if isinstance(path, str) and path and isinstance(content, str):
+            files.append({"path": path, "content": content})
+    return files
 
 
 def _published_file_list_response(
@@ -223,8 +234,8 @@ def _published_file_list_response(
 ) -> TaskFileListResponse:
     entries: list[TaskFileEntry] = []
     for file in _published_source_files(session, row):
-        path = str(file.get("path", ""))
-        content = str(file.get("content", ""))
+        path = file["path"]
+        content = file["content"]
         entries.append(
             TaskFileEntry(
                 name=Path(path).name,
@@ -246,9 +257,9 @@ def _read_published_file_response(
     session: Session, row: ProjectTaskInventoryDB, file_path: str
 ) -> TaskFileContentResponse:
     for file in _published_source_files(session, row):
-        if file.get("path") != file_path:
+        if file["path"] != file_path:
             continue
-        content = str(file.get("content", ""))
+        content = file["content"]
         return TaskFileContentResponse(
             name=Path(file_path).name,
             path=file_path,
@@ -299,7 +310,7 @@ async def list_project_task_files(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     response = _build_file_list_response(task_id, task_dir, row.task_path)
-    response.source_type = cast(SourceType, source.source_type)
+    response.source_type = _parse_source_type(source.source_type)
     return response
 
 
@@ -340,3 +351,11 @@ async def read_project_task_file(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return _read_file_response(task_dir, file_path)
+
+
+def _parse_source_type(value: str) -> SourceType:
+    match value:
+        case "git" | "filesystem" | "demo" | "published":
+            return value
+        case _:
+            raise HTTPException(status_code=500, detail="Project has an invalid task source type.")

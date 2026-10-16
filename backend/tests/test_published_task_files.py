@@ -7,12 +7,11 @@ the uploaded eval source rather than failing on the missing checkout.
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
-
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from apo.models.db import ProjectDB, ProjectMembershipDB, UserDB
+from apo.routes.agent_task_files import TaskFileContentResponse, TaskFileListResponse
 
 _USER = "user-published-files"
 _PROJECT = "proj-published-files"
@@ -34,7 +33,7 @@ def _seed(session: Session) -> None:
 
 
 def _publish(client: TestClient, source: str | None) -> None:
-    task: dict[str, Any] = {
+    task: dict[str, object] = {
         "task_id": "chat/alpha",
         "display_name": "alpha",
         "task_path": "chat/alpha",
@@ -70,10 +69,10 @@ def test_list_serves_the_published_eval_source(
     resp = client.get(_files_url())
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["source_type"] == "published"
-    assert body["task_path"] == "chat/alpha"
-    assert [(f["path"], f["type"], f["size_bytes"]) for f in body["files"]] == [
+    body = TaskFileListResponse.model_validate_json(resp.text)
+    assert body.source_type == "published"
+    assert body.task_path == "chat/alpha"
+    assert [(file.path, file.type, file.size_bytes) for file in body.files] == [
         ("alpha.eval.ts", "file", len(_SOURCE.encode("utf-8")))
     ]
 
@@ -88,10 +87,10 @@ def test_read_returns_the_published_eval_source(
     resp = client.get(_files_url("alpha.eval.ts"))
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["content"] == _SOURCE
-    assert body["language"] == "typescript"
-    assert body["lines"] == 2
+    body = TaskFileContentResponse.model_validate_json(resp.text)
+    assert body.content == _SOURCE
+    assert body.language == "typescript"
+    assert body.lines == 2
 
 
 def test_read_of_an_unpublished_file_is_404(
@@ -116,8 +115,9 @@ def test_catalog_without_definitions_lists_nothing(
     resp = client.get(_files_url())
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["files"] == []
-    assert resp.json()["source_type"] == "published"
+    body = TaskFileListResponse.model_validate_json(resp.text)
+    assert body.files == []
+    assert body.source_type == "published"
 
 
 def test_non_member_cannot_list_or_read(
@@ -143,4 +143,5 @@ def test_member_who_is_not_admin_reads_the_source(
     resp = client.get(_files_url("alpha.eval.ts"))
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["content"] == _SOURCE
+    body = TaskFileContentResponse.model_validate_json(resp.text)
+    assert body.content == _SOURCE
