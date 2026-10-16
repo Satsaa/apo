@@ -7,6 +7,8 @@ export interface UsePersistentStringSetResult {
   values: Set<string>;
   /** Toggle one id's membership and persist the result. */
   toggle: (key: string) => void;
+  /** Replace the whole set (e.g. expand/collapse all) and persist the result. */
+  replace: (values: Set<string>) => void;
 }
 
 /**
@@ -60,7 +62,11 @@ export function usePersistentStringSet(
     });
   };
 
-  return { values: state.values, toggle };
+  const replace = (values: Set<string>) => {
+    setState((prev) => ({ ...prev, values: new Set(values) }));
+  };
+
+  return { values: state.values, toggle, replace };
 }
 
 // ── localStorage helpers ─────────────────────────────────────────────────

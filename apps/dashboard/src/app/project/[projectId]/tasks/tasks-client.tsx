@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { type AgentTaskSummary } from "@/lib/agent-task-api";
 
+import { usePersistentStringSet } from "@/hooks/use-persistent-string-set";
 import { useProjectId, useIsDemo } from "@/lib/project-router";
 import { usePublishRunCohort } from "@/lib/run-cohort-context";
 import { setSearchParamShallow } from "@/lib/shallow-search-params";
@@ -52,10 +53,14 @@ export function AgentTasksClient({
   const clientIsDemo = useIsDemo();
   const isDemoProject = isDemo || clientIsDemo;
   const searchParams = useSearchParams();
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    const folders = groupByFolder(tasks);
-    return new Set(folders.map((f) => f.id));
-  });
+  // Folders default to open, so the durable state is the COLLAPSED set,
+  // per project: folders the user closed stay closed across visits, and
+  // folders added later arrive open.
+  const {
+    values: collapsed,
+    toggle: toggleExpand,
+    replace: setCollapsed,
+  } = usePersistentStringSet(`apo:collapsed-task-folders:${projectId}`);
   // Search and status persist in the URL (shallow — no server refetch) so a
   // filtered view is shareable and survives reload, like Runs/Task-detail.
   // The local mirror drives re-renders; the shallow write keeps the address
@@ -207,16 +212,19 @@ export function AgentTasksClient({
     canRunTasks && !isDemoProject && selected.size > 0,
   );
 
-  const toggleExpand = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const allFolderIds = folders.map((f) => f.id);
-  const allExpanded = allFolderIds.length > 0 && allFolderIds.every((id) => expanded.has(id));
+  const expanded = new Set(allFolderIds.filter((id) => !collapsed.has(id)));
+  const allExpanded = allFolderIds.length > 0 && expanded.size === allFolderIds.length;
+  // Only the visible folders change, so a filtered view's Expand/Collapse
+  // all leaves the remembered state of hidden folders alone.
+  const toggleExpandAll = () => {
+    const next = new Set(collapsed);
+    for (const id of allFolderIds) {
+      if (allExpanded) next.add(id);
+      else next.delete(id);
+    }
+    setCollapsed(next);
+  };
 
   // Non-demo projects only replace the task list with setup UI when
   // there is no configured source or the persisted inventory belongs
@@ -276,7 +284,7 @@ export function AgentTasksClient({
               onQueryChange={setQuery}
               selectedCount={selected.size}
               onClearSelection={() => setSelected(new Set())}
-              onToggleExpandAll={() => setExpanded(allExpanded ? new Set() : new Set(allFolderIds))}
+              onToggleExpandAll={toggleExpandAll}
               allExpanded={allExpanded}
               status={statusFilter}
               onStatusChange={handleStatusChange}
