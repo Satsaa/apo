@@ -212,14 +212,17 @@ export function AgentTasksClient({
     canRunTasks && !isDemoProject && selected.size > 0,
   );
 
-  const allFolderIds = folders.map((f) => f.id);
-  const expanded = new Set(allFolderIds.filter((id) => !collapsed.has(id)));
-  const allExpanded = allFolderIds.length > 0 && expanded.size === allFolderIds.length;
+  const folderIds = folders.map((folder) => folder.id);
+  const visibleFolderIds = filtered.map((folder) => folder.id);
+  const expanded = new Set(folderIds.filter((id) => !collapsed.has(id)));
+  const allExpanded =
+    visibleFolderIds.length > 0 &&
+    visibleFolderIds.every((id) => expanded.has(id));
   // Only the visible folders change, so a filtered view's Expand/Collapse
   // all leaves the remembered state of hidden folders alone.
   const toggleExpandAll = () => {
     const next = new Set(collapsed);
-    for (const id of allFolderIds) {
+    for (const id of visibleFolderIds) {
       if (allExpanded) next.add(id);
       else next.delete(id);
     }

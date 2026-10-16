@@ -27,7 +27,7 @@ class MemoryStorage implements Storage {
     this.store.clear();
   }
   getItem(key: string) {
-    return this.store.has(key) ? this.store.get(key)! : null;
+    return this.store.get(key) ?? null;
   }
   key(index: number) {
     return [...this.store.keys()][index] ?? null;
@@ -106,10 +106,21 @@ const tasks = [
   task({ id: "billing/invoice", folder_path: "billing", display_name: "invoice" }),
 ];
 
-const taskSource = {
+const taskSource: ProjectTaskSource = {
+  project: "acme-evals",
   source_type: "published",
+  display_name: "Published catalog",
+  repository_url: null,
+  git_ref: null,
+  subpath: null,
+  filesystem_path: null,
+  demo_seed_id: null,
+  status: "ready",
+  last_synced_at: null,
+  last_resolved_commit_sha: null,
+  last_error: null,
   inventory_stale: false,
-} as unknown as ProjectTaskSource;
+};
 
 function renderTasks() {
   return render(
@@ -119,6 +130,11 @@ function renderTasks() {
 
 const isShown = (taskName: string) =>
   screen.queryByRole("checkbox", { name: `Select ${taskName}` }) !== null;
+
+function storedFolders(): string[] | null {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  return stored === null ? null : JSON.parse(stored);
+}
 
 describe("Tasks page — remembered folder state", () => {
   beforeEach(() => {
@@ -133,7 +149,7 @@ describe("Tasks page — remembered folder state", () => {
     await user.click(screen.getByRole("button", { name: /^billing/ }));
     expect(isShown("invoice")).toBe(false);
     await waitFor(() =>
-      expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual(["billing"]),
+      expect(storedFolders()).toEqual(["billing"]),
     );
 
     await user.click(screen.getByRole("button", { name: /^billing/ }));
@@ -155,7 +171,7 @@ describe("Tasks page — remembered folder state", () => {
 
     await user.click(screen.getByRole("button", { name: "Collapse all" }));
     await waitFor(() =>
-      expect(new Set(JSON.parse(localStorage.getItem(STORAGE_KEY)!))).toEqual(
+      expect(new Set(storedFolders() ?? [])).toEqual(
         new Set(["billing", "support"]),
       ),
     );
@@ -163,6 +179,19 @@ describe("Tasks page — remembered folder state", () => {
 
     await user.click(screen.getByRole("button", { name: "Expand all" }));
     await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBeNull());
+    expect(isShown("refund")).toBe(true);
+  });
+
+  it("changes only folders visible through search", async () => {
+    const user = userEvent.setup();
+    renderTasks();
+
+    await user.type(screen.getByRole("textbox", { name: "Search" }), "invoice");
+    await user.click(screen.getByRole("button", { name: "Collapse all" }));
+
+    await waitFor(() => expect(storedFolders()).toEqual(["billing"]));
+    await user.clear(screen.getByRole("textbox", { name: "Search" }));
+    expect(isShown("invoice")).toBe(false);
     expect(isShown("refund")).toBe(true);
   });
 });
