@@ -13,6 +13,10 @@ import { cn } from "@/lib/utils";
 import { ExpandableJson } from "@/components/ExpandableJson";
 import { Markdown } from "@/components/trace-detail/Markdown";
 import { parseJsonPayload } from "@/components/trace-detail/message-content-utils";
+import {
+  FlatKeyValuePreview,
+  getFlatKeyValueEntries,
+} from "@/components/trace-detail/FlatKeyValuePreview";
 import { TraceHomeLink } from "@/components/trace-detail";
 import type { ChatMessage } from "@/lib/conversation-from-trace";
 
@@ -42,6 +46,47 @@ function tryParseJson(text: string): unknown {
   }
 }
 
+/**
+ * One line naming what a call did, `path: /a/b.docx` rather than the raw
+ * `{"path":"/a/b.docx"}` — the values are what tell calls apart.
+ */
+function summarizeArguments(args: string): string {
+  const entries = getFlatKeyValueEntries(tryParseJson(args));
+  const text = entries
+    ? entries.map(([key, value]) => `${key}: ${String(value)}`).join("  ")
+    : args;
+  return text.replace(/\s+/g, " ");
+}
+
+/**
+ * A tool call's arguments the way the trace viewer's Formatted view shows
+ * them: a few scalars as labelled rows with their values whole, anything
+ * deeper as a fully open tree. Arguments are the call itself, so nothing is
+ * elided behind a click.
+ */
+function ToolArguments({ args }: { args: string }) {
+  const parsed = useMemo(() => tryParseJson(args), [args]);
+  const entries = getFlatKeyValueEntries(parsed);
+  if (entries) return <FlatKeyValuePreview entries={entries} />;
+  if (typeof parsed === "string") return <PlainOutput text={parsed} />;
+  return <ExpandableJson data={parsed} initialDetail="full" />;
+}
+
+/** Tool output: a JSON payload as a tree, anything else (stdout, file text) verbatim. */
+function ToolOutput({ output }: { output: string }) {
+  const payload = useMemo(() => parseJsonPayload(output), [output]);
+  if (payload !== null) return <ExpandableJson data={payload} />;
+  return <PlainOutput text={output} />;
+}
+
+function PlainOutput({ text }: { text: string }) {
+  return (
+    <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-xs text-foreground/80 [overflow-wrap:anywhere]">
+      {text}
+    </pre>
+  );
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -64,8 +109,11 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// Open on arrival: the message row around a block is already the click that
+// asked to see it, so a second click per call only hid what was asked for.
 function ToolCallBlock({ toolCall }: { toolCall: ToolCallInfo }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
+  const summary = useMemo(() => summarizeArguments(toolCall.arguments), [toolCall.arguments]);
 
   return (
     <div className="border border-border/60 rounded-lg overflow-hidden bg-muted/30">
@@ -77,7 +125,7 @@ function ToolCallBlock({ toolCall }: { toolCall: ToolCallInfo }) {
         <Wrench className="h-4 w-4 text-muted-foreground/60 shrink-0" />
         <span className="text-sm font-mono text-foreground">{toolCall.name}</span>
         <span className="text-sm text-muted-foreground/50 flex-1 truncate font-mono">
-          {toolCall.arguments.length > 50 ? toolCall.arguments.slice(0, 50) + "..." : toolCall.arguments}
+          {!isOpen && summary}
         </span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded">
@@ -88,7 +136,7 @@ function ToolCallBlock({ toolCall }: { toolCall: ToolCallInfo }) {
       </button>
       {isOpen && (
         <div className="border-t border-border/40 bg-background/30">
-          <ExpandableJson data={tryParseJson(toolCall.arguments)} />
+          <ToolArguments args={toolCall.arguments} />
         </div>
       )}
     </div>
@@ -96,7 +144,7 @@ function ToolCallBlock({ toolCall }: { toolCall: ToolCallInfo }) {
 }
 
 function ToolOutputBlock({ result }: { result: ToolResultInfo }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
 
   return (
     <div className="border border-border/60 rounded-lg overflow-hidden bg-muted/30">
@@ -105,11 +153,10 @@ function ToolOutputBlock({ result }: { result: ToolResultInfo }) {
         onClick={() => setIsOpen(!isOpen)}
         type="button"
       >
-        <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 shrink-0 transition-transform", !isOpen && "-rotate-90")} />
         <Terminal className="h-4 w-4 text-success shrink-0" />
         <span className="text-sm font-mono text-foreground">{result.id}</span>
         <span className="text-sm text-muted-foreground/50 flex-1 truncate font-mono">
-          {result.output.length > 60 ? result.output.slice(0, 60) + "..." : result.output}
+          {!isOpen && result.output.slice(0, 200)}
         </span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-success px-2 py-0.5 bg-success/10 rounded">
@@ -120,7 +167,7 @@ function ToolOutputBlock({ result }: { result: ToolResultInfo }) {
       </button>
       {isOpen && (
         <div className="border-t border-border/40 bg-background/30">
-          <ExpandableJson data={tryParseJson(result.output)} />
+          <ToolOutput output={result.output} />
         </div>
       )}
     </div>
@@ -184,8 +231,9 @@ function ToolMessageContent({ message }: { message: ChatMessage }) {
 function getPreviewText(message: ChatMessage): string {
   const firstCall = message.tool_calls?.[0]?.function;
   if (firstCall) {
-    const args = firstCall.arguments ?? "";
-    return `${firstCall.name}(${args.length > 40 ? args.slice(0, 40) + "..." : args})`;
+    const calls = message.tool_calls!.length;
+    const more = calls > 1 ? ` +${calls - 1} more` : "";
+    return `${firstCall.name}  ${summarizeArguments(firstCall.arguments ?? "")}${more}`;
   }
   const text = message.content ?? "";
   return text.length > 120 ? text.slice(0, 120) + "..." : text;

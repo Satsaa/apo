@@ -3,12 +3,12 @@
 import { useMemo } from "react";
 
 import { ExpandableJson } from "@/components/ExpandableJson";
-import { cn } from "@/lib/utils";
 import { ChatMessagePreview } from "./ChatMessagePreview";
 import { TraceEventPreview } from "./TraceEventPreview";
 import { detectTraceEventKind } from "./trace-event-utils";
 import { CommentableJsonView } from "./comments/CommentableJsonView";
 import type { JsonDataField } from "./comments/selectionToPath";
+import { FlatKeyValuePreview, getFlatKeyValueEntries } from "./FlatKeyValuePreview";
 import { Markdown } from "./Markdown";
 import { parseJsonPayload } from "./message-content-utils";
 
@@ -85,37 +85,6 @@ export function CallDetailTabs({
 }
 
 
-function FlatKeyValuePreview({
-  entries,
-}: {
-  entries: Array<[string, string | number | boolean | null]>;
-}) {
-  return (
-    <div className="rounded-md border border-border/60 bg-muted/10">
-      {entries.map(([key, value]) => (
-        <div
-          key={key}
-          className="flex items-start justify-between gap-4 border-b border-border/60 px-3 py-2.5 last:border-b-0"
-        >
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {humanizeKey(key)}
-          </span>
-          {/* Multi-line values (code, stdout) keep their line breaks — the
-              default white-space collapsing renders them as one run-on line. */}
-          <span
-            className={cn(
-              "min-w-0 font-mono text-sm text-foreground",
-              typeof value === "string" && value.includes("\n") && "whitespace-pre-wrap",
-            )}
-          >
-            {String(value)}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /**
  * A payload's readable text — which is where a structured answer lands, since
  * apo's own SDK records a generation's output as `{ text }`. A JSON payload
@@ -181,25 +150,6 @@ function normalizeData(data: any): any {
   }
 }
 
-function getFlatKeyValueEntries(data: any): Array<[string, string | number | boolean | null]> | null {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return null;
-  }
-
-  const entries = Object.entries(data).filter(([, value]) =>
-    value == null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean",
-  ) as Array<[string, string | number | boolean | null]>;
-
-  if (entries.length === 0 || entries.length !== Object.keys(data).length || entries.length > 8) {
-    return null;
-  }
-
-  return entries;
-}
-
 function extractReadableText(data: any): string | null {
   if (typeof data === "string") {
     return data;
@@ -230,15 +180,6 @@ function extractReadableText(data: any): string | null {
   }
 
   return null;
-}
-
-function humanizeKey(key: string) {
-  return key
-    .replace(/([A-Z])/g, " $1")
-    .replace(/[_-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^./, (c) => c.toUpperCase());
 }
 
 

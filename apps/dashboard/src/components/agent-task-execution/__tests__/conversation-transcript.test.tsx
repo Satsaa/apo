@@ -78,3 +78,56 @@ describe("ConversationTranscript message content", () => {
     expect(paragraphWith("paragraphs")).toBe(false);
   });
 });
+
+const LONG_COMMAND =
+  "ls -la /home/user/workspace/contracts/__uploads__user_3DzHNaS4vNmSqtYzQjm57s8lxcT__/" +
+  "nordlys-employment-contract-laura-niemi._JHgBJ7wuBqt7OA6vcT_W/";
+
+function toolCall(name: string, args: unknown): ChatMessage {
+  return {
+    role: "assistant",
+    content: "",
+    tool_calls: [
+      { id: "call_1", type: "function", function: { name, arguments: JSON.stringify(args) } },
+    ],
+  } as ChatMessage;
+}
+
+describe("ConversationTranscript tool calls", () => {
+  it("shows a call's scalar arguments as labelled rows, whole, without a click", () => {
+    transcript([toolCall("bash", { command: LONG_COMMAND, timeout: 30 })]);
+
+    expect(screen.getByText("Command")).toBeInTheDocument();
+    expect(screen.getByText(LONG_COMMAND)).toBeInTheDocument();
+    expect(screen.getByText("30")).toBeInTheDocument();
+    expect(screen.queryByText(/\(\d+ chars\)/)).toBeNull();
+  });
+
+  it("opens nested arguments as a full tree", () => {
+    transcript([
+      toolCall("edit", { path: "/a.docx", edits: [{ find: "five years", replace: "three years" }] }),
+    ]);
+
+    // The row inside the edits array, depth 2, which the summary policy collapses.
+    expect(jsonTree()).toBeInTheDocument();
+    const inBody = screen.getAllByText(/three years/).filter((el) => !el.closest("button"));
+    expect(inBody.length).toBeGreaterThan(0);
+  });
+
+  it("summarizes the call by its values on the message row", () => {
+    transcript([toolCall("read", { path: "/home/user/a.docx" })]);
+
+    expect(screen.getByText("read path: /home/user/a.docx")).toBeInTheDocument();
+  });
+
+  it("keeps plain-text tool output verbatim, line breaks included", () => {
+    const stdout = "total 20\ndrwxr-xr-x 2 user user 4096 .\n-rw-r--r-- 1 user user 512 a.docx";
+    transcript([{ role: "tool", content: stdout } as ChatMessage]);
+
+    const pre = Array.from(document.querySelectorAll("pre")).find((el) =>
+      el.textContent === stdout,
+    );
+    expect(pre).toBeDefined();
+    expect(jsonTree()).toBeNull();
+  });
+});
