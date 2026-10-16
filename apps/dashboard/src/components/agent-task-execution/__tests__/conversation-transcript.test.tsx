@@ -90,7 +90,7 @@ function toolCall(name: string, args: unknown): ChatMessage {
     tool_calls: [
       { id: "call_1", type: "function", function: { name, arguments: JSON.stringify(args) } },
     ],
-  } as ChatMessage;
+  };
 }
 
 describe("ConversationTranscript tool calls", () => {
@@ -108,10 +108,23 @@ describe("ConversationTranscript tool calls", () => {
       toolCall("edit", { path: "/a.docx", edits: [{ find: "five years", replace: "three years" }] }),
     ]);
 
+    expect(screen.getByText("edit path: /a.docx +1 more")).toBeInTheDocument();
     // The row inside the edits array, depth 2, which the summary policy collapses.
     expect(jsonTree()).toBeInTheDocument();
     const inBody = screen.getAllByText(/three years/).filter((el) => !el.closest("button"));
     expect(inBody.length).toBeGreaterThan(0);
+  });
+
+  it("keeps very large nested arguments collapsed instead of mounting every row", () => {
+    const edits = Array.from({ length: 1_001 }, (_, index) => ({
+      find: `before-${index}`,
+      replace: `after-${index}`,
+    }));
+    transcript([toolCall("edit", { path: "/a.docx", edits })]);
+
+    expect(jsonTree()).toBeInTheDocument();
+    expect(screen.queryByText("after-1000")).toBeNull();
+    expect(screen.getByText("Array(1001)")).toBeInTheDocument();
   });
 
   it("summarizes the call by its values on the message row", () => {
@@ -122,7 +135,7 @@ describe("ConversationTranscript tool calls", () => {
 
   it("keeps plain-text tool output verbatim, line breaks included", () => {
     const stdout = "total 20\ndrwxr-xr-x 2 user user 4096 .\n-rw-r--r-- 1 user user 512 a.docx";
-    transcript([{ role: "tool", content: stdout } as ChatMessage]);
+    transcript([{ role: "tool", content: stdout }]);
 
     const pre = Array.from(document.querySelectorAll("pre")).find((el) =>
       el.textContent === stdout,

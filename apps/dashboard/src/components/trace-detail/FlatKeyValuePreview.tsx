@@ -2,6 +2,15 @@ import { cn } from "@/lib/utils";
 
 export type FlatEntry = [string, string | number | boolean | null];
 
+function isFlatValue(value: unknown): value is FlatEntry[1] {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
 /**
  * A small object of scalars — a tool call's arguments, typically — as its
  * entries, or `null` when the payload needs a tree instead.
@@ -11,15 +20,15 @@ export function getFlatKeyValueEntries(data: unknown): FlatEntry[] | null {
     return null;
   }
 
-  const entries = Object.entries(data).filter(([, value]) =>
-    value == null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean",
-  ) as FlatEntry[];
-
-  if (entries.length === 0 || entries.length !== Object.keys(data).length || entries.length > 8) {
+  const objectEntries = Object.entries(data);
+  if (objectEntries.length === 0 || objectEntries.length > 8) {
     return null;
+  }
+
+  const entries: FlatEntry[] = [];
+  for (const [key, value] of objectEntries) {
+    if (!isFlatValue(value)) return null;
+    entries.push([key, value]);
   }
 
   return entries;
@@ -36,7 +45,7 @@ export function humanizeKey(key: string): string {
 
 export function FlatKeyValuePreview({ entries }: { entries: FlatEntry[] }) {
   return (
-    <div className="rounded-md border border-border/60 bg-muted/10">
+    <div className="border border-border/60 bg-muted/10">
       {entries.map(([key, value]) => (
         <div
           key={key}

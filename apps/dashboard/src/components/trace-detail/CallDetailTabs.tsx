@@ -94,7 +94,7 @@ function ReadableTextPreview({ text }: { text: string }) {
   const payload = useMemo(() => parseJsonPayload(text), [text]);
   if (payload !== null) return <ExpandableJson data={payload} initialDetail="full" />;
   return (
-    <div className="rounded-md border border-border/60 bg-muted/10 px-3 py-2.5">
+    <div className="border border-border/60 bg-muted/10 px-3 py-2.5">
       <Markdown>{text}</Markdown>
     </div>
   );
@@ -204,10 +204,10 @@ function ToolCallsPreview({ toolCalls }: { toolCalls: Array<Record<string, unkno
         return (
           <div
             key={id ?? `call-${i}-${name}-${inputText.slice(0, 24)}`}
-            className="rounded-md border border-border/60 bg-muted/10 px-3 py-2"
+            className="border border-border/60 bg-muted/10 px-3 py-2"
           >
             <div className="flex items-center gap-2">
-              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+              <span className="bg-warning/10 px-1.5 py-0.5 text-xs font-medium text-warning">
                 {name}
               </span>
               {id ? (

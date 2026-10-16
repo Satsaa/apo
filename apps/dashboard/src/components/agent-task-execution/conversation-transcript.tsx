@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExpandableJson } from "@/components/ExpandableJson";
+import { VIRTUALIZE_THRESHOLD } from "@/components/expandable-json/utils";
 import { Markdown } from "@/components/trace-detail/Markdown";
 import { parseJsonPayload } from "@/components/trace-detail/message-content-utils";
 import {
@@ -51,10 +52,25 @@ function tryParseJson(text: string): unknown {
  * `{"path":"/a/b.docx"}` — the values are what tell calls apart.
  */
 function summarizeArguments(args: string): string {
-  const entries = getFlatKeyValueEntries(tryParseJson(args));
-  const text = entries
+  const parsed = tryParseJson(args);
+  const entries = getFlatKeyValueEntries(parsed);
+  let text = entries
     ? entries.map(([key, value]) => `${key}: ${String(value)}`).join("  ")
     : args;
+
+  if (!entries && parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const objectEntries = Object.entries(parsed);
+    const scalarParts = objectEntries.flatMap(([key, value]) =>
+      value === null || ["string", "number", "boolean"].includes(typeof value)
+        ? [`${key}: ${String(value)}`]
+        : [],
+    );
+    if (scalarParts.length > 0) {
+      const nestedCount = objectEntries.length - scalarParts.length;
+      text = `${scalarParts.join("  ")}${nestedCount > 0 ? ` +${nestedCount} more` : ""}`;
+    }
+  }
+
   return text.replace(/\s+/g, " ");
 }
 
@@ -69,7 +85,36 @@ function ToolArguments({ args }: { args: string }) {
   const entries = getFlatKeyValueEntries(parsed);
   if (entries) return <FlatKeyValuePreview entries={entries} />;
   if (typeof parsed === "string") return <PlainOutput text={parsed} />;
-  return <ExpandableJson data={parsed} initialDetail="full" />;
+  return (
+    <ExpandableJson
+      data={parsed}
+      initialDetail={fitsFullDetailBudget(parsed) ? "full" : "summary"}
+    />
+  );
+}
+
+/**
+ * Full detail disables row virtualization because wrapped rows have variable
+ * heights. Keep it below the same node budget the JSON viewer uses before it
+ * virtualizes; larger calls still open, but with wide/deep branches collapsed.
+ */
+function fitsFullDetailBudget(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  let visited = 0;
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    visited += 1;
+    if (visited > VIRTUALIZE_THRESHOLD) return false;
+
+    if (Array.isArray(current)) {
+      for (const child of current) pending.push(child);
+    } else if (current && typeof current === "object") {
+      for (const child of Object.values(current)) pending.push(child);
+    }
+  }
+
+  return true;
 }
 
 /** Tool output: a JSON payload as a tree, anything else (stdout, file text) verbatim. */
@@ -100,7 +145,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); handleCopy(); }}
-      className="inline-flex items-center justify-center h-6 w-6 text-muted-foreground/40 hover:text-muted-foreground cursor-pointer rounded transition-colors hover:bg-muted/50"
+      className="inline-flex items-center justify-center h-6 w-6 text-muted-foreground/40 hover:text-muted-foreground cursor-pointer transition-colors hover:bg-muted/50"
       title="Copy to clipboard"
       aria-label="Copy to clipboard"
     >
@@ -116,11 +161,12 @@ function ToolCallBlock({ toolCall }: { toolCall: ToolCallInfo }) {
   const summary = useMemo(() => summarizeArguments(toolCall.arguments), [toolCall.arguments]);
 
   return (
-    <div className="border border-border/60 rounded-lg overflow-hidden bg-muted/30">
+    <div className="border border-border/60 overflow-hidden bg-muted/30">
       <button
         className="flex items-center gap-3 px-3 py-2.5 w-full cursor-pointer hover:bg-muted/40 transition-colors text-left"
         onClick={() => setIsOpen(!isOpen)}
         type="button"
+        aria-expanded={isOpen}
       >
         <Wrench className="h-4 w-4 text-muted-foreground/60 shrink-0" />
         <span className="text-sm font-mono text-foreground">{toolCall.name}</span>
@@ -128,7 +174,7 @@ function ToolCallBlock({ toolCall }: { toolCall: ToolCallInfo }) {
           {!isOpen && summary}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded">
+          <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted">
             Tool Call
           </span>
           <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform", !isOpen && "-rotate-90")} />
@@ -147,11 +193,12 @@ function ToolOutputBlock({ result }: { result: ToolResultInfo }) {
   const [isOpen, setIsOpen] = useState(true);
 
   return (
-    <div className="border border-border/60 rounded-lg overflow-hidden bg-muted/30">
+    <div className="border border-border/60 overflow-hidden bg-muted/30">
       <button
         className="flex items-center gap-3 px-3 py-2.5 w-full cursor-pointer hover:bg-muted/40 transition-colors text-left"
         onClick={() => setIsOpen(!isOpen)}
         type="button"
+        aria-expanded={isOpen}
       >
         <Terminal className="h-4 w-4 text-success shrink-0" />
         <span className="text-sm font-mono text-foreground">{result.id}</span>
@@ -159,7 +206,7 @@ function ToolOutputBlock({ result }: { result: ToolResultInfo }) {
           {!isOpen && result.output.slice(0, 200)}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-success px-2 py-0.5 bg-success/10 rounded">
+          <span className="text-xs text-success px-2 py-0.5 bg-success/10">
             Tool Output
           </span>
           <ChevronDown className={cn("h-4 w-4 text-muted-foreground/40 transition-transform", !isOpen && "-rotate-90")} />
@@ -231,7 +278,7 @@ function ToolMessageContent({ message }: { message: ChatMessage }) {
 function getPreviewText(message: ChatMessage): string {
   const firstCall = message.tool_calls?.[0]?.function;
   if (firstCall) {
-    const calls = message.tool_calls!.length;
+    const calls = message.tool_calls?.length ?? 0;
     const more = calls > 1 ? ` +${calls - 1} more` : "";
     return `${firstCall.name}  ${summarizeArguments(firstCall.arguments ?? "")}${more}`;
   }
@@ -269,7 +316,7 @@ export function ConversationTranscript({
 }: ConversationTranscriptProps) {
   if (conversation.length === 0) {
     return (
-      <div className="rounded-lg border border-border/60 bg-card/70 px-4 py-8 text-center">
+      <div className="border border-border/60 bg-card/70 px-4 py-8 text-center">
         <p className="text-sm text-muted-foreground">
           No conversation messages in this trace.
         </p>
@@ -288,12 +335,11 @@ export function ConversationTranscript({
     );
   }
 
-  const defaultOpen = conversation.length > 0
-    ? [messageItemId(conversation[0]!, 0)]
-    : [];
+  const firstMessage = conversation[0];
+  const defaultOpen = firstMessage ? [messageItemId(firstMessage, 0)] : [];
 
   return (
-    <div className="rounded-lg border border-border/60 bg-card/70 overflow-hidden">
+    <div className="border border-border/60 bg-card/70 overflow-hidden">
       <div className="flex items-center min-h-[52px] px-4 py-2 border-b border-border/40 shrink-0">
         <h2 className="text-sm font-medium text-foreground">Conversation History</h2>
         <span className="ml-2 text-xs text-muted-foreground">{conversation.length} messages</span>
