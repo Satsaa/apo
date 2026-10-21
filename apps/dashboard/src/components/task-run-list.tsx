@@ -132,7 +132,7 @@ export function TaskRunRow({
     <TableRow
       className="group cursor-pointer border-border/60 transition-colors hover:bg-muted/30"
       onClick={(event) => {
-        if (!shouldIgnoreTaskRunNavigation(event.target)) router.push(href);
+        if (!shouldIgnoreTaskRunNavigation(event.currentTarget, event.target)) router.push(href);
       }}
     >
       <TableCell className="max-w-[300px] pl-6">
@@ -289,7 +289,11 @@ export function HostLabelsCell({ labels }: { labels: string[] }) {
   );
 }
 
-function shouldIgnoreTaskRunNavigation(target: EventTarget | null) {
-  return target instanceof HTMLElement
-    && target.closest("a, button, input, select, textarea, [role='button'], [role='link']") !== null;
+/** Clicks on the row's own controls, and clicks inside a dialog it opened
+ * (portaled out of the row's DOM, but still bubbling through React), must
+ * not navigate. Element rather than HTMLElement: an icon click lands on its
+ * <svg>. */
+function shouldIgnoreTaskRunNavigation(row: Element, target: EventTarget | null) {
+  if (!(target instanceof Element) || !row.contains(target)) return true;
+  return target.closest("a, button, input, select, textarea, [role='button'], [role='link']") !== null;
 }
