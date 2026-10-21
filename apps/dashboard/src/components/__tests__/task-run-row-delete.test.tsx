@@ -78,6 +78,21 @@ describe("TaskRunRow delete", () => {
     expect(screen.getByRole("alertdialog")).toBeTruthy();
   });
 
+  it("does not navigate on a click on the dialog's overlay", () => {
+    renderRow();
+    fireEvent.click(screen.getByRole("button", { name: "Delete this task run" }));
+    fireEvent.click(document.querySelector("[data-slot='alert-dialog-overlay']")!);
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("navigates on a click on the row's decorative arrow icon", () => {
+    const { container } = renderRow();
+    fireEvent.click(container.querySelector("svg.lucide-arrow-up-right")!);
+
+    expect(push).toHaveBeenCalledWith("/project/acme/runs/task/run_abc");
+  });
+
   it("still navigates on a plain row click", () => {
     renderRow();
     fireEvent.click(screen.getByText("run_abc"));
