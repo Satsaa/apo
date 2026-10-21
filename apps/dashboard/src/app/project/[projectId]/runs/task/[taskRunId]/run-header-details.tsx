@@ -183,7 +183,7 @@ function ModelSection({ facts }: { facts: RunHeaderFacts }) {
         </GroupRow>
       )}
       {facts.hosts.length > 0 && (
-        <GroupRow label="Hosts" title={facts.hosts.map((h) => h.label).join(" · ")}>
+        <GroupRow label="Hosts">
           <HostsValue hosts={facts.hosts} />
         </GroupRow>
       )}
@@ -205,7 +205,6 @@ function OriginSection({ facts }: { facts: RunHeaderFacts }) {
         <Link
           href={facts.batchHref}
           className="hover:text-foreground hover:underline"
-          title={facts.batchRunId}
         >
           {facts.batchRunId}
         </Link>
@@ -217,9 +216,7 @@ function OriginSection({ facts }: { facts: RunHeaderFacts }) {
 function TaskSection({ facts }: { facts: RunHeaderFacts }) {
   return (
     <DetailsSection title="Task">
-      <GroupRow label="Path" title={facts.taskPathFull}>
-        {facts.taskPathFull}
-      </GroupRow>
+      <GroupRow label="Path">{facts.taskPathFull}</GroupRow>
       <GroupRow
         label="Started"
         title={facts.startedAt ? formatRelativeTime(facts.startedAt) : undefined}
@@ -253,7 +250,10 @@ function GroupRow({
   return (
     <div className="flex items-baseline justify-between gap-4">
       <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className="min-w-0 truncate font-mono text-xs text-foreground" title={title}>
+      <span
+        className="min-w-0 text-right font-mono text-xs text-foreground [overflow-wrap:anywhere]"
+        title={title}
+      >
         {children}
       </span>
     </div>
@@ -265,9 +265,9 @@ function HostsValue({ hosts }: { hosts: RunHeaderHostFact[] }) {
     <>
       {hosts.map((host, i) => (
         <span key={host.label}>
-          {i > 0 && <span className="text-muted-foreground/50"> · </span>}
+          {i > 0 && <span className="text-muted-foreground/50">{"\u00a0· "}</span>}
           {host.label}
-          <span className="text-muted-foreground"> ×{host.calls}</span>
+          <span className="text-muted-foreground">{"\u00a0"}×{host.calls}</span>
         </span>
       ))}
     </>

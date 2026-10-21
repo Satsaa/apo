@@ -145,4 +145,27 @@ describe("RunHeaderMetadata", () => {
       screen.getByTitle("differs from the configured model — see drift notice below"),
     ).toBeInTheDocument();
   });
+
+  it("wraps long values in full instead of truncating them", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunHeaderMetadata
+        facts={baseFacts({
+          hosts: [
+            { label: "anthropic", calls: 35 },
+            { label: "llm.bind6.com", calls: 10 },
+          ],
+        })}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /details/i }));
+
+    const batch = screen.getByRole("link", { name: "bch_3e444461acc34422708ae409" });
+    expect(batch.parentElement).toHaveClass("[overflow-wrap:anywhere]");
+    expect(batch.parentElement).not.toHaveClass("truncate");
+    expect(batch.parentElement).not.toHaveClass("whitespace-nowrap");
+    // Where the pair fits on a line, a count stays with its host and no
+    // line starts with the separator.
+    expect(screen.getByText(/llm\.bind6\.com/).textContent).toBe("\u00a0· llm.bind6.com\u00a0×10");
+  });
 });
