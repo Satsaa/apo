@@ -27,6 +27,8 @@ interface TraceGanttChartProps {
 
 const SCALE_WIDTH = 900;
 const STEP_SIZE = 100;
+// The 28px time scale plus its 1px bottom border, pinned above the rows.
+const SCALE_HEIGHT = 29;
 const ROW_HEIGHT = 42;
 const TREE_INDENTATION = 12;
 const PREDEFINED_STEP_SIZES = [
@@ -545,8 +547,7 @@ export function TraceGanttChart({
   calls,
   searchQuery = "",
 }: TraceGanttChartProps) {
-  const timeIndexRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const { selectCall, selectedCallId } = useSelection();
   const { cumulativeMetrics } = useTraceData();
@@ -606,29 +607,12 @@ export function TraceGanttChart({
     });
   }, []);
 
-  const handleTimeIndexScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      if (contentRef.current) {
-        contentRef.current.scrollLeft = e.currentTarget.scrollLeft;
-      }
-    },
-    [],
-  );
-
-  const handleContentScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      if (timeIndexRef.current) {
-        timeIndexRef.current.scrollLeft = e.currentTarget.scrollLeft;
-      }
-    },
-    [],
-  );
-
   const virtualizer = useVirtualizer({
     count: flatNodes.length,
-    getScrollElement: () => contentRef.current,
+    getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
+    scrollMargin: SCALE_HEIGHT,
   });
 
   if (calls.length === 0) {
@@ -640,74 +624,70 @@ export function TraceGanttChart({
   }
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
-      {/* Sticky time scale header */}
+    // One scroller holds both the time scale and the rows, so the browser moves
+    // them together. Two scrollers syncing scrollLeft in onScroll fight a
+    // trackpad swipe: each writes the other's previous-frame offset back.
+    <div
+      ref={scrollRef}
+      data-testid="trace-gantt-scroller"
+      className="h-full w-full overflow-auto"
+    >
       <div
-        ref={timeIndexRef}
-        className="overflow-x-auto overflow-y-hidden border-b border-border/50"
-        onScroll={handleTimeIndexScroll}
+        className="sticky top-0 z-10 min-w-full border-b border-border/50 bg-background"
+        style={{ width: `${contentWidth}px`, height: `${SCALE_HEIGHT}px` }}
       >
-        <div style={{ width: `${contentWidth}px` }}>
-          <TimelineScale
-            traceDurationSec={traceDurationSec}
-            stepSize={stepSize}
-          />
-        </div>
+        <TimelineScale
+          traceDurationSec={traceDurationSec}
+          stepSize={stepSize}
+        />
       </div>
 
-      {/* Main scrollable content with virtualized rows */}
       <div
-        ref={contentRef}
-        className="flex-1 overflow-auto"
-        onScroll={handleContentScroll}
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: `${contentWidth}px`,
+          position: "relative",
+        }}
       >
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: `${contentWidth}px`,
-            position: "relative",
-          }}
-        >
-          {virtualizer.getVirtualItems().map((vr) => {
-            const node = flatNodes[vr.index];
-            if (!node) return null;
-            const isSelected =
-              node.call === null
-                ? !selectedCallId
-                : selectedCallId === node.call.id;
-            const cumulative = node.call
-              ? cumulativeMetrics.get(node.call.id)
-              : undefined;
+        {virtualizer.getVirtualItems().map((vr) => {
+          const node = flatNodes[vr.index];
+          if (!node) return null;
+          const isSelected =
+            node.call === null
+              ? !selectedCallId
+              : selectedCallId === node.call.id;
+          const cumulative = node.call
+            ? cumulativeMetrics.get(node.call.id)
+            : undefined;
 
-            return (
-              <div
-                key={node.id}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: `${vr.size}px`,
-                  transform: `translateY(${vr.start}px)`,
-                }}
-              >
-                <TimelineRow
-                  node={node}
-                  expanded={expanded.has(node.id)}
-                  onToggle={() => toggleNode(node.id)}
-                  isSelected={isSelected}
-                  onSelect={() => selectCall(node.call?.id ?? null)}
-                  cumulative={cumulative}
-                  showDuration={preferences.showDuration}
-                  showCostTokens={preferences.showCostTokens}
-                  colorCodeMetrics={preferences.colorCodeMetrics}
-                  maxDuration={bounds.spanMs}
-                  totalCost={totalCost}
-                />
-              </div>
-            );
-          })}
-        </div>
+          return (
+            <div
+              key={node.id}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: `${vr.size}px`,
+                transform: `translateY(${vr.start - SCALE_HEIGHT}px)`,
+              }}
+            >
+              <TimelineRow
+                node={node}
+                expanded={expanded.has(node.id)}
+                onToggle={() => toggleNode(node.id)}
+                isSelected={isSelected}
+                onSelect={() => selectCall(node.call?.id ?? null)}
+                cumulative={cumulative}
+                showDuration={preferences.showDuration}
+                showCostTokens={preferences.showCostTokens}
+                colorCodeMetrics={preferences.colorCodeMetrics}
+                maxDuration={bounds.spanMs}
+                totalCost={totalCost}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
