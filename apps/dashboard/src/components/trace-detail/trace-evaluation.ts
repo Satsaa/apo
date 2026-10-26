@@ -92,11 +92,10 @@ function parseToolResult(toolResult: unknown): unknown {
 }
 
 /**
- * Read a check span's own verdict from its full call. The SDK writes the
- * check summary ({pass, outcome, reasoning, assertions}) as the span's
- * assistant output rather than its tool_result, so read whichever carries
- * it. Spans from SDKs that predate `outcome` read a verdictless check as a
- * fail.
+ * Read a check span's own verdict from its full call. Current SDKs export the
+ * check summary ({pass, outcome, reasoning, assertions}) as the tool result;
+ * older SDKs serialized the summary into an assistant message, so read both
+ * channels. Spans that predate `outcome` read a verdictless check as a fail.
  */
 export function parseCheckSpanVerdict(
   call: Pick<TraceObservation, "tool_result" | "output">,

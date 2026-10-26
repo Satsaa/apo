@@ -174,7 +174,9 @@ describe("per-check spans (issue #344)", () => {
     });
 
     const outputOf = (name: string) =>
-      steps.find((s) => s.name === name)!.output as { pass: boolean; outcome?: string };
+      (steps.find((s) => s.name === name)!.output as {
+        verdict: { pass: boolean; outcome?: string };
+      }).verdict;
     expect(outputOf("check:unanswered")).toMatchObject({ pass: false, outcome: "error" });
     // A check that failed on evidence carries no outcome.
     expect(outputOf("check:structural").outcome).toBeUndefined();
