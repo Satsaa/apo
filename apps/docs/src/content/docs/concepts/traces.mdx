@@ -24,7 +24,7 @@ A trace is a tree built over time, not a flat log. The calls nest, and the order
 
 ## The evaluation phase is separate
 
-Judging is not agent work, so it doesn't sit next to agent work. Every judged check — `t.judge` calls and `t.agent` investigation sessions — lands under one `checks.run` span, and the trace view collapses that whole phase into a single muted **Evaluation** row with the roll-up counts (`45 pass · 2 fail`), plus a `no-verdict` count when judges errored instead of ruling. Expand the row to see each judgment with its own pass/fail badge; the checks panel on the run page remains the primary surface for verdicts and reasoning, and a failed check's *View in trace* link deep-links straight into its judge span.
+Judging is not agent work, so it doesn't sit next to agent work. Every check lands under one `checks.run` span, deterministic ones included, with the check's `t.judge` calls and `t.agent` investigation sessions nested inside it. The trace view collapses that whole phase into a single muted **Evaluation** row with the roll-up counts (`45 pass · 2 fail`), plus a `no-verdict` count when judges errored instead of ruling. Expand the row to see each check with its own pass / fail / no verdict badge, and under it each judgment with its own; the checks panel on the run page remains the primary surface for verdicts and reasoning, and a failed check's *View in trace* link deep-links straight into its judge span.
 
 ## One trace per run
 
