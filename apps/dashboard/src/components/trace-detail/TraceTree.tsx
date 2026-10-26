@@ -6,14 +6,17 @@ import { useViewPreferences } from "./contexts/ViewPreferencesContext";
 import type { TraceObservation } from "./contexts";
 import { getCallDetail } from "@/lib/traces-api";
 import {
-  canSkipJudgeFetches,
+  evaluationCounts,
   evaluationSubtreeRows,
   findEvaluationGroup,
-  isEvaluationRoot,
   parsePhaseSummary,
-  parseVerdict,
+  parseSpanVerdict,
   partitionEvaluation,
+  rowVerdict,
+  verdictFetchTargets,
+  verdictRowLabel,
   type PhaseSummary,
+  type RowVerdict,
 } from "./trace-evaluation";
 import { getSemanticType, getEventType } from "./trace-utils";
 // getDisplayName lives in trace-display (shared with gantt + graph + detail
@@ -42,10 +45,11 @@ import { formatCostMicro, formatDuration, formatTokenBreakdown, formatTokenTotal
 import { CommentCountIcon } from "./CommentCountIcon";
 import { getHeatmapColor } from "./trace-heatmap";
 
-// ── Evaluation phase (#302): judge roots (judge:* / t.agent:*) and their
-// descendants collapse into one "Evaluation" row with pass/fail counts.
-// Grouping lives in ./trace-evaluation (pure, tested); searching suspends it
-// so matching judge rows surface like any other row.
+// ── Evaluation phase (#302): the checks.run span, its check:* spans and
+// their judge:* / t.agent:* spans collapse into one "Evaluation" row with
+// pass/fail counts. Check and judge rows render as tree rows with a verdict
+// badge. Grouping lives in ./trace-evaluation (pure, tested); searching
+// suspends it so matching rows surface like any other row.
 
 interface TraceTreeProps {
   calls: TraceObservation[];
@@ -169,6 +173,36 @@ interface SpanDisplayOptions {
   isSimplifiedTree: boolean;
 }
 
+/** A check or judge row's badge and label. */
+interface VerdictDisplay {
+  state: RowVerdict | undefined;
+  label: string;
+}
+
+const VERDICT_BADGES: Record<RowVerdict | "unknown", { text: string; className: string; title?: string }> = {
+  pass: { text: "pass", className: "bg-success/15 text-success" },
+  fail: { text: "fail", className: "bg-destructive/15 text-destructive" },
+  "no-verdict": {
+    text: "no verdict",
+    className: "bg-warning/15 text-warning",
+    title: "Ended without a verdict (judge errored or evidence unsupported) — quality unknown, not failed",
+  },
+  unknown: { text: "—", className: "bg-muted text-muted-foreground" },
+};
+
+function VerdictBadge({ state }: { state: RowVerdict | undefined }) {
+  const badge = VERDICT_BADGES[state ?? "unknown"];
+  return (
+    <span
+      data-verdict={state ?? "unknown"}
+      title={badge.title}
+      className={cn("shrink-0 rounded-sm px-1 py-0.5 text-[10px] font-semibold uppercase leading-none", badge.className)}
+    >
+      {badge.text}
+    </span>
+  );
+}
+
 function SpanContent({
   call,
   isRun,
@@ -181,6 +215,7 @@ function SpanContent({
   totalCost,
   commentCount,
   display,
+  verdict,
 }: {
   call: TraceObservation | null;
   isRun: boolean;
@@ -193,6 +228,7 @@ function SpanContent({
   totalCost: number;
   commentCount?: number;
   display: SpanDisplayOptions;
+  verdict?: VerdictDisplay;
 }) {
   const { showDuration, showCostTokens, showComments, colorCodeMetrics, isSimplifiedTree } = display;
   if (isRun) {
@@ -227,7 +263,7 @@ function SpanContent({
   const c = call!;
   const latency = formatDuration(c.latency_ms);
   const modelLabel = getModelLabel(c.model);
-  const displayName = getDisplayName(c);
+  const displayName = verdict?.label ?? getDisplayName(c);
   const hasDescendants = cumulative && cumulative.descendant_count > 0;
   const displayCost = hasDescendants && cumulative ? cumulative.cost : (c.cost ?? 0);
   const displayTokens = hasDescendants && cumulative ? cumulative.total_tokens : (c.total_tokens ?? 0);
@@ -258,7 +294,8 @@ function SpanContent({
     <div className="flex min-w-0 flex-1 items-center gap-2 py-0.5 pr-2 text-left">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-xs text-foreground">
+            {verdict && <VerdictBadge state={verdict.state} />}
+            <span className={cn("truncate text-xs", verdict?.state === "fail" ? "text-destructive" : "text-foreground")}>
             {highlightMatch(displayName, searchQuery)}
           </span>
           {showComments && commentCount != null && commentCount > 0 && (
@@ -309,6 +346,7 @@ function TreeNode({
   commentCounts,
   prefetchObservation,
   display,
+  verdict,
 }: {
   node: FlatNode;
   calls: TraceObservation[];
@@ -323,6 +361,7 @@ function TreeNode({
   commentCounts?: Record<string, number>;
   prefetchObservation: (callId: string) => void;
   display: SpanDisplayOptions;
+  verdict?: VerdictDisplay;
 }) {
   const { selectCall, selectedCallId } = useSelection();
   const isSelected = node.call ? selectedCallId === node.call.id : !selectedCallId;
@@ -430,6 +469,7 @@ function TreeNode({
               totalCost={totalCost}
               commentCount={node.call ? (commentCounts?.[node.call.id] ?? 0) : undefined}
               display={display}
+              verdict={verdict}
             />
           </div>
         </button>
@@ -528,18 +568,18 @@ export function TraceTree({
   const { run, cumulativeMetrics, prefetchObservation, isSimplifiedTree } = useTraceData();
   const { preferences } = useViewPreferences();
   const [levelFilter, setLevelFilter] = useState<string>("all");
-  // Verdict map keyed by judge root id — colors the judgment-row badges and,
-  // on traces without a usable checks.run summary, the Evaluation counts.
-  // The slim tree payload omits tool_result, so each judge root's full call
-  // is fetched once on demand.
-  const [judgeVerdicts, setJudgeVerdicts] = useState<Record<string, boolean | undefined>>({});
+  // Verdicts fetched span by span, keyed by span id: every judge row's badge,
+  // and a check row's whenever the checks.run summary cannot answer for it
+  // (also the Evaluation counts then). The slim tree payload omits
+  // tool_result, so each span's full call is fetched once on demand.
+  const [spanVerdicts, setSpanVerdicts] = useState<Record<string, RowVerdict | undefined>>({});
   const checksRunId = evaluation?.checksRun?.id ?? null;
-  // The phase span's own summary: one fetch that replaces the per-judge
-  // fetches for the collapsed row's counts. Keyed BY SPAN ID — adjacent-trace
+  // The phase span's own summary: one fetch that carries the collapsed row's
+  // counts and every check row's verdict. Keyed BY SPAN ID — adjacent-trace
   // navigation (prev/next) reuses this component without remounting, and an
   // unkeyed summary would render trace A's counts on trace B. undefined =
   // not resolved yet; null = resolved but unusable (fall back to the
-  // per-judge verdicts).
+  // per-span verdicts).
   const [summariesBySpan, setSummariesBySpan] = useState<
     Record<string, PhaseSummary | null>
   >({});
@@ -568,36 +608,49 @@ export function TraceTree({
       controller.abort();
     };
   }, [run, checksRunId, summariesBySpan]);
-  // Judgment rows are visible when the group is expanded OR search surfaces
+  // Verdict rows are visible when the group is expanded OR search surfaces
   // them (search suspends grouping) — their badges need the verdicts then.
-  const judgmentsVisible =
+  const verdictRowsVisible =
     evalExpanded || searchQuery.trim().length > 0;
   useEffect(() => {
     const trace = run?.run;
-    if (!trace || judgeRoots.length === 0) return;
-    // While no judgment row is visible, a usable (or pending) phase summary
-    // already carries the counts — skip the per-judge fetches until the
-    // badges are on screen.
-    if (canSkipJudgeFetches({ checksRunId, judgmentsVisible, phaseSummary })) return;
-    const missing = judgeRoots.filter((j) => !(j.id in judgeVerdicts));
+    if (!trace || !evaluation) return;
+    const missing = verdictFetchTargets({
+      group: evaluation,
+      phaseSummary,
+      rowsVisible: verdictRowsVisible,
+    }).filter((c) => !(c.id in spanVerdicts));
     if (missing.length === 0) return;
     const controller = new AbortController();
     let active = true;
     Promise.all(
-      missing.map((j) =>
-        getCallDetail(trace.id, j.id, trace.project, controller.signal)
-          .then((full) => [j.id, parseVerdict(full.tool_result)] as const)
-          .catch(() => [j.id, undefined] as const),
+      missing.map((c) =>
+        getCallDetail(trace.id, c.id, trace.project, controller.signal)
+          .then((full) => [c.id, parseSpanVerdict(c.step_name ?? "", full)] as const)
+          .catch(() => [c.id, undefined] as const),
       ),
     ).then((pairs) => {
       if (!active) return;
-      setJudgeVerdicts((prev) => ({ ...prev, ...Object.fromEntries(pairs) }));
+      setSpanVerdicts((prev) => ({ ...prev, ...Object.fromEntries(pairs) }));
     });
     return () => {
       active = false;
       controller.abort();
     };
-  }, [run, judgeRoots, judgeVerdicts, checksRunId, judgmentsVisible, phaseSummary]);
+  }, [run, evaluation, spanVerdicts, verdictRowsVisible, phaseSummary]);
+  const callsById = useMemo(() => new Map(calls.map((c) => [c.id, c])), [calls]);
+  const verdictFor = useCallback(
+    (call: TraceObservation | null): VerdictDisplay | undefined => {
+      if (!call || !evaluation?.memberIds.has(call.id)) return undefined;
+      const label = verdictRowLabel(
+        call,
+        call.parent_call_id ? callsById.get(call.parent_call_id) : undefined,
+      );
+      if (label === null) return undefined;
+      return { state: rowVerdict(call, evaluation, phaseSummary, spanVerdicts), label };
+    },
+    [evaluation, callsById, phaseSummary, spanVerdicts],
+  );
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const s = new Set<string>(["root-run"]);
     calls.forEach((c) => s.add(c.id));
@@ -636,14 +689,8 @@ export function TraceTree({
     if (!evaluation || searchQuery.trim().length > 0) return tree;
     const split = partitionEvaluation(tree, evaluation);
     if (!split) return tree;
-    const judgeSubtree = evaluationSubtreeRows(tree, evaluation);
-    // The phase span's summary is the counts source of record; the per-judge
-    // verdict map is the fallback for traces without one.
-    const counts = phaseSummary ?? {
-      passed: judgeRoots.filter((j) => judgeVerdicts[j.id] === true).length,
-      failed: judgeRoots.filter((j) => judgeVerdicts[j.id] === false).length,
-      noVerdict: 0,
-    };
+    const evaluationSubtree = evaluationSubtreeRows(tree, evaluation);
+    const counts = evaluationCounts(evaluation, phaseSummary, spanVerdicts);
     return [
       ...split.kept.slice(0, split.insertAt),
       {
@@ -662,10 +709,10 @@ export function TraceTree({
         evalFailed: counts.failed,
         evalNoVerdict: counts.noVerdict,
       },
-      ...(evalExpanded ? judgeSubtree : []),
+      ...(evalExpanded ? evaluationSubtree : []),
       ...split.kept.slice(split.insertAt),
     ];
-  }, [calls, expanded, searchQuery, evaluation, judgeRoots, evalExpanded, judgeVerdicts, phaseSummary]);
+  }, [calls, expanded, searchQuery, evaluation, judgeRoots, evalExpanded, spanVerdicts, phaseSummary]);
   const timingBounds = useMemo(() => computeTimingBounds(calls), [calls]);
   const totalCost = useMemo(() => calls.reduce((sum, c) => sum + (c.cost ?? 0), 0), [calls]);
 
@@ -839,7 +886,7 @@ export function TraceTree({
           const { node, treeLines } = row;
           // The synthetic group row carries judgeRoots[0] as its call (so
           // keyboard nav can select it) — it must be matched BEFORE the
-          // judge-row branch below, or it renders as a plain judge row.
+          // tree-row branch below, or it renders as a plain judge row.
           if ("isEvalGroup" in row && row.isEvalGroup) {
             return (
               <div
@@ -869,64 +916,6 @@ export function TraceTree({
                     </span>
                   )}
                 </button>
-              </div>
-            );
-          }
-          if (
-            node.call &&
-            evaluation !== null &&
-            isEvaluationRoot(node.call.step_name ?? "") &&
-            evaluation.memberIds.has(node.call.id) &&
-            judgeRoots.some((j) => j.id === node.call!.id)
-          ) {
-            const pass = judgeVerdicts[node.call.id];
-            const isOpen = expanded.has(node.call.id);
-            return (
-              <div
-                key={node.id}
-                ref={virtualizer.measureElement}
-                data-index={virtualRow.index}
-                style={{ position: "absolute", top: virtualRow.start, left: 0, width: "100%" }}
-              >
-                <div className="flex h-7 w-full items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 text-left text-xs hover:bg-accent/50">
-                  {/* Fixed chevron slot (like span rows) keeps leaf judgments
-                      aligned with expandable ones. */}
-                  <div className="flex w-5 shrink-0 items-center justify-center">
-                    {node.hasChildren && (
-                      <button
-                        type="button"
-                        onClick={() => toggleNode(node.call!.id)}
-                        aria-expanded={isOpen}
-                        aria-label={isOpen ? "Collapse judgment" : "Expand judgment"}
-                        className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                      >
-                        <span className={cn("inline-block h-4 w-4 transition-transform duration-200", isOpen ? "rotate-90" : "rotate-0")}>
-                          <ChevronRight className="h-4 w-4" />
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => selectCall(node.id)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap text-left"
-                  >
-                    <span className={cn(
-                      "shrink-0 rounded-sm px-1 py-0.5 text-[10px] font-semibold uppercase",
-                      pass === true && "bg-success/15 text-success",
-                      pass === false && "bg-destructive/15 text-destructive",
-                      pass === undefined && "bg-muted text-muted-foreground",
-                    )}>
-                      {pass === true ? "pass" : pass === false ? "fail" : "—"}
-                    </span>
-                    <span className={cn("truncate", pass === false ? "text-destructive" : "text-foreground")}>
-                      {node.call.step_name}
-                    </span>
-                    <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-                      {formatDuration(node.call.latency_ms ?? undefined)}
-                    </span>
-                  </button>
-                </div>
               </div>
             );
           }
@@ -962,6 +951,7 @@ export function TraceTree({
                   colorCodeMetrics: preferences.colorCodeMetrics,
                   isSimplifiedTree,
                 }}
+                verdict={verdictFor(node.call)}
               />
             </div>
           );

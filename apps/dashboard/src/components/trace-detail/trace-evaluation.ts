@@ -9,10 +9,27 @@ import type { TraceObservation } from "./contexts";
 // under; when that span is present it anchors the group (and its summary
 // carries the collapsed-row counts). Traces recorded before that emission —
 // or by other producers — fall back to the judge:/t.agent: name prefix.
+//
+// Since #344 every check also gets its own `check:<id>` span under
+// checks.run, with its judge/t.agent spans nested inside. Check rows and
+// judge rows both carry a verdict badge; a check's verdict comes from the
+// checks.run summary, so one fetch covers every check row.
 
 /** A call is an evaluation root when its step name says so. */
 export function isEvaluationRoot(name: string): boolean {
   return name.startsWith("judge:") || name.startsWith("t.agent:");
+}
+
+const CHECK_PREFIX = "check:";
+
+/** A per-check span: `check:<id>`. */
+export function isCheckSpan(name: string): boolean {
+  return name.startsWith(CHECK_PREFIX);
+}
+
+/** The check id a `check:<id>` span names. */
+export function checkIdOf(name: string): string {
+  return name.slice(CHECK_PREFIX.length);
 }
 
 export interface EvaluationGroup {
@@ -20,19 +37,22 @@ export interface EvaluationGroup {
   checksRun: TraceObservation | null;
   /** Root judge spans, in call order. */
   roots: TraceObservation[];
-  /** Phase span + root ids plus every descendant span (their tool calls,
-   * sub-spans). */
+  /** Per-check `check:<id>` spans, in call order. */
+  checks: TraceObservation[];
+  /** Phase span + root and check ids plus every descendant span (their tool
+   * calls, sub-spans). */
   memberIds: Set<string>;
 }
 
 /** Collect the evaluation phase of a trace, or null when it has neither a
- * checks.run span nor judge roots. */
+ * checks.run span nor judge or check spans. */
 export function findEvaluationGroup(calls: TraceObservation[]): EvaluationGroup | null {
   const roots = calls.filter((c) => isEvaluationRoot(c.step_name ?? ""));
+  const checks = calls.filter((c) => isCheckSpan(c.step_name ?? ""));
   const checksRun =
     calls.find((c) => c.step_name === "checks.run") ?? null;
-  if (roots.length === 0 && !checksRun) return null;
-  const memberIds = new Set(roots.map((c) => c.id));
+  if (roots.length === 0 && checks.length === 0 && !checksRun) return null;
+  const memberIds = new Set([...roots, ...checks].map((c) => c.id));
   if (checksRun) memberIds.add(checksRun.id);
   let grew = true;
   while (grew) {
@@ -44,24 +64,65 @@ export function findEvaluationGroup(calls: TraceObservation[]): EvaluationGroup 
       }
     }
   }
-  return { checksRun, roots, memberIds };
+  return { checksRun, roots, checks, memberIds };
+}
+
+/** What a verdict row's badge says. `no-verdict` is a check whose judge
+ * errored or whose evidence was unsupported (issue #323). */
+export type RowVerdict = "pass" | "fail" | "no-verdict";
+
+/** A tool_result as an object: JSON strings parsed, unparseable ones null. */
+function parseToolResult(toolResult: unknown): unknown {
+  if (typeof toolResult !== "string") return toolResult;
+  try {
+    return JSON.parse(toolResult) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 // The verdict JSON ({"reasoning","pass"}) rides the span's tool_result, which
 // slim trace payloads omit — the tree fetches full judge calls on demand and
 // reads pass from that map.
 export function parseVerdict(toolResult: unknown): boolean | undefined {
-  const parsed = typeof toolResult === "string"
-    ? (() => {
-        try {
-          return JSON.parse(toolResult) as unknown;
-        } catch {
-          return null;
-        }
-      })()
-    : toolResult;
-  const pass = (parsed as { pass?: unknown } | null)?.pass;
+  const pass = (parseToolResult(toolResult) as { pass?: unknown } | null)?.pass;
   return typeof pass === "boolean" ? pass : undefined;
+}
+
+/**
+ * Read a check span's own verdict from its full call. The SDK writes the
+ * check summary ({pass, reasoning, assertions}) as the span's assistant
+ * output rather than its tool_result, so read whichever carries it.
+ */
+export function parseCheckSpanVerdict(
+  call: Pick<TraceObservation, "tool_result" | "output">,
+): boolean | undefined {
+  const fromToolResult = parseVerdict(call.tool_result);
+  if (fromToolResult !== undefined) return fromToolResult;
+  const messages = (call.output as { messages?: unknown } | null)?.messages;
+  if (!Array.isArray(messages)) return undefined;
+  const assistant = messages.findLast(
+    (m) => (m as { role?: unknown } | null)?.role === "assistant",
+  ) as { content?: unknown } | undefined;
+  return typeof assistant?.content === "string" ? parseVerdict(assistant.content) : undefined;
+}
+
+/**
+ * A check or judge span's own verdict from its full call. A judge records
+ * `pass: null` when it never answered, which is no verdict rather than an
+ * unknown one.
+ */
+export function parseSpanVerdict(
+  stepName: string,
+  call: Pick<TraceObservation, "tool_result" | "output">,
+): RowVerdict | undefined {
+  const pass = isCheckSpan(stepName)
+    ? parseCheckSpanVerdict(call)
+    : parseVerdict(call.tool_result);
+  if (pass !== undefined) return pass ? "pass" : "fail";
+  if (isCheckSpan(stepName)) return undefined;
+  const verdict = parseToolResult(call.tool_result) as { pass?: unknown } | null | undefined;
+  return verdict?.pass === null ? "no-verdict" : undefined;
 }
 
 /** Collapsed-row counts read from the checks.run span's tool_result. */
@@ -72,31 +133,25 @@ export interface PhaseSummary {
   /** Checks that ended without a verdict (judge errored / evidence
    * unsupported) — unknown quality, not failures (issue #323). */
   noVerdict: number;
+  /** Each check's verdict, keyed by check id. */
+  checks: Map<string, RowVerdict>;
 }
 
 /**
  * Parse the checks.run span's phase summary — the SDK's
- * `{total, passCount, failCount, noVerdictCount}` verdict payload — or null
- * when absent, malformed, or vacuous (total 0 carries no counts worth
- * showing). One fetch of the phase span replaces N per-judge fetches for
- * the collapsed row's counts.
+ * `{total, passCount, failCount, noVerdictCount, results}` verdict payload —
+ * or null when absent, malformed, or vacuous (total 0 carries no counts worth
+ * showing). One fetch of the phase span replaces N per-check fetches for the
+ * collapsed row's counts and the check rows' badges.
  */
 export function parsePhaseSummary(toolResult: unknown): PhaseSummary | null {
-  const parsed = typeof toolResult === "string"
-    ? (() => {
-        try {
-          return JSON.parse(toolResult) as unknown;
-        } catch {
-          return null;
-        }
-      })()
-    : toolResult;
-  const summary = parsed as
+  const summary = parseToolResult(toolResult) as
     | {
         total?: unknown;
         passCount?: unknown;
         failCount?: unknown;
         noVerdictCount?: unknown;
+        results?: unknown;
       }
     | null;
   if (
@@ -109,32 +164,116 @@ export function parsePhaseSummary(toolResult: unknown): PhaseSummary | null {
   }
   const noVerdict =
     typeof summary.noVerdictCount === "number" ? summary.noVerdictCount : 0;
+  const checks = new Map<string, RowVerdict>();
+  for (const result of Array.isArray(summary.results) ? summary.results : []) {
+    const r = result as { id?: unknown; pass?: unknown; outcome?: unknown } | null;
+    if (typeof r?.id !== "string" || typeof r.pass !== "boolean") continue;
+    checks.set(
+      r.id,
+      r.pass
+        ? "pass"
+        : r.outcome === "error" || r.outcome === "unsupported"
+          ? "no-verdict"
+          : "fail",
+    );
+  }
   return {
     total: summary.total,
     passed: summary.passCount,
     failed: summary.failCount,
     noVerdict,
+    checks,
   };
 }
 
-/**
- * Whether the per-judge verdict fetches can be skipped right now: only while
- * no judgment row is visible (group collapsed AND no search surfacing them)
- * AND a checks.run summary is usable or still pending (one fetch in flight
- * beats N). Visible rows need their pass/fail badges; an unusable summary
- * (null) or a legacy trace (no span) must fall back to per-judge verdicts
- * for the counts.
- */
-export function canSkipJudgeFetches(state: {
-  checksRunId: string | null;
-  judgmentsVisible: boolean;
-  phaseSummary: PhaseSummary | null | undefined;
-}): boolean {
+/** Whether the checks.run summary holds this check span's verdict. */
+function summaryCovers(
+  check: TraceObservation,
+  group: EvaluationGroup,
+  phaseSummary: PhaseSummary,
+): boolean {
   return (
-    state.checksRunId !== null &&
-    !state.judgmentsVisible &&
-    state.phaseSummary !== null
+    group.checksRun !== null &&
+    check.parent_call_id === group.checksRun.id &&
+    phaseSummary.checks.has(checkIdOf(check.step_name ?? ""))
   );
+}
+
+/**
+ * The spans whose full call must be fetched for a verdict right now.
+ *
+ * A check row reads its verdict from the checks.run summary, so a check is
+ * fetched on its own only when the summary cannot answer for it: no
+ * checks.run span, a summary that resolved unusable, or a check missing
+ * from it. A pending summary fetches nothing yet (one fetch in flight beats
+ * N). Judge verdicts live only on the judge spans, so judges are fetched
+ * while their rows are visible, and for the counts on a trace that has no
+ * check spans and no usable summary.
+ */
+export function verdictFetchTargets(state: {
+  group: EvaluationGroup;
+  phaseSummary: PhaseSummary | null | undefined;
+  /** Group expanded, or search surfacing its rows. */
+  rowsVisible: boolean;
+}): TraceObservation[] {
+  const { group, phaseSummary, rowsVisible } = state;
+  const pending = group.checksRun !== null && phaseSummary === undefined;
+  const unusable = group.checksRun === null || phaseSummary === null;
+  const checks =
+    pending || (!rowsVisible && !unusable)
+      ? []
+      : group.checks.filter((c) => !phaseSummary || !summaryCovers(c, group, phaseSummary));
+  const judges =
+    rowsVisible || (unusable && group.checks.length === 0) ? group.roots : [];
+  return [...checks, ...judges];
+}
+
+/** A verdict row's badge state: a check from the summary when it covers the
+ * check, otherwise the span's own fetched verdict. undefined = not known
+ * (yet). */
+export function rowVerdict(
+  call: TraceObservation,
+  group: EvaluationGroup,
+  phaseSummary: PhaseSummary | null | undefined,
+  fetched: Record<string, RowVerdict | undefined>,
+): RowVerdict | undefined {
+  if (phaseSummary && summaryCovers(call, group, phaseSummary)) {
+    return phaseSummary.checks.get(checkIdOf(call.step_name ?? ""));
+  }
+  return fetched[call.id];
+}
+
+/** The collapsed Evaluation row's counts: the checks.run summary when usable,
+ * otherwise the fetched verdicts of the check spans (or, on a trace without
+ * them, of the judge spans). */
+export function evaluationCounts(
+  group: EvaluationGroup,
+  phaseSummary: PhaseSummary | null | undefined,
+  fetched: Record<string, RowVerdict | undefined>,
+): { passed: number; failed: number; noVerdict: number } {
+  if (phaseSummary) return phaseSummary;
+  const rows = group.checks.length > 0 ? group.checks : group.roots;
+  const count = (verdict: RowVerdict) => rows.filter((r) => fetched[r.id] === verdict).length;
+  return { passed: count("pass"), failed: count("fail"), noVerdict: count("no-verdict") };
+}
+
+/**
+ * The tree label of a verdict row, or null for any other call. A check row
+ * drops its `check:` prefix; a judge nested in the check it judges shows only
+ * its kind, because the check row above already names the check.
+ */
+export function verdictRowLabel(
+  call: TraceObservation,
+  parent: TraceObservation | undefined,
+): string | null {
+  const name = call.step_name ?? "";
+  if (isCheckSpan(name)) return checkIdOf(name);
+  if (!isEvaluationRoot(name)) return null;
+  const kind = name.startsWith("t.agent:") ? "t.agent" : "judge";
+  const parentName = parent?.step_name ?? "";
+  return isCheckSpan(parentName) && checkIdOf(parentName) === name.slice(kind.length + 1)
+    ? kind
+    : name;
 }
 
 /**

@@ -1,15 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { TraceObservation } from "../contexts";
 import {
-  canSkipJudgeFetches,
+  evaluationCounts,
   evaluationSubtreeRows,
   findEvaluationGroup,
   isEvaluationRoot,
   judgmentFacts,
+  parseCheckSpanVerdict,
   parsePhaseSummary,
+  parseSpanVerdict,
   parseVerdict,
   partitionEvaluation,
+  rowVerdict,
+  verdictFetchTargets,
+  verdictRowLabel,
   type PartitionableRow,
+  type PhaseSummary,
+  type RowVerdict,
 } from "../trace-evaluation";
 
 function call(id: string, name: string, parent: string | null = null): TraceObservation {
@@ -103,6 +110,30 @@ describe("findEvaluationGroup", () => {
     expect(group!.roots).toEqual([]);
     expect(group!.memberIds.has("cr")).toBe(true);
   });
+
+  it("collects the per-check spans and the judges nested in them", () => {
+    const group = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("cr", "checks.run", "run"),
+      call("c1", "check:reply is short", "cr"),
+      call("c2", "check:ticket describes the problem", "cr"),
+      call("j2", "judge:ticket describes the problem", "c2"),
+    ]);
+    expect(group!.checks.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(group!.roots.map((c) => c.id)).toEqual(["j2"]);
+    expect([...group!.memberIds].sort()).toEqual(["c1", "c2", "cr", "j2"]);
+  });
+
+  it("groups check spans even without a checks.run span", () => {
+    const group = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("gen", "agent.generate", "run"),
+      call("c1", "check:reply is short", "run"),
+    ]);
+    expect(group).not.toBeNull();
+    expect(group!.checksRun).toBeNull();
+    expect([...group!.memberIds]).toEqual(["c1"]);
+  });
 });
 
 describe("parsePhaseSummary", () => {
@@ -112,13 +143,14 @@ describe("parsePhaseSummary", () => {
       passed: 45,
       failed: 2,
       noVerdict: 0,
+      checks: new Map(),
     });
   });
 
   it("keeps no-verdict checks out of the failed count", () => {
     expect(
       parsePhaseSummary({ total: 5, passCount: 2, failCount: 1, noVerdictCount: 2 }),
-    ).toEqual({ total: 5, passed: 2, failed: 1, noVerdict: 2 });
+    ).toEqual({ total: 5, passed: 2, failed: 1, noVerdict: 2, checks: new Map() });
   });
 
   it("tolerates summaries without a no-verdict count (older SDKs)", () => {
@@ -127,6 +159,7 @@ describe("parsePhaseSummary", () => {
       passed: 2,
       failed: 1,
       noVerdict: 0,
+      checks: new Map(),
     });
   });
 
@@ -136,6 +169,7 @@ describe("parsePhaseSummary", () => {
       passed: 2,
       failed: 1,
       noVerdict: 0,
+      checks: new Map(),
     });
   });
 
@@ -148,39 +182,267 @@ describe("parsePhaseSummary", () => {
     // A zero-check run carries no counts worth showing.
     expect(parsePhaseSummary({ total: 0, passCount: 0, failCount: 0 })).toBeNull();
   });
+
+  it("maps each result to its check's verdict", () => {
+    const summary = parsePhaseSummary({
+      total: 4,
+      passCount: 1,
+      failCount: 1,
+      noVerdictCount: 2,
+      results: [
+        { id: "reply is short", pass: true, evaluator_type: "code" },
+        { id: "ticket describes the problem", pass: false, evaluator_type: "llm" },
+        { id: "judge never answered", pass: false, outcome: "error" },
+        { id: "no timing evidence", pass: false, outcome: "unsupported" },
+        { id: "malformed", pass: "yes" },
+        { pass: true },
+      ],
+    });
+    expect(summary!.checks).toEqual(
+      new Map<string, RowVerdict>([
+        ["reply is short", "pass"],
+        ["ticket describes the problem", "fail"],
+        ["judge never answered", "no-verdict"],
+        ["no timing evidence", "no-verdict"],
+      ]),
+    );
+  });
 });
 
-describe("canSkipJudgeFetches", () => {
-  it("skips while no judgment row is visible and the summary is usable or pending", () => {
-    expect(
-      canSkipJudgeFetches({ checksRunId: "cr", judgmentsVisible: false, phaseSummary: { total: 2, passed: 1, failed: 1, noVerdict: 0 } }),
-    ).toBe(true);
-    // Pending: wait for the one summary fetch instead of racing N judge ones.
-    expect(
-      canSkipJudgeFetches({ checksRunId: "cr", judgmentsVisible: false, phaseSummary: undefined }),
-    ).toBe(true);
+function summaryOf(checks: Array<[string, RowVerdict]>): PhaseSummary {
+  const count = (v: RowVerdict) => checks.filter(([, verdict]) => verdict === v).length;
+  return {
+    total: checks.length,
+    passed: count("pass"),
+    failed: count("fail"),
+    noVerdict: count("no-verdict"),
+    checks: new Map(checks),
+  };
+}
+
+describe("verdictFetchTargets", () => {
+  const checkGroup = findEvaluationGroup([
+    call("run", "apo.task.run"),
+    call("cr", "checks.run", "run"),
+    call("c1", "check:reply is short", "cr"),
+    call("c2", "check:ticket describes the problem", "cr"),
+    call("j2", "judge:ticket describes the problem", "c2"),
+  ])!;
+  const covering = summaryOf([
+    ["reply is short", "pass"],
+    ["ticket describes the problem", "fail"],
+  ]);
+  const ids = (targets: { id: string }[]) => targets.map((c) => c.id);
+
+  it("fetches nothing while the rows are hidden and the summary is usable or pending", () => {
+    expect(verdictFetchTargets({ group: checkGroup, phaseSummary: covering, rowsVisible: false })).toEqual([]);
+    // Pending: wait for the one summary fetch instead of racing N span ones.
+    expect(verdictFetchTargets({ group: checkGroup, phaseSummary: undefined, rowsVisible: false })).toEqual([]);
   });
 
-  it("fetches when judgment rows are visible — expanded OR surfaced by search", () => {
+  it("fetches only the judges while visible rows' checks are covered by the summary", () => {
     expect(
-      canSkipJudgeFetches({ checksRunId: "cr", judgmentsVisible: true, phaseSummary: { total: 2, passed: 1, failed: 1, noVerdict: 0 } }),
-    ).toBe(false);
-    // Search suspends grouping, so judge rows render even while collapsed.
+      ids(verdictFetchTargets({ group: checkGroup, phaseSummary: covering, rowsVisible: true })),
+    ).toEqual(["j2"]);
+    // Search suspends grouping, so the rows are visible while pending too.
     expect(
-      canSkipJudgeFetches({ checksRunId: "cr", judgmentsVisible: true, phaseSummary: undefined }),
-    ).toBe(false);
+      ids(verdictFetchTargets({ group: checkGroup, phaseSummary: undefined, rowsVisible: true })),
+    ).toEqual(["j2"]);
   });
 
-  it("fetches when the summary is unusable (counts fall back to verdicts)", () => {
+  it("fetches a visible check the summary does not list", () => {
+    const partial = summaryOf([["reply is short", "pass"]]);
     expect(
-      canSkipJudgeFetches({ checksRunId: "cr", judgmentsVisible: false, phaseSummary: null }),
-    ).toBe(false);
+      ids(verdictFetchTargets({ group: checkGroup, phaseSummary: partial, rowsVisible: true })),
+    ).toEqual(["c2", "j2"]);
+    expect(verdictFetchTargets({ group: checkGroup, phaseSummary: partial, rowsVisible: false })).toEqual([]);
   });
 
-  it("fetches on legacy traces with no checks.run span", () => {
+  it("fetches a visible check under another checks.run span", () => {
+    const group = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("cr", "checks.run", "run"),
+      call("c1", "check:reply is short", "cr"),
+      call("cr2", "checks.run", "run"),
+      call("c1b", "check:reply is short", "cr2"),
+    ])!;
     expect(
-      canSkipJudgeFetches({ checksRunId: null, judgmentsVisible: false, phaseSummary: undefined }),
-    ).toBe(false);
+      ids(verdictFetchTargets({ group, phaseSummary: summaryOf([["reply is short", "pass"]]), rowsVisible: true })),
+    ).toEqual(["c1b"]);
+  });
+
+  it("fetches every check, not the judges, for the counts when the summary is unusable", () => {
+    expect(
+      ids(verdictFetchTargets({ group: checkGroup, phaseSummary: null, rowsVisible: false })),
+    ).toEqual(["c1", "c2"]);
+    expect(
+      ids(verdictFetchTargets({ group: checkGroup, phaseSummary: null, rowsVisible: true })),
+    ).toEqual(["c1", "c2", "j2"]);
+  });
+
+  it("fetches the judges for the counts on traces without check spans", () => {
+    const legacy = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("j1", "judge:reads-well", "run"),
+    ])!;
+    expect(ids(verdictFetchTargets({ group: legacy, phaseSummary: undefined, rowsVisible: false }))).toEqual(["j1"]);
+    const unusable = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("cr", "checks.run", "run"),
+      call("j1", "judge:reads-well", "cr"),
+    ])!;
+    expect(ids(verdictFetchTargets({ group: unusable, phaseSummary: null, rowsVisible: false }))).toEqual(["j1"]);
+    expect(verdictFetchTargets({ group: unusable, phaseSummary: undefined, rowsVisible: false })).toEqual([]);
+  });
+});
+
+describe("rowVerdict", () => {
+  const group = findEvaluationGroup([
+    call("run", "apo.task.run"),
+    call("cr", "checks.run", "run"),
+    call("c1", "check:reply is short", "cr"),
+    call("c2", "check:ticket describes the problem", "cr"),
+    call("j2", "judge:ticket describes the problem", "c2"),
+  ])!;
+  const byId = (id: string) => [...group.checks, ...group.roots].find((c) => c.id === id)!;
+
+  it("reads a check's verdict from the summary", () => {
+    const summary = summaryOf([
+      ["reply is short", "no-verdict"],
+      ["ticket describes the problem", "fail"],
+    ]);
+    expect(rowVerdict(byId("c1"), group, summary, {})).toBe("no-verdict");
+    // The summary wins over a fetched value for the checks it covers.
+    expect(rowVerdict(byId("c2"), group, summary, { c2: "pass" })).toBe("fail");
+  });
+
+  it("falls back to the fetched verdict when the summary cannot answer", () => {
+    expect(rowVerdict(byId("c1"), group, null, { c1: "pass" })).toBe("pass");
+    expect(rowVerdict(byId("c1"), group, summaryOf([["other", "fail"]]), { c1: "fail" })).toBe("fail");
+    expect(rowVerdict(byId("c1"), group, undefined, {})).toBeUndefined();
+  });
+
+  it("reads a judge's verdict from its own fetch, never the check's summary entry", () => {
+    const summary = summaryOf([["ticket describes the problem", "fail"]]);
+    expect(rowVerdict(byId("j2"), group, summary, { j2: "pass" })).toBe("pass");
+    expect(rowVerdict(byId("j2"), group, summary, {})).toBeUndefined();
+  });
+});
+
+describe("evaluationCounts", () => {
+  const group = findEvaluationGroup([
+    call("run", "apo.task.run"),
+    call("cr", "checks.run", "run"),
+    call("c1", "check:a", "cr"),
+    call("c2", "check:b", "cr"),
+    call("c3", "check:c", "cr"),
+    call("j3", "judge:c", "c3"),
+  ])!;
+
+  it("uses the summary when it is usable", () => {
+    const summary = summaryOf([["a", "pass"], ["b", "fail"], ["c", "no-verdict"]]);
+    expect(evaluationCounts(group, summary, {})).toMatchObject({ passed: 1, failed: 1, noVerdict: 1 });
+  });
+
+  it("counts the checks' fetched verdicts, not the judges', without a summary", () => {
+    expect(
+      evaluationCounts(group, null, { c1: "pass", c2: "pass", c3: "fail", j3: "pass" }),
+    ).toEqual({ passed: 2, failed: 1, noVerdict: 0 });
+  });
+
+  it("counts the judges on traces without check spans", () => {
+    const legacy = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("j1", "judge:a", "run"),
+      call("j2", "judge:b", "run"),
+      call("j3", "judge:c", "run"),
+    ])!;
+    expect(evaluationCounts(legacy, undefined, { j1: "pass", j2: "fail", j3: "no-verdict" })).toEqual({
+      passed: 1,
+      failed: 1,
+      noVerdict: 1,
+    });
+  });
+});
+
+describe("verdictRowLabel", () => {
+  it("drops the check: prefix", () => {
+    expect(verdictRowLabel(call("c1", "check:reply is short", "cr"), undefined)).toBe("reply is short");
+  });
+
+  it("names a judge by its kind under the check it judges", () => {
+    const check = call("c1", "check:ticket describes the problem", "cr");
+    expect(verdictRowLabel(call("j1", "judge:ticket describes the problem", "c1"), check)).toBe("judge");
+    expect(verdictRowLabel(call("a1", "t.agent:ticket describes the problem", "c1"), check)).toBe("t.agent");
+  });
+
+  it("keeps a judge's full name anywhere else", () => {
+    expect(verdictRowLabel(call("j1", "judge:reads-well", "cr"), call("cr", "checks.run", "run"))).toBe(
+      "judge:reads-well",
+    );
+    expect(
+      verdictRowLabel(call("j1", "judge:reads-well", "c1"), call("c1", "check:another check", "cr")),
+    ).toBe("judge:reads-well");
+    expect(verdictRowLabel(call("j1", "judge:reads-well", null), undefined)).toBe("judge:reads-well");
+  });
+
+  it("returns null for any other call", () => {
+    expect(verdictRowLabel(call("g", "agent.generate", "run"), undefined)).toBeNull();
+    expect(verdictRowLabel(call("cr", "checks.run", "run"), undefined)).toBeNull();
+  });
+});
+
+describe("parseCheckSpanVerdict", () => {
+  it("reads the verdict from the assistant output the SDK writes", () => {
+    const output = {
+      messages: [
+        {
+          role: "assistant",
+          content: '{"pass":false,"reasoning":"missing field","evaluator_type":"code","assertions":[]}',
+        },
+      ],
+    };
+    expect(parseCheckSpanVerdict({ tool_result: null, output })).toBe(false);
+  });
+
+  it("prefers a tool_result verdict", () => {
+    const output = { messages: [{ role: "assistant", content: '{"pass":false}' }] };
+    expect(parseCheckSpanVerdict({ tool_result: { pass: true }, output })).toBe(true);
+  });
+
+  it("returns undefined when no output carries a verdict", () => {
+    expect(parseCheckSpanVerdict({ tool_result: null, output: null })).toBeUndefined();
+    expect(parseCheckSpanVerdict({ tool_result: null, output: { messages: "x" } })).toBeUndefined();
+    expect(
+      parseCheckSpanVerdict({ tool_result: null, output: { messages: [{ role: "user", content: '{"pass":true}' }] } }),
+    ).toBeUndefined();
+    expect(
+      parseCheckSpanVerdict({ tool_result: null, output: { messages: [{ role: "assistant", content: "check threw" }] } }),
+    ).toBeUndefined();
+  });
+});
+
+describe("parseSpanVerdict", () => {
+  // Older payloads carry tool_result as a JSON string, outside its declared type.
+  const jsonString = (json: string) => json as unknown as TraceObservation["tool_result"];
+
+  it("maps a judge's pass to pass/fail and its null pass to no verdict", () => {
+    expect(parseSpanVerdict("judge:a", { tool_result: { pass: true }, output: null })).toBe("pass");
+    expect(parseSpanVerdict("t.agent:a", { tool_result: jsonString('{"pass":false}'), output: null })).toBe("fail");
+    expect(parseSpanVerdict("judge:a", { tool_result: { reasoning: "x", pass: null }, output: null })).toBe("no-verdict");
+    expect(parseSpanVerdict("judge:a", { tool_result: jsonString('{"pass":null}'), output: null })).toBe("no-verdict");
+  });
+
+  it("leaves a judge without a recorded verdict unknown", () => {
+    expect(parseSpanVerdict("judge:a", { tool_result: null, output: null })).toBeUndefined();
+    expect(parseSpanVerdict("judge:a", { tool_result: { reasoning: "x" }, output: null })).toBeUndefined();
+  });
+
+  it("reads a check span through its assistant output", () => {
+    const output = { messages: [{ role: "assistant", content: '{"pass":true}' }] };
+    expect(parseSpanVerdict("check:a", { tool_result: null, output })).toBe("pass");
+    // A check span never records a null pass, so one is not read as no verdict.
+    expect(parseSpanVerdict("check:a", { tool_result: { pass: null }, output: null })).toBeUndefined();
   });
 });
 
