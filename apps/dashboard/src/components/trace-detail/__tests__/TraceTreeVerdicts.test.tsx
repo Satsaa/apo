@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TraceObservation } from "../contexts";
 import { SelectionProvider, useSelection } from "../contexts/SelectionContext";
@@ -10,13 +10,17 @@ vi.mock("@/lib/traces-api", () => ({
   getCallDetail: (...args: unknown[]) => getCallDetail(...args),
 }));
 
+// One object per render pass, like the real provider: a live stream flush
+// replaces `run`, which a test simulates by swapping it.
+const traceData = vi.hoisted(() => ({
+  run: { run: { id: "trace-1", project: "proj" } } as unknown,
+  cumulativeMetrics: new Map(),
+  prefetchObservation: () => {},
+  isSimplifiedTree: false,
+}));
+
 vi.mock("../contexts/TraceDataContext", () => ({
-  useTraceData: () => ({
-    run: { run: { id: "trace-1", project: "proj" } },
-    cumulativeMetrics: new Map(),
-    prefetchObservation: () => {},
-    isSimplifiedTree: false,
-  }),
+  useTraceData: () => traceData,
 }));
 
 vi.mock("../contexts/ViewPreferencesContext", () => ({
@@ -147,12 +151,15 @@ function badgeOf(label: string, index = 0): HTMLElement {
 
 /** What the badge shows on screen (screen-reader-only text excluded). */
 function visibleText(badge: HTMLElement): string {
-  return badge.querySelector(":scope > :not(.sr-only)")!.textContent ?? "";
+  const copy = badge.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll(".sr-only").forEach((el) => el.remove());
+  return copy.textContent ?? "";
 }
 
 describe("TraceTree verdict rows", () => {
   beforeEach(() => {
     getCallDetail.mockReset();
+    traceData.run = { run: { id: "trace-1", project: "proj" } };
   });
 
   it("badges every check from the checks.run summary and each judge from its own span", async () => {
@@ -188,10 +195,16 @@ describe("TraceTree verdict rows", () => {
     expect(badgeOf("judge never answered")).toHaveAttribute("title", expect.stringMatching(/without a verdict/));
     await waitFor(() => expect(badgeOf("judge", 0)).toHaveAttribute("data-verdict", "unknown"));
     expect(visibleText(badgeOf("judge", 0))).toBe("—");
-    expect(badgeOf("judge", 0)).toHaveTextContent("Verdict unknown");
+    expect(badgeOf("judge", 0)).toHaveTextContent("verdict unknown");
 
     expect(nameOf("ticket describes the problem")).toHaveClass("text-destructive");
     expect(nameOf("reply never mentions the note")).not.toHaveClass("text-destructive");
+
+    // A row is announced by its short verdict, then its name (jsdom joins
+    // inline text without a space).
+    expect(screen.getByRole("button", { name: /^no verdict ?judge never answered/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^fail ?ticket describes the problem/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^verdict unknown ?judge/ })).toHaveLength(1);
   });
 
   it("indents a judge under its check and collapses it with the check's chevron", async () => {
@@ -291,5 +304,101 @@ describe("TraceTree verdict rows", () => {
     }
     // The group row stands for checks.run; every check and judge follows once.
     expect(visited).toEqual(["cr", "c1", "c2", "j2", "c3", "j3", "j3"]);
+  });
+
+  it("toggles the group with aria-expanded and auto-expands for a deep-linked judge", async () => {
+    getCallDetail.mockImplementation(detailFor());
+    function DeepLink({ id }: { id: string }) {
+      const { selectCall } = useSelection();
+      return (
+        <button type="button" onClick={() => selectCall(id)}>
+          open {id}
+        </button>
+      );
+    }
+    render(
+      <SelectionProvider>
+        <TraceTree calls={calls} />
+        <DeepLink id="j2" />
+      </SelectionProvider>,
+    );
+
+    const group = await screen.findByRole("button", { name: /Evaluation/ });
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("judge")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "open j2" }));
+    expect(group).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByText("judge")).toHaveLength(2);
+  });
+
+  it("highlights the group row when keyboard nav selects it", async () => {
+    getCallDetail.mockImplementation(detailFor());
+    renderTree();
+    const group = await screen.findByRole("button", { name: /Evaluation/ });
+    await userEvent.click(screen.getByText("task.turn"));
+    expect(group).not.toHaveClass("bg-muted/30");
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(screen.getByTestId("selected")).toHaveTextContent("cr");
+    expect(group).toHaveClass("bg-muted/30");
+  });
+
+  it("walks past the Evaluation row of a trace without checks.run in both directions", async () => {
+    const legacy = [
+      span("run", "apo.task.run", null, 0),
+      span("turn", "task.turn", "run", 1),
+      span("j1", "judge:reads well", "run", 2),
+      span("j2", "judge:is short", "run", 3),
+    ];
+    getCallDetail.mockImplementation(async () => ({ tool_result: { pass: true } }));
+    renderTree(legacy);
+    await expandEvaluation();
+    await userEvent.click(screen.getByText("task.turn"));
+
+    const press = (key: string) => {
+      fireEvent.keyDown(window, { key });
+      return screen.getByTestId("selected").textContent ?? "";
+    };
+    // The group row carries j1, so j1 is selected once for it and its own row.
+    expect([press("ArrowDown"), press("ArrowDown"), press("ArrowDown")]).toEqual(["j1", "j2", "j2"]);
+    expect([press("ArrowUp"), press("ArrowUp")]).toEqual(["j1", "turn"]);
+  });
+
+  it("refetches verdicts a live stream flush aborted instead of caching them as unknown", async () => {
+    const details = detailFor();
+    const inFlight: Array<{ id: string; settle: () => void }> = [];
+    getCallDetail.mockImplementation(
+      (trace: string, id: string, _project: string, signal?: AbortSignal) =>
+        new Promise((resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          inFlight.push({ id, settle: () => void details(trace, id).then(resolve, reject) });
+        }),
+    );
+    const { rerender } = renderTree();
+    await expandEvaluation();
+    await waitFor(() => expect(inFlight.map((f) => f.id).sort()).toEqual(["cr", "j2", "j3"]));
+
+    // A flush: a new run object and fresh call objects abort every fetch in flight.
+    traceData.run = { run: { id: "trace-1", project: "proj" } };
+    rerender(
+      <SelectionProvider>
+        <TraceTree calls={calls.map((c) => ({ ...c }))} />
+        <SelectedId />
+      </SelectionProvider>,
+    );
+    // Let the aborted fetches unwind before the new ones answer: an aborted
+    // fetch that still wrote its (empty) result would cache it and stop the
+    // refetch.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(inFlight.map((f) => f.id).sort()).toEqual(["cr", "cr", "j2", "j2", "j3", "j3"]);
+    for (const fetch of inFlight.splice(0)) fetch.settle();
+
+    const group = screen.getByRole("button", { name: /Evaluation/ });
+    await waitFor(() => expect(group).toHaveTextContent("1 no-verdict"));
+    await waitFor(() => expect(badgeOf("judge", 0)).toHaveAttribute("data-verdict", "fail"));
+    expect(badgeOf("judge", 1)).toHaveAttribute("data-verdict", "no-verdict");
+    // The summary answered for every check: none was fetched on its own.
+    expect(getCallDetail.mock.calls.map((c) => c[1])).not.toContain("c2");
   });
 });

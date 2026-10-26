@@ -45,6 +45,7 @@ import type { CumulativeMetrics } from "@/lib/cumulative-metrics";
 import { formatCostMicro, formatDuration, formatTokenBreakdown, formatTokenTotal } from "@/lib/format";
 import { CommentCountIcon } from "./CommentCountIcon";
 import { getHeatmapColor } from "./trace-heatmap";
+import { VerdictBadge } from "./VerdictBadge";
 
 // ── Evaluation phase (#302): the checks.run span, its check:* spans and
 // their judge:* / t.agent:* spans collapse into one "Evaluation" row with
@@ -178,31 +179,6 @@ interface SpanDisplayOptions {
 interface VerdictDisplay {
   state: RowVerdict | undefined;
   label: string;
-}
-
-const VERDICT_BADGES: Record<RowVerdict | "unknown", { text: string; className: string; title?: string }> = {
-  pass: { text: "pass", className: "bg-success/15 text-success" },
-  fail: { text: "fail", className: "bg-destructive/15 text-destructive" },
-  "no-verdict": {
-    text: "no verdict",
-    className: "bg-warning/15 text-warning",
-    title: "Ended without a verdict (judge errored or evidence unsupported) — quality unknown, not failed",
-  },
-  unknown: { text: "—", className: "bg-muted text-muted-foreground", title: "Verdict unknown" },
-};
-
-function VerdictBadge({ state }: { state: RowVerdict | undefined }) {
-  const badge = VERDICT_BADGES[state ?? "unknown"];
-  return (
-    <span
-      data-verdict={state ?? "unknown"}
-      title={badge.title}
-      className={cn("shrink-0 rounded-sm px-1 py-0.5 text-[10px] font-semibold uppercase leading-none", badge.className)}
-    >
-      <span aria-hidden={badge.title ? true : undefined}>{badge.text}</span>
-      {badge.title && <span className="sr-only">{badge.title}</span>}
-    </span>
-  );
 }
 
 function SpanContent({
@@ -813,9 +789,13 @@ export function TraceTree({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // On a trace without checks.run the Evaluation row carries the first
+      // judge, which also has its own row when the group is expanded: moving
+      // down continues from the last row holding the selection, moving up
+      // from the first, so neither direction gets stuck between the two.
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        const idx = filteredTree.findIndex(n => n.node.call?.id === selectedCallId);
+        const idx = filteredTree.findLastIndex(n => n.node.call?.id === selectedCallId);
         const next = filteredTree[Math.min(idx + 1, filteredTree.length - 1)];
         if (next) selectCall(next.node.call?.id ?? null);
       } else if (e.key === "ArrowUp") {
@@ -894,9 +874,8 @@ export function TraceTree({
           const { node, treeLines } = row;
           // The synthetic group row carries the checks.run span (or, on
           // legacy traces, the first judge) as its call so keyboard nav can
-          // select it; checks.run has no row of its own inside the group, so
-          // nav never finds the same call twice. It must be matched BEFORE
-          // the tree-row branch below, or it renders as a plain span row.
+          // select it. It must be matched BEFORE the tree-row branch below,
+          // or it renders as a plain span row.
           if ("isEvalGroup" in row && row.isEvalGroup) {
             return (
               <div
@@ -909,7 +888,10 @@ export function TraceTree({
                   type="button"
                   onClick={() => setEvalExpanded((v) => !v)}
                   aria-expanded={row.evalOpen}
-                  className="flex h-7 w-full items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 text-left text-xs text-muted-foreground hover:bg-accent/50"
+                  className={cn(
+                    "flex h-7 w-full items-center gap-1.5 overflow-hidden whitespace-nowrap px-3 text-left text-xs text-muted-foreground hover:bg-accent/50",
+                    node.call !== null && node.call.id === selectedCallId && "bg-muted/30",
+                  )}
                 >
                   <ChevronRight
                     className={cn("h-3.5 w-3.5 shrink-0 transition-transform", row.evalOpen && "rotate-90")}

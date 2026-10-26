@@ -592,7 +592,7 @@ describe("judgmentFacts", () => {
       model: "deepseek/deepseek-v4.1-flash",
       instruction: "PASS if figures are supported.",
       reasoning: "All figures match.",
-      pass: true,
+      verdict: "pass",
       toolChildren: 2,
       latencyMs: 7862,
     });
@@ -602,8 +602,18 @@ describe("judgmentFacts", () => {
     const facts = judgmentFacts(judgeCall({ step_name: "judge:summary-reads-well", tool_result: null }) as TraceObservation, []);
     expect(facts!.name).toBe("summary-reads-well");
     expect(facts!.kind).toBe("t.judge");
-    expect(facts!.pass).toBeUndefined();
+    expect(facts!.verdict).toBeUndefined();
     expect(facts!.reasoning).toBeUndefined();
+  });
+
+  it("reads the verdict the tree row shows: no verdict is not a fail", () => {
+    const unavailable = judgmentFacts(
+      judgeCall({ step_name: "judge:a", tool_result: { reasoning: "no flag", pass: false, outcome: "error" } }),
+      [],
+    );
+    expect(unavailable!.verdict).toBe("no-verdict");
+    const threw = judgmentFacts(judgeCall({ step_name: "judge:a", tool_result: null, level: "ERROR" }), []);
+    expect(threw!.verdict).toBe("no-verdict");
   });
 
   it("tolerates a non-JSON system message", () => {

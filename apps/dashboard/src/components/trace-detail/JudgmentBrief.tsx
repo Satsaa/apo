@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import type { LoggedCall } from "./contexts";
 import { judgmentFacts } from "./trace-evaluation";
+import { VerdictBadge } from "./VerdictBadge";
 import { formatDuration } from "@/lib/format";
 
 /**
@@ -28,16 +29,7 @@ export function JudgmentBrief({
   return (
     <div className="shrink-0 border-b border-border bg-muted/15 px-3 py-2.5">
       <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-            facts.pass === true && "bg-success/15 text-success",
-            facts.pass === false && "bg-destructive/15 text-destructive",
-            facts.pass === undefined && "bg-muted text-muted-foreground",
-          )}
-        >
-          {facts.pass === true ? "pass" : facts.pass === false ? "fail" : "—"}
-        </span>
+        <VerdictBadge state={facts.verdict} className="px-1.5 tracking-wide" />
         <span className="truncate text-sm font-medium text-foreground">{facts.name}</span>
         <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
           {facts.model ?? "?"}
@@ -55,7 +47,7 @@ export function JudgmentBrief({
           <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Why it ruled this way
           </div>
-          <p className={cn(facts.pass === false ? "text-destructive" : "text-foreground/90")}>
+          <p className={cn(facts.verdict === "fail" ? "text-destructive" : "text-foreground/90")}>
             {facts.reasoning ?? "—"}
           </p>
         </div>

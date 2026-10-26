@@ -316,7 +316,7 @@ export interface JudgmentFacts {
   model?: string;
   instruction?: string;
   reasoning?: string;
-  pass?: boolean;
+  verdict?: RowVerdict;
   /** Direct child calls — a t.agent session's tool calls. */
   toolChildren: number;
   latencyMs?: number | null;
@@ -347,14 +347,14 @@ export function judgmentFacts(
       // system prompt isn't the {model, instruction} JSON — leave undefined
     }
   }
-  const verdict = call.tool_result as { pass?: boolean; reasoning?: string } | null;
+  const verdict = call.tool_result as { reasoning?: string } | null;
   return {
     name: step.replace(/^(judge|t\.agent):/, ""),
     kind: step.startsWith("t.agent") ? "t.agent" : "t.judge",
     model,
     instruction,
     reasoning: verdict?.reasoning,
-    pass: verdict?.pass,
+    verdict: parseJudgeSpanVerdict(call),
     toolChildren: allCalls.filter((c) => c.parent_call_id === call.id).length,
     latencyMs: call.latency_ms,
   };
