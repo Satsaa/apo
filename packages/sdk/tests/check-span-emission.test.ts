@@ -153,6 +153,81 @@ describe("per-check spans (issue #344)", () => {
     expect(verdict.assertions[0]).toMatchObject({ pass: false, received: "2" });
   });
 
+  it("carries the outcome of a check that ended without a verdict", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: { message: "invalid api key" } }, { status: 401 })),
+    );
+    defineCheck("unanswered", async (t) => {
+      await t.judge("complete answer", "PASS when complete");
+    });
+    defineCheck("structural", (t) => {
+      t.check(2, equals(3));
+    });
+
+    const { tracer, steps } = trackingTracer();
+    await runTraceChecks({
+      snapshot: emptySnapshot,
+      deliverables: {},
+      judgeConfig,
+      judgeTracer: tracer,
+    });
+
+    const outputOf = (name: string) =>
+      steps.find((s) => s.name === name)!.output as { pass: boolean; outcome?: string };
+    expect(outputOf("check:unanswered")).toMatchObject({ pass: false, outcome: "error" });
+    // A check that failed on evidence carries no outcome.
+    expect(outputOf("check:structural").outcome).toBeUndefined();
+  });
+
+  it("marks a judge span that gave no verdict with outcome error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          choices: [{ message: { content: JSON.stringify({ reasoning: "no flag here" }) } }],
+          usage: { prompt_tokens: 3, completion_tokens: 2 },
+        }),
+      ),
+    );
+    defineCheck("quality", async (t) => {
+      await t.judge("complete answer", "PASS when complete");
+    });
+
+    const { tracer, steps } = trackingTracer();
+    await runTraceChecks({
+      snapshot: emptySnapshot,
+      deliverables: {},
+      judgeConfig,
+      judgeTracer: tracer,
+    });
+
+    const judge = steps.find((s) => s.name === "judge:quality")!.output as {
+      verdict: { pass: boolean | null; outcome?: string };
+    };
+    expect(judge.verdict).toMatchObject({ pass: false, outcome: "error" });
+  });
+
+  it("leaves a judge span that answered without an outcome", async () => {
+    stubJudgeResponse({ pass: false, reasoning: "incomplete" });
+    defineCheck("quality", async (t) => {
+      await t.judge("complete answer", "PASS when complete");
+    });
+
+    const { tracer, steps } = trackingTracer();
+    await runTraceChecks({
+      snapshot: emptySnapshot,
+      deliverables: {},
+      judgeConfig,
+      judgeTracer: tracer,
+    });
+
+    const judge = steps.find((s) => s.name === "judge:quality")!.output as {
+      verdict: { pass: boolean | null; outcome?: string };
+    };
+    expect(judge.verdict).toEqual({ reasoning: "incomplete", pass: false });
+  });
+
   it("nests the judge span under the check that issued it", async () => {
     stubJudgeResponse({ pass: true, reasoning: "meets the rubric" });
     defineCheck("quality", async (t) => {

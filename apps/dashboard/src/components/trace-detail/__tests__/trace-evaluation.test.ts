@@ -7,9 +7,8 @@ import {
   isEvaluationRoot,
   judgmentFacts,
   parseCheckSpanVerdict,
+  parseJudgeSpanVerdict,
   parsePhaseSummary,
-  parseSpanVerdict,
-  parseVerdict,
   partitionEvaluation,
   rowVerdict,
   verdictFetchTargets,
@@ -124,15 +123,19 @@ describe("findEvaluationGroup", () => {
     expect([...group!.memberIds].sort()).toEqual(["c1", "c2", "cr", "j2"]);
   });
 
-  it("groups check spans even without a checks.run span", () => {
-    const group = findEvaluationGroup([
+  it("leaves a check:-named span outside checks.run in the agent's tree", () => {
+    const calls = [
       call("run", "apo.task.run"),
-      call("gen", "agent.generate", "run"),
-      call("c1", "check:reply is short", "run"),
-    ]);
-    expect(group).not.toBeNull();
-    expect(group!.checksRun).toBeNull();
-    expect([...group!.memberIds]).toEqual(["c1"]);
+      call("turn", "task.turn", "run"),
+      call("lint", "check:lint", "turn"),
+      call("cr", "checks.run", "run"),
+      call("c1", "check:reply is short", "cr"),
+    ];
+    const group = findEvaluationGroup(calls)!;
+    expect(group.checks.map((c) => c.id)).toEqual(["c1"]);
+    expect(group.memberIds.has("lint")).toBe(false);
+    // Without an evaluation phase there is no group to pull it into.
+    expect(findEvaluationGroup(calls.slice(0, 3))).toBeNull();
   });
 });
 
@@ -258,7 +261,7 @@ describe("verdictFetchTargets", () => {
     expect(verdictFetchTargets({ group: checkGroup, phaseSummary: partial, rowsVisible: false })).toEqual([]);
   });
 
-  it("fetches a visible check under another checks.run span", () => {
+  it("never fetches a check span under a second checks.run span", () => {
     const group = findEvaluationGroup([
       call("run", "apo.task.run"),
       call("cr", "checks.run", "run"),
@@ -266,9 +269,7 @@ describe("verdictFetchTargets", () => {
       call("cr2", "checks.run", "run"),
       call("c1b", "check:reply is short", "cr2"),
     ])!;
-    expect(
-      ids(verdictFetchTargets({ group, phaseSummary: summaryOf([["reply is short", "pass"]]), rowsVisible: true })),
-    ).toEqual(["c1b"]);
+    expect(verdictFetchTargets({ group, phaseSummary: null, rowsVisible: true }).map((c) => c.id)).toEqual(["c1"]);
   });
 
   it("fetches every check, not the judges, for the counts when the summary is unusable", () => {
@@ -327,6 +328,18 @@ describe("rowVerdict", () => {
     expect(rowVerdict(byId("j2"), group, summary, { j2: "pass" })).toBe("pass");
     expect(rowVerdict(byId("j2"), group, summary, {})).toBeUndefined();
   });
+
+  it("keeps a judge directly under checks.run on its own verdict (traces before per-check spans)", () => {
+    // judge:<id> and check:<id> share a prefix length, so a name-only lookup
+    // would hand the judge its check's summary verdict.
+    const legacy = findEvaluationGroup([
+      call("run", "apo.task.run"),
+      call("cr", "checks.run", "run"),
+      call("j1", "judge:quality", "cr"),
+    ])!;
+    const summary = summaryOf([["quality", "fail"]]);
+    expect(rowVerdict(legacy.roots[0]!, legacy, summary, { j1: "pass" })).toBe("pass");
+  });
 });
 
 describe("evaluationCounts", () => {
@@ -366,48 +379,66 @@ describe("evaluationCounts", () => {
 });
 
 describe("verdictRowLabel", () => {
+  const calls = [
+    call("run", "apo.task.run"),
+    call("cr", "checks.run", "run"),
+    call("c1", "check:ticket describes the problem", "cr"),
+    call("j1", "judge:ticket describes the problem", "c1"),
+    call("a1", "t.agent:ticket describes the problem", "c1"),
+    call("c2", "check:another check", "cr"),
+    call("j2", "judge:reads-well", "c2"),
+    call("j3", "judge:legacy", "cr"),
+    call("lint", "check:lint", "run"),
+    call("gen", "agent.generate", "run"),
+  ];
+  const group = findEvaluationGroup(calls)!;
+  const byId = new Map(calls.map((c) => [c.id, c]));
+  const label = (id: string) => {
+    const c = byId.get(id)!;
+    return verdictRowLabel(c, group, c.parent_call_id ? byId.get(c.parent_call_id) : undefined);
+  };
+
   it("drops the check: prefix", () => {
-    expect(verdictRowLabel(call("c1", "check:reply is short", "cr"), undefined)).toBe("reply is short");
+    expect(label("c1")).toBe("ticket describes the problem");
   });
 
   it("names a judge by its kind under the check it judges", () => {
-    const check = call("c1", "check:ticket describes the problem", "cr");
-    expect(verdictRowLabel(call("j1", "judge:ticket describes the problem", "c1"), check)).toBe("judge");
-    expect(verdictRowLabel(call("a1", "t.agent:ticket describes the problem", "c1"), check)).toBe("t.agent");
+    expect(label("j1")).toBe("judge");
+    expect(label("a1")).toBe("t.agent");
   });
 
   it("keeps a judge's full name anywhere else", () => {
-    expect(verdictRowLabel(call("j1", "judge:reads-well", "cr"), call("cr", "checks.run", "run"))).toBe(
-      "judge:reads-well",
-    );
-    expect(
-      verdictRowLabel(call("j1", "judge:reads-well", "c1"), call("c1", "check:another check", "cr")),
-    ).toBe("judge:reads-well");
-    expect(verdictRowLabel(call("j1", "judge:reads-well", null), undefined)).toBe("judge:reads-well");
+    expect(label("j2")).toBe("judge:reads-well");
+    expect(label("j3")).toBe("judge:legacy");
   });
 
-  it("returns null for any other call", () => {
-    expect(verdictRowLabel(call("g", "agent.generate", "run"), undefined)).toBeNull();
-    expect(verdictRowLabel(call("cr", "checks.run", "run"), undefined)).toBeNull();
+  it("returns null for any other call, check:-named agent spans included", () => {
+    expect(label("gen")).toBeNull();
+    expect(label("cr")).toBeNull();
+    expect(label("lint")).toBeNull();
   });
 });
 
 describe("parseCheckSpanVerdict", () => {
+  const assistant = (content: string) => ({ messages: [{ role: "assistant", content }] });
+
   it("reads the verdict from the assistant output the SDK writes", () => {
-    const output = {
-      messages: [
-        {
-          role: "assistant",
-          content: '{"pass":false,"reasoning":"missing field","evaluator_type":"code","assertions":[]}',
-        },
-      ],
-    };
-    expect(parseCheckSpanVerdict({ tool_result: null, output })).toBe(false);
+    const output = assistant('{"pass":false,"reasoning":"missing field","evaluator_type":"code","assertions":[]}');
+    expect(parseCheckSpanVerdict({ tool_result: null, output })).toBe("fail");
+    expect(parseCheckSpanVerdict({ tool_result: null, output: assistant('{"pass":true}') })).toBe("pass");
+  });
+
+  it("reads a verdictless check as no verdict from its outcome", () => {
+    expect(
+      parseCheckSpanVerdict({ tool_result: null, output: assistant('{"pass":false,"outcome":"error"}') }),
+    ).toBe("no-verdict");
+    expect(
+      parseCheckSpanVerdict({ tool_result: null, output: assistant('{"pass":false,"outcome":"unsupported"}') }),
+    ).toBe("no-verdict");
   });
 
   it("prefers a tool_result verdict", () => {
-    const output = { messages: [{ role: "assistant", content: '{"pass":false}' }] };
-    expect(parseCheckSpanVerdict({ tool_result: { pass: true }, output })).toBe(true);
+    expect(parseCheckSpanVerdict({ tool_result: { pass: true }, output: assistant('{"pass":false}') })).toBe("pass");
   });
 
   it("returns undefined when no output carries a verdict", () => {
@@ -416,52 +447,32 @@ describe("parseCheckSpanVerdict", () => {
     expect(
       parseCheckSpanVerdict({ tool_result: null, output: { messages: [{ role: "user", content: '{"pass":true}' }] } }),
     ).toBeUndefined();
-    expect(
-      parseCheckSpanVerdict({ tool_result: null, output: { messages: [{ role: "assistant", content: "check threw" }] } }),
-    ).toBeUndefined();
+    expect(parseCheckSpanVerdict({ tool_result: null, output: assistant("check threw") })).toBeUndefined();
+    expect(parseCheckSpanVerdict({ tool_result: { pass: null }, output: null })).toBeUndefined();
   });
 });
 
-describe("parseSpanVerdict", () => {
+describe("parseJudgeSpanVerdict", () => {
   // Older payloads carry tool_result as a JSON string, outside its declared type.
   const jsonString = (json: string) => json as unknown as TraceObservation["tool_result"];
 
-  it("maps a judge's pass to pass/fail and its null pass to no verdict", () => {
-    expect(parseSpanVerdict("judge:a", { tool_result: { pass: true }, output: null })).toBe("pass");
-    expect(parseSpanVerdict("t.agent:a", { tool_result: jsonString('{"pass":false}'), output: null })).toBe("fail");
-    expect(parseSpanVerdict("judge:a", { tool_result: { reasoning: "x", pass: null }, output: null })).toBe("no-verdict");
-    expect(parseSpanVerdict("judge:a", { tool_result: jsonString('{"pass":null}'), output: null })).toBe("no-verdict");
+  it("reads pass and fail", () => {
+    expect(parseJudgeSpanVerdict({ tool_result: { reasoning: "ok", pass: true } })).toBe("pass");
+    expect(parseJudgeSpanVerdict({ tool_result: jsonString('{"pass":false}') })).toBe("fail");
+  });
+
+  it("reads no verdict from an outcome, a null pass, or a judge call that threw", () => {
+    expect(parseJudgeSpanVerdict({ tool_result: { pass: false, outcome: "error" } })).toBe("no-verdict");
+    expect(parseJudgeSpanVerdict({ tool_result: { reasoning: "x", pass: null } })).toBe("no-verdict");
+    expect(parseJudgeSpanVerdict({ tool_result: jsonString('{"pass":null}') })).toBe("no-verdict");
+    expect(parseJudgeSpanVerdict({ tool_result: null, level: "ERROR" })).toBe("no-verdict");
   });
 
   it("leaves a judge without a recorded verdict unknown", () => {
-    expect(parseSpanVerdict("judge:a", { tool_result: null, output: null })).toBeUndefined();
-    expect(parseSpanVerdict("judge:a", { tool_result: { reasoning: "x" }, output: null })).toBeUndefined();
-  });
-
-  it("reads a check span through its assistant output", () => {
-    const output = { messages: [{ role: "assistant", content: '{"pass":true}' }] };
-    expect(parseSpanVerdict("check:a", { tool_result: null, output })).toBe("pass");
-    // A check span never records a null pass, so one is not read as no verdict.
-    expect(parseSpanVerdict("check:a", { tool_result: { pass: null }, output: null })).toBeUndefined();
-  });
-});
-
-describe("parseVerdict", () => {
-  it("reads pass from the tool_result object", () => {
-    expect(parseVerdict({ reasoning: "ok", pass: true })).toBe(true);
-    expect(parseVerdict({ reasoning: "no", pass: false })).toBe(false);
-  });
-
-  it("parses a JSON-string tool_result", () => {
-    expect(parseVerdict('{"pass": true}')).toBe(true);
-  });
-
-  it("returns undefined for missing or malformed verdicts", () => {
-    expect(parseVerdict({ reasoning: "no flag" })).toBeUndefined();
-    expect(parseVerdict("not json")).toBeUndefined();
-    expect(parseVerdict(null)).toBeUndefined();
-    expect(parseVerdict(undefined)).toBeUndefined();
-    expect(parseVerdict({ pass: "yes" })).toBeUndefined();
+    expect(parseJudgeSpanVerdict({ tool_result: null })).toBeUndefined();
+    expect(parseJudgeSpanVerdict({ tool_result: { reasoning: "no flag" }, level: "DEFAULT" })).toBeUndefined();
+    expect(parseJudgeSpanVerdict({ tool_result: jsonString("not json") })).toBeUndefined();
+    expect(parseJudgeSpanVerdict({ tool_result: { pass: "yes" } })).toBeUndefined();
   });
 });
 

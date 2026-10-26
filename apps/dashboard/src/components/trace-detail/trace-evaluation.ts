@@ -23,12 +23,12 @@ export function isEvaluationRoot(name: string): boolean {
 const CHECK_PREFIX = "check:";
 
 /** A per-check span: `check:<id>`. */
-export function isCheckSpan(name: string): boolean {
+function isCheckSpan(name: string): boolean {
   return name.startsWith(CHECK_PREFIX);
 }
 
 /** The check id a `check:<id>` span names. */
-export function checkIdOf(name: string): string {
+function checkIdOf(name: string): string {
   return name.slice(CHECK_PREFIX.length);
 }
 
@@ -37,22 +37,26 @@ export interface EvaluationGroup {
   checksRun: TraceObservation | null;
   /** Root judge spans, in call order. */
   roots: TraceObservation[];
-  /** Per-check `check:<id>` spans, in call order. */
+  /** The `check:<id>` spans directly under checks.run, in call order. */
   checks: TraceObservation[];
-  /** Phase span + root and check ids plus every descendant span (their tool
-   * calls, sub-spans). */
+  /** Phase span + root ids plus every descendant span (the checks, their
+   * tool calls, sub-spans). */
   memberIds: Set<string>;
 }
 
 /** Collect the evaluation phase of a trace, or null when it has neither a
- * checks.run span nor judge or check spans. */
+ * checks.run span nor judge roots. */
 export function findEvaluationGroup(calls: TraceObservation[]): EvaluationGroup | null {
   const roots = calls.filter((c) => isEvaluationRoot(c.step_name ?? ""));
-  const checks = calls.filter((c) => isCheckSpan(c.step_name ?? ""));
   const checksRun =
     calls.find((c) => c.step_name === "checks.run") ?? null;
-  if (roots.length === 0 && checks.length === 0 && !checksRun) return null;
-  const memberIds = new Set([...roots, ...checks].map((c) => c.id));
+  if (roots.length === 0 && !checksRun) return null;
+  // Only the SDK's per-check spans: an agent span that happens to be named
+  // `check:…` stays in the agent's tree.
+  const checks = checksRun
+    ? calls.filter((c) => c.parent_call_id === checksRun.id && isCheckSpan(c.step_name ?? ""))
+    : [];
+  const memberIds = new Set(roots.map((c) => c.id));
   if (checksRun) memberIds.add(checksRun.id);
   let grew = true;
   while (grew) {
@@ -71,6 +75,12 @@ export function findEvaluationGroup(calls: TraceObservation[]): EvaluationGroup 
  * errored or whose evidence was unsupported (issue #323). */
 export type RowVerdict = "pass" | "fail" | "no-verdict";
 
+/** A check verdict from its pass flag and outcome. */
+function checkVerdict(pass: boolean, outcome: unknown): RowVerdict {
+  if (pass) return "pass";
+  return outcome === "error" || outcome === "unsupported" ? "no-verdict" : "fail";
+}
+
 /** A tool_result as an object: JSON strings parsed, unparseable ones null. */
 function parseToolResult(toolResult: unknown): unknown {
   if (typeof toolResult !== "string") return toolResult;
@@ -81,48 +91,47 @@ function parseToolResult(toolResult: unknown): unknown {
   }
 }
 
-// The verdict JSON ({"reasoning","pass"}) rides the span's tool_result, which
-// slim trace payloads omit — the tree fetches full judge calls on demand and
-// reads pass from that map.
-export function parseVerdict(toolResult: unknown): boolean | undefined {
-  const pass = (parseToolResult(toolResult) as { pass?: unknown } | null)?.pass;
-  return typeof pass === "boolean" ? pass : undefined;
-}
-
 /**
  * Read a check span's own verdict from its full call. The SDK writes the
- * check summary ({pass, reasoning, assertions}) as the span's assistant
- * output rather than its tool_result, so read whichever carries it.
+ * check summary ({pass, outcome, reasoning, assertions}) as the span's
+ * assistant output rather than its tool_result, so read whichever carries
+ * it. Spans from SDKs that predate `outcome` read a verdictless check as a
+ * fail.
  */
 export function parseCheckSpanVerdict(
   call: Pick<TraceObservation, "tool_result" | "output">,
-): boolean | undefined {
-  const fromToolResult = parseVerdict(call.tool_result);
-  if (fromToolResult !== undefined) return fromToolResult;
+): RowVerdict | undefined {
   const messages = (call.output as { messages?: unknown } | null)?.messages;
-  if (!Array.isArray(messages)) return undefined;
-  const assistant = messages.findLast(
-    (m) => (m as { role?: unknown } | null)?.role === "assistant",
-  ) as { content?: unknown } | undefined;
-  return typeof assistant?.content === "string" ? parseVerdict(assistant.content) : undefined;
+  const assistant = Array.isArray(messages)
+    ? (messages.findLast(
+        (m) => (m as { role?: unknown } | null)?.role === "assistant",
+      ) as { content?: unknown } | undefined)
+    : undefined;
+  for (const candidate of [call.tool_result, assistant?.content]) {
+    const summary = parseToolResult(candidate) as { pass?: unknown; outcome?: unknown } | null;
+    if (typeof summary?.pass === "boolean") return checkVerdict(summary.pass, summary.outcome);
+  }
+  return undefined;
 }
 
 /**
- * A check or judge span's own verdict from its full call. A judge records
- * `pass: null` when it never answered, which is no verdict rather than an
- * unknown one.
+ * A judge or t.agent span's own verdict from its full call, which rides its
+ * tool_result as {reasoning, pass, outcome?}. No verdict is either an
+ * `outcome` saying so, a null `pass` (a t.agent session that ended without
+ * one), or a judge call that threw: an ERROR span with no verdict recorded.
+ * The verdict JSON is not in slim trace payloads, so the tree fetches each
+ * judge's full call on demand.
  */
-export function parseSpanVerdict(
-  stepName: string,
-  call: Pick<TraceObservation, "tool_result" | "output">,
+export function parseJudgeSpanVerdict(
+  call: Pick<TraceObservation, "tool_result" | "level">,
 ): RowVerdict | undefined {
-  const pass = isCheckSpan(stepName)
-    ? parseCheckSpanVerdict(call)
-    : parseVerdict(call.tool_result);
-  if (pass !== undefined) return pass ? "pass" : "fail";
-  if (isCheckSpan(stepName)) return undefined;
-  const verdict = parseToolResult(call.tool_result) as { pass?: unknown } | null | undefined;
-  return verdict?.pass === null ? "no-verdict" : undefined;
+  const verdict = parseToolResult(call.tool_result) as
+    | { pass?: unknown; outcome?: unknown }
+    | null
+    | undefined;
+  if (typeof verdict?.pass === "boolean") return checkVerdict(verdict.pass, verdict.outcome);
+  if (verdict?.pass === null || call.level?.toUpperCase() === "ERROR") return "no-verdict";
+  return undefined;
 }
 
 /** Collapsed-row counts read from the checks.run span's tool_result. */
@@ -168,14 +177,7 @@ export function parsePhaseSummary(toolResult: unknown): PhaseSummary | null {
   for (const result of Array.isArray(summary.results) ? summary.results : []) {
     const r = result as { id?: unknown; pass?: unknown; outcome?: unknown } | null;
     if (typeof r?.id !== "string" || typeof r.pass !== "boolean") continue;
-    checks.set(
-      r.id,
-      r.pass
-        ? "pass"
-        : r.outcome === "error" || r.outcome === "unsupported"
-          ? "no-verdict"
-          : "fail",
-    );
+    checks.set(r.id, checkVerdict(r.pass, r.outcome));
   }
   return {
     total: summary.total,
@@ -186,16 +188,16 @@ export function parsePhaseSummary(toolResult: unknown): PhaseSummary | null {
   };
 }
 
-/** Whether the checks.run summary holds this check span's verdict. */
+/** Whether the checks.run summary holds this call's verdict: only a check
+ * span of the group can be in it. */
 function summaryCovers(
-  check: TraceObservation,
+  call: TraceObservation,
   group: EvaluationGroup,
   phaseSummary: PhaseSummary,
 ): boolean {
   return (
-    group.checksRun !== null &&
-    check.parent_call_id === group.checksRun.id &&
-    phaseSummary.checks.has(checkIdOf(check.step_name ?? ""))
+    group.checks.includes(call) &&
+    phaseSummary.checks.has(checkIdOf(call.step_name ?? ""))
   );
 }
 
@@ -258,22 +260,25 @@ export function evaluationCounts(
 }
 
 /**
- * The tree label of a verdict row, or null for any other call. A check row
- * drops its `check:` prefix; a judge nested in the check it judges shows only
- * its kind, because the check row above already names the check.
+ * The tree label of a verdict row — a check or judge span of the group — or
+ * null for any other call. A check row drops its `check:` prefix; a judge
+ * nested in the check it judges shows only its kind, because the check row
+ * above already names the check.
  */
 export function verdictRowLabel(
   call: TraceObservation,
+  group: EvaluationGroup,
   parent: TraceObservation | undefined,
 ): string | null {
   const name = call.step_name ?? "";
-  if (isCheckSpan(name)) return checkIdOf(name);
-  if (!isEvaluationRoot(name)) return null;
+  if (group.checks.includes(call)) return checkIdOf(name);
+  if (!group.roots.includes(call)) return null;
   const kind = name.startsWith("t.agent:") ? "t.agent" : "judge";
-  const parentName = parent?.step_name ?? "";
-  return isCheckSpan(parentName) && checkIdOf(parentName) === name.slice(kind.length + 1)
-    ? kind
-    : name;
+  const parentIsItsCheck =
+    parent !== undefined &&
+    group.checks.includes(parent) &&
+    checkIdOf(parent.step_name ?? "") === name.slice(kind.length + 1);
+  return parentIsItsCheck ? kind : name;
 }
 
 /**

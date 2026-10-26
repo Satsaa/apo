@@ -9,8 +9,9 @@ import {
   evaluationCounts,
   evaluationSubtreeRows,
   findEvaluationGroup,
+  parseCheckSpanVerdict,
+  parseJudgeSpanVerdict,
   parsePhaseSummary,
-  parseSpanVerdict,
   partitionEvaluation,
   rowVerdict,
   verdictFetchTargets,
@@ -187,7 +188,7 @@ const VERDICT_BADGES: Record<RowVerdict | "unknown", { text: string; className: 
     className: "bg-warning/15 text-warning",
     title: "Ended without a verdict (judge errored or evidence unsupported) — quality unknown, not failed",
   },
-  unknown: { text: "—", className: "bg-muted text-muted-foreground" },
+  unknown: { text: "—", className: "bg-muted text-muted-foreground", title: "Verdict unknown" },
 };
 
 function VerdictBadge({ state }: { state: RowVerdict | undefined }) {
@@ -198,7 +199,8 @@ function VerdictBadge({ state }: { state: RowVerdict | undefined }) {
       title={badge.title}
       className={cn("shrink-0 rounded-sm px-1 py-0.5 text-[10px] font-semibold uppercase leading-none", badge.className)}
     >
-      {badge.text}
+      <span aria-hidden={badge.title ? true : undefined}>{badge.text}</span>
+      {badge.title && <span className="sr-only">{badge.title}</span>}
     </span>
   );
 }
@@ -626,7 +628,12 @@ export function TraceTree({
     Promise.all(
       missing.map((c) =>
         getCallDetail(trace.id, c.id, trace.project, controller.signal)
-          .then((full) => [c.id, parseSpanVerdict(c.step_name ?? "", full)] as const)
+          .then((full) => {
+            const verdict = evaluation.checks.includes(c)
+              ? parseCheckSpanVerdict(full)
+              : parseJudgeSpanVerdict(full);
+            return [c.id, verdict] as const;
+          })
           .catch(() => [c.id, undefined] as const),
       ),
     ).then((pairs) => {
@@ -644,6 +651,7 @@ export function TraceTree({
       if (!call || !evaluation?.memberIds.has(call.id)) return undefined;
       const label = verdictRowLabel(
         call,
+        evaluation,
         call.parent_call_id ? callsById.get(call.parent_call_id) : undefined,
       );
       if (label === null) return undefined;
@@ -697,7 +705,7 @@ export function TraceTree({
         node: {
           id: "evaluation-group",
           type: "call" as const,
-          call: judgeRoots[0] ?? evaluation.checksRun,
+          call: evaluation.checksRun ?? judgeRoots[0],
           level: 1,
           isLastSibling: true,
           hasChildren: true,
@@ -884,9 +892,11 @@ export function TraceTree({
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = filteredTree[virtualRow.index];
           const { node, treeLines } = row;
-          // The synthetic group row carries judgeRoots[0] as its call (so
-          // keyboard nav can select it) — it must be matched BEFORE the
-          // tree-row branch below, or it renders as a plain judge row.
+          // The synthetic group row carries the checks.run span (or, on
+          // legacy traces, the first judge) as its call so keyboard nav can
+          // select it; checks.run has no row of its own inside the group, so
+          // nav never finds the same call twice. It must be matched BEFORE
+          // the tree-row branch below, or it renders as a plain span row.
           if ("isEvalGroup" in row && row.isEvalGroup) {
             return (
               <div

@@ -386,9 +386,10 @@ function deriveEvaluatorType(
  * expected/received pairs a trace reader needs without hopping to the run
  * report. The verdict exports on the tool-result channel, which the trace
  * view renders as a JSON tree; a bare object would export as an assistant
- * message holding its JSON as text. `received` values ride the same
- * truncation contract as submitted check reports, so a judge over a large
- * deliverable does not bloat the span attribute.
+ * message holding its JSON as text. `outcome` distinguishes a check that
+ * ended without a verdict from one that failed. `received` values ride the
+ * same truncation contract as submitted check reports, so a judge over a
+ * large deliverable does not bloat the span attribute.
  */
 function summarizeCheckForSpan(result: unknown): Record<string, unknown> {
   const check = result as EvaluationItemResult;
@@ -397,6 +398,7 @@ function summarizeCheckForSpan(result: unknown): Record<string, unknown> {
     text: reasoning,
     verdict: {
       pass: check.pass,
+      ...(check.outcome ? { outcome: check.outcome } : {}),
       reasoning,
       evaluator_type: check.evaluator_type,
       ...(check.judge ? { judge_model: check.judge.model } : {}),

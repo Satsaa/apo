@@ -773,12 +773,15 @@ function createJudgeMethod(
             ...judgeServing,
             input: { model: effective.model, instruction },
             summarize: (r: unknown) => {
-              const res = r as { pass?: boolean; reasoning?: string };
+              const res = r as { pass?: boolean; reasoning?: string; unavailable?: boolean };
               return {
                 text: res?.reasoning?.slice(0, 2000) ?? "",
                 verdict: {
                   reasoning: res?.reasoning?.slice(0, 2000) ?? null,
                   pass: res?.pass ?? null,
+                  // A judge that gave no verdict still reports pass: false;
+                  // the outcome tells a trace reader it is not a "no".
+                  ...(res?.unavailable ? { outcome: "error" } : {}),
                 },
               };
             },

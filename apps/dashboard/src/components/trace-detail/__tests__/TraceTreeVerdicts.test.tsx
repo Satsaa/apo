@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TraceObservation } from "../contexts";
+import { SelectionProvider, useSelection } from "../contexts/SelectionContext";
 
 const getCallDetail = vi.fn();
 
@@ -31,10 +32,6 @@ vi.mock("../contexts/ViewPreferencesContext", () => ({
   }),
 }));
 
-vi.mock("../contexts/SelectionContext", () => ({
-  useSelection: () => ({ selectCall: () => {}, selectedCallId: null }),
-}));
-
 // jsdom has no layout, so the real virtualizer renders no rows: render them all.
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -47,7 +44,13 @@ vi.mock("@tanstack/react-virtual", () => ({
 
 import { TraceTree } from "../TraceTree";
 
-function span(id: string, name: string, parent: string | null, at: number): TraceObservation {
+function span(
+  id: string,
+  name: string,
+  parent: string | null,
+  at: number,
+  extra: Partial<TraceObservation> = {},
+): TraceObservation {
   return {
     id,
     step_name: name,
@@ -60,11 +63,13 @@ function span(id: string, name: string, parent: string | null, at: number): Trac
     output: null,
     task_id: null,
     observation_type: name.startsWith("judge:") ? "GENERATION" : "SPAN",
+    ...extra,
   } as TraceObservation;
 }
 
 // The shape the SDK emits since #344: one check:<id> span per check under
-// checks.run, its judge nested inside.
+// checks.run, its judge nested inside. j3's judge call threw, which the SDK
+// records as an ERROR span with no verdict.
 const calls = [
   span("run", "apo.task.run", null, 0),
   span("turn", "task.turn", "run", 1),
@@ -73,7 +78,7 @@ const calls = [
   span("c2", "check:ticket describes the problem", "cr", 4),
   span("j2", "judge:ticket describes the problem", "c2", 5),
   span("c3", "check:judge never answered", "cr", 6),
-  span("j3", "judge:judge never answered", "c3", 7),
+  span("j3", "judge:judge never answered", "c3", 7, { level: "ERROR" }),
 ];
 
 const summary = {
@@ -88,16 +93,61 @@ const summary = {
   ],
 };
 
-function checkOutput(pass: boolean) {
-  return { messages: [{ role: "assistant", content: JSON.stringify({ pass, reasoning: "r" }) }] };
+/** A check span's full call as the SDK writes it: the summary as assistant output. */
+function checkSpan(body: Record<string, unknown>) {
+  return { tool_result: null, output: { messages: [{ role: "assistant", content: JSON.stringify(body) }] } };
 }
 
-/** The badge in the row whose label is `label`. */
-function badgeOf(label: string): HTMLElement {
-  const name = screen.getByText(label);
-  const badge = name.parentElement!.querySelector("[data-verdict]");
+function detailFor(overrides: Record<string, unknown> = {}) {
+  const details: Record<string, unknown> = {
+    cr: { tool_result: summary },
+    j2: { tool_result: { reasoning: "vague", pass: false } },
+    j3: { tool_result: null, level: "ERROR" },
+    ...overrides,
+  };
+  return async (_trace: string, id: string) => {
+    const detail = details[id];
+    if (detail instanceof Error) throw detail;
+    if (detail === undefined) throw new Error(`unexpected fetch of ${id}`);
+    return detail;
+  };
+}
+
+function SelectedId() {
+  const { selectedCallId } = useSelection();
+  return <output data-testid="selected">{selectedCallId ?? ""}</output>;
+}
+
+function renderTree(treeCalls: TraceObservation[] = calls, searchQuery = "") {
+  return render(
+    <SelectionProvider>
+      <TraceTree calls={treeCalls} searchQuery={searchQuery} />
+      <SelectedId />
+    </SelectionProvider>,
+  );
+}
+
+async function expandEvaluation() {
+  const group = await screen.findByRole("button", { name: /Evaluation/ });
+  await userEvent.click(group);
+  return group;
+}
+
+/** The name element of the row labelled `label`. */
+function nameOf(label: string, index = 0): HTMLElement {
+  return screen.getAllByText(label)[index]!;
+}
+
+/** The badge in the row labelled `label`. */
+function badgeOf(label: string, index = 0): HTMLElement {
+  const badge = nameOf(label, index).parentElement!.querySelector("[data-verdict]");
   if (!badge) throw new Error(`no verdict badge next to "${label}"`);
   return badge as HTMLElement;
+}
+
+/** What the badge shows on screen (screen-reader-only text excluded). */
+function visibleText(badge: HTMLElement): string {
+  return badge.querySelector(":scope > :not(.sr-only)")!.textContent ?? "";
 }
 
 describe("TraceTree verdict rows", () => {
@@ -106,19 +156,14 @@ describe("TraceTree verdict rows", () => {
   });
 
   it("badges every check from the checks.run summary and each judge from its own span", async () => {
-    getCallDetail.mockImplementation(async (_trace: string, id: string) => {
-      if (id === "cr") return { tool_result: summary };
-      if (id === "j2") return { tool_result: { reasoning: "vague", pass: false } };
-      if (id === "j3") return { tool_result: { reasoning: "x", pass: null } };
-      throw new Error(`unexpected fetch of ${id}`);
-    });
-    render(<TraceTree calls={calls} />);
+    getCallDetail.mockImplementation(detailFor());
+    renderTree();
 
     const group = await screen.findByRole("button", { name: /Evaluation/ });
     await waitFor(() => expect(group).toHaveTextContent("1 pass"));
     expect(group).toHaveTextContent("1 fail");
     expect(group).toHaveTextContent("1 no-verdict");
-    await userEvent.click(group);
+    await expandEvaluation();
 
     expect(badgeOf("reply never mentions the note")).toHaveAttribute("data-verdict", "pass");
     expect(badgeOf("ticket describes the problem")).toHaveAttribute("data-verdict", "fail");
@@ -126,71 +171,125 @@ describe("TraceTree verdict rows", () => {
     expect(screen.queryByText(/^check:/)).toBeNull();
 
     // A judge under its own check is labelled by kind and carries its own verdict.
-    await waitFor(() => {
-      const judges = screen.getAllByText("judge");
-      expect(judges.map((j) => j.parentElement!.querySelector("[data-verdict]")!.getAttribute("data-verdict"))).toEqual([
-        "fail",
-        "no-verdict",
-      ]);
-    });
+    await waitFor(() => expect(badgeOf("judge", 0)).toHaveAttribute("data-verdict", "fail"));
+    expect(badgeOf("judge", 1)).toHaveAttribute("data-verdict", "no-verdict");
     // Checks never cost a fetch of their own while the summary covers them.
-    const fetched = getCallDetail.mock.calls.map((c) => c[1]).sort();
-    expect(fetched).toEqual(["cr", "j2", "j3"]);
+    expect(getCallDetail.mock.calls.map((c) => c[1]).sort()).toEqual(["cr", "j2", "j3"]);
   });
 
-  it("indents a judge under its check like any nested row", async () => {
-    getCallDetail.mockImplementation(async (_trace: string, id: string) =>
-      id === "cr" ? { tool_result: summary } : { tool_result: { pass: true } },
-    );
-    render(<TraceTree calls={calls} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Evaluation/ }));
+  it("shows the verdict as text and colours a failed row's name", async () => {
+    getCallDetail.mockImplementation(detailFor({ j2: new Error("network") }));
+    renderTree();
+    await expandEvaluation();
+
+    expect(visibleText(badgeOf("reply never mentions the note"))).toBe("pass");
+    expect(visibleText(badgeOf("ticket describes the problem"))).toBe("fail");
+    expect(visibleText(badgeOf("judge never answered"))).toBe("no verdict");
+    expect(badgeOf("judge never answered")).toHaveAttribute("title", expect.stringMatching(/without a verdict/));
+    await waitFor(() => expect(badgeOf("judge", 0)).toHaveAttribute("data-verdict", "unknown"));
+    expect(visibleText(badgeOf("judge", 0))).toBe("—");
+    expect(badgeOf("judge", 0)).toHaveTextContent("Verdict unknown");
+
+    expect(nameOf("ticket describes the problem")).toHaveClass("text-destructive");
+    expect(nameOf("reply never mentions the note")).not.toHaveClass("text-destructive");
+  });
+
+  it("indents a judge under its check and collapses it with the check's chevron", async () => {
+    getCallDetail.mockImplementation(detailFor());
+    renderTree();
+    await expandEvaluation();
 
     const indentOf = (el: HTMLElement) => {
       const row = el.closest("[data-index]") as HTMLElement;
       // One w-4 spacer per ancestor level, plus the connector column.
-      return row.querySelectorAll(".w-4.relative, .relative.w-4").length;
+      return row.querySelectorAll(".relative.w-4").length;
     };
-    const check = screen.getByText("ticket describes the problem");
-    const [judge] = screen.getAllByText("judge");
-    expect(indentOf(judge)).toBe(indentOf(check) + 1);
+    expect(indentOf(nameOf("judge"))).toBe(indentOf(nameOf("ticket describes the problem")) + 1);
+
+    const checkRow = nameOf("ticket describes the problem").closest("[data-index]") as HTMLElement;
+    const chevron = checkRow.querySelector("[data-expand-button]") as HTMLElement;
+    expect(screen.getAllByText("judge")).toHaveLength(2);
+    await userEvent.click(chevron);
+    expect(screen.getAllByText("judge")).toHaveLength(1);
   });
 
   it("falls back to each check span's own verdict when the summary is unusable", async () => {
-    getCallDetail.mockImplementation(async (_trace: string, id: string) => {
-      if (id === "cr") throw new Error("network");
-      if (id === "c1") return { tool_result: null, output: checkOutput(true) };
-      if (id === "c2") return { tool_result: null, output: checkOutput(false) };
-      if (id === "c3") return { tool_result: null, output: checkOutput(false) };
-      return { tool_result: { pass: true } };
-    });
-    render(<TraceTree calls={calls} />);
+    getCallDetail.mockImplementation(
+      detailFor({
+        cr: new Error("network"),
+        c1: checkSpan({ pass: true }),
+        c2: checkSpan({ pass: false }),
+        c3: checkSpan({ pass: false, outcome: "error" }),
+      }),
+    );
+    renderTree();
 
     const group = await screen.findByRole("button", { name: /Evaluation/ });
-    // Counted over the three checks, not the two judges.
+    // Counted over the three checks, not the two judges; the verdictless
+    // check is not a failure.
     await waitFor(() => expect(group).toHaveTextContent("1 pass"));
-    expect(group).toHaveTextContent("2 fail");
+    expect(group).toHaveTextContent("1 fail");
+    expect(group).toHaveTextContent("1 no-verdict");
     expect(getCallDetail.mock.calls.map((c) => c[1]).sort()).toEqual(["c1", "c2", "c3", "cr"]);
 
     await userEvent.click(group);
     expect(badgeOf("reply never mentions the note")).toHaveAttribute("data-verdict", "pass");
     expect(badgeOf("ticket describes the problem")).toHaveAttribute("data-verdict", "fail");
+    expect(badgeOf("judge never answered")).toHaveAttribute("data-verdict", "no-verdict");
   });
 
-  it("keeps the judge rows of a legacy trace without check spans", async () => {
+  it("badges and highlights the rows search surfaces while the group is collapsed", async () => {
+    getCallDetail.mockImplementation(detailFor());
+    renderTree(calls, "describes");
+
+    await waitFor(() => expect(badgeOf("judge")).toHaveAttribute("data-verdict", "fail"));
+    // The match splits the label, so find the check's name by its whole text.
+    const name = screen.getByText(
+      (_, el) => el?.classList.contains("truncate") === true && el.textContent === "ticket describes the problem",
+    );
+    expect(name.parentElement!.querySelector("[data-verdict]")).toHaveAttribute("data-verdict", "fail");
+    expect(name.querySelector("span")).toHaveTextContent(/^describes$/);
+  });
+
+  it("keeps an agent span named check:… in the agent's tree", async () => {
+    getCallDetail.mockImplementation(detailFor());
+    renderTree([...calls, span("lint", "check:lint", "turn", 1.5)]);
+    await screen.findByRole("button", { name: /Evaluation/ });
+
+    // Visible while the Evaluation group is still collapsed, under its own name.
+    expect(screen.getByText("check:lint").parentElement!.querySelector("[data-verdict]")).toBeNull();
+  });
+
+  it("keeps a judge directly under checks.run on its own verdict (traces before per-check spans)", async () => {
     const legacy = [
       span("run", "apo.task.run", null, 0),
       span("cr", "checks.run", "run", 1),
       span("j1", "judge:reads well", "cr", 2),
     ];
-    getCallDetail.mockImplementation(async (_trace: string, id: string) =>
-      id === "cr"
-        ? { tool_result: { total: 1, passCount: 1, failCount: 0, results: [{ id: "reads well", pass: true }] } }
-        : { tool_result: { pass: true } },
+    getCallDetail.mockImplementation(
+      detailFor({
+        // The check failed on a deterministic assertion; its judge passed.
+        cr: { tool_result: { total: 1, passCount: 0, failCount: 1, results: [{ id: "reads well", pass: false }] } },
+        j1: { tool_result: { pass: true } },
+      }),
     );
-    render(<TraceTree calls={legacy} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Evaluation/ }));
+    renderTree(legacy);
+    await expandEvaluation();
     await waitFor(() => expect(badgeOf("judge:reads well")).toHaveAttribute("data-verdict", "pass"));
-    const row = screen.getByText("judge:reads well").closest("[data-index]") as HTMLElement;
-    expect(within(row).getByText("pass")).toBeTruthy();
+  });
+
+  it("walks every evaluation row with the arrow keys", async () => {
+    getCallDetail.mockImplementation(detailFor());
+    renderTree();
+    await expandEvaluation();
+    await userEvent.click(screen.getByText("task.turn"));
+
+    const visited: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      fireEvent.keyDown(window, { key: "ArrowDown" });
+      visited.push(screen.getByTestId("selected").textContent ?? "");
+    }
+    // The group row stands for checks.run; every check and judge follows once.
+    expect(visited).toEqual(["cr", "c1", "c2", "j2", "c3", "j3", "j3"]);
   });
 });
