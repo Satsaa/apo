@@ -325,20 +325,51 @@ describe("TraceGraph camera", () => {
     act(() => network.setView({ x: 2000, y: 240 }, 0.6));
     await resizeTo(network, 200);
     expect(network.moveTo).toHaveBeenCalledTimes(1);
+    network.moveTo.mockClear();
+
+    // A sliver still in view after the resize stays where it is.
+    act(() => network.setView({ x: 250, y: 240 }, 0.6));
+    await resizeTo(network, 400);
+    expect(network.moveTo).toHaveBeenCalledTimes(1);
   });
 
   it("does not pan when a live update lands between a click and its selection", () => {
-    const { rerender } = render(<Graph calls={calls} selectedCallId="far" />);
-    // The user pans to the start of the trace: "near" in view, "far" not.
+    // The URL points at a call that has not streamed in yet.
+    const { rerender } = render(<Graph calls={calls} selectedCallId="late" />);
     act(() => latestNetwork().setView({ x: 0, y: 120 }, 0.6));
-    act(() => latestNetwork().emit("click", { nodes: ["near"] }));
+    act(() => latestNetwork().emit("click", { nodes: ["edge"] }));
 
+    // The update brings the old selection in before the click's selection commits.
     const updated = [...calls, call("late", "agent")];
-    rerender(<Graph calls={updated} selectedCallId="far" />);
-    rerender(<Graph calls={updated} selectedCallId="near" />);
+    rerender(<Graph calls={updated} selectedCallId="late" />);
+    rerender(<Graph calls={updated} selectedCallId="edge" />);
     const rebuilt = latestNetwork();
     expect(rebuilt.moveTo).toHaveBeenCalledTimes(1);
-    expect(rebuilt.selectNodes).toHaveBeenLastCalledWith(["near"]);
+    expect(rebuilt.selectNodes).toHaveBeenLastCalledWith(["edge"]);
+  });
+
+  it("pans to a selection made elsewhere even with a click pending, and after the click is used up", () => {
+    const { rerender } = render(<Graph calls={calls} selectedCallId={null} />);
+    const network = latestNetwork();
+    act(() => network.setView({ x: 0, y: 120 }, 0.6));
+    act(() => network.emit("click", { nodes: ["near"] }));
+    network.moveTo.mockClear();
+
+    rerender(<Graph calls={calls} selectedCallId="far" />);
+    expect(network.moveTo).toHaveBeenLastCalledWith({ position: { x: 4000, y: 240 }, animation: false });
+    rerender(<Graph calls={calls} selectedCallId="near" />);
+    expect(network.moveTo).toHaveBeenLastCalledWith({ position: { x: 50, y: 240 }, animation: false });
+  });
+
+  it("brings back a node clicked just before the panel narrows", async () => {
+    render(<Graph calls={calls} selectedCallId="agent" />);
+    const network = latestNetwork();
+    act(() => network.emit("click", { nodes: ["edge"] }));
+    network.moveTo.mockClear();
+
+    // The click's selection has not committed when the overlay closes.
+    await resizeTo(network, 300);
+    expect(network.moveTo).toHaveBeenLastCalledWith({ position: { x: 290, y: 240 }, animation: false });
   });
 
   it("selects clicked nodes without moving them, zooms and fits with the buttons, and expands until Escape or a node double-click", () => {

@@ -296,19 +296,24 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     const shownSelection = selectedCallIdRef.current;
     if (hasNode(nodes, shownSelection)) {
       network.selectNodes([shownSelection]);
-      if (savedView && !savedView.selectionShown) revealNode(network, container, shownSelection);
+      const clickPending = clickedCallIdRef.current !== undefined;
+      if (savedView && !savedView.selectionShown && !clickPending) {
+        revealNode(network, container, shownSelection);
+      }
     }
 
     // vis-network keeps the centre and scales the view with its container.
     // Keep the zoom and the top-left corner instead, so a bigger panel shows
-    // more to the right and below, and keep a selected node that was in view
-    // in view (closing the expanded graph on a double-clicked node). "resize"
-    // fires once the canvas has its new size but before vis moves the camera,
-    // so the view read here is the pre-resize one; the old size comes with it.
+    // more to the right and below, and bring back a selected node (or one
+    // just clicked) that was in view but no longer is: closing the expanded
+    // graph on a double-clicked node. "resize" fires once the canvas has its
+    // new size but before vis moves the camera, so the view read here is the
+    // pre-resize one; the old size comes with it.
     network.on("resize", (size: { oldWidth: number; oldHeight: number }) => {
       const scale = network.getScale();
       const topLeft = network.DOMtoCanvas({ x: 0, y: 0 });
-      const selected = selectedCallIdRef.current;
+      const clicked = clickedCallIdRef.current;
+      const selected = clicked !== undefined ? clicked : selectedCallIdRef.current;
       const keepInView =
         hasNode(nodes, selected) &&
         isInView(screenBox(network, selected), { width: size.oldWidth, height: size.oldHeight })
@@ -318,7 +323,9 @@ export function TraceGraph({ calls }: TraceGraphProps) {
         if (networkRef.current !== network) return;
         const position = centreKeeping(topLeft, { x: 0, y: 0 }, scale, viewportOf(container));
         network.moveTo({ position, scale, ...INSTANT });
-        if (keepInView) revealNode(network, container, keepInView);
+        if (keepInView && !isInView(screenBox(network, keepInView), viewportOf(container))) {
+          network.moveTo({ position: network.getPosition(keepInView), ...INSTANT });
+        }
       });
     });
 
