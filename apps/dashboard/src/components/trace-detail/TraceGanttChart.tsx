@@ -627,12 +627,15 @@ export function TraceGanttChart({
     // One scroller holds both the time scale and the rows, so the browser moves
     // them together. Two scrollers syncing scrollLeft in onScroll fight a
     // trackpad swipe: each writes the other's previous-frame offset back.
+    // The scroll padding keeps a focused row from scrolling in under the scale.
     <div
       ref={scrollRef}
       data-testid="trace-gantt-scroller"
       className="h-full w-full overflow-auto"
+      style={{ scrollPaddingTop: `${SCALE_HEIGHT}px` }}
     >
       <div
+        data-testid="trace-gantt-scale"
         className="sticky top-0 z-10 min-w-full border-b border-border/50 bg-background"
         style={{ width: `${contentWidth}px`, height: `${SCALE_HEIGHT}px` }}
       >

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import { TraceGanttChart } from "../TraceGanttChart";
@@ -47,17 +47,19 @@ function renderGantt() {
   );
 }
 
+beforeEach(() => {
+  // jsdom has no layout; give the scroller a height so the virtualizer renders rows.
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("TraceGanttChart scrolling", () => {
-  // Two scrollers that copy scrollLeft into each other on scroll fight a
-  // trackpad swipe: each scroll event writes the other box's previous-frame
-  // offset back, and the rows judder. The chart must leave scrolling to the
-  // browser.
-  it("never writes a scroll position when any part of the chart scrolls", () => {
+  it("never sets scrollLeft when any part of the chart scrolls", () => {
     const { container } = renderGantt();
+    expect(screen.getAllByRole("button", { name: "Select trace node" })).toHaveLength(calls.length + 1);
     const scrollLeftSet = vi.spyOn(Element.prototype, "scrollLeft", "set");
 
     for (const el of container.querySelectorAll("*")) {
@@ -67,14 +69,14 @@ describe("TraceGanttChart scrolling", () => {
     expect(scrollLeftSet).not.toHaveBeenCalled();
   });
 
-  it("draws the time scale inside the scroller that holds the rows", () => {
-    // jsdom has no layout; give the scroller a size so the virtualizer renders rows.
-    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
-    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(420);
+  it("pins the time scale inside the scroller that holds the rows", () => {
     renderGantt();
 
     const scroller = screen.getByTestId("trace-gantt-scroller");
-    expect(scroller).toContainElement(screen.getByText("0ms"));
+    const scale = screen.getByTestId("trace-gantt-scale");
+    expect(scale).toHaveClass("sticky", "top-0");
+    expect(scale).toContainElement(screen.getByText("0ms"));
+    expect(scroller).toContainElement(scale);
     expect(scroller).toContainElement(screen.getAllByRole("button", { name: "Select trace node" })[0]!);
   });
 });
