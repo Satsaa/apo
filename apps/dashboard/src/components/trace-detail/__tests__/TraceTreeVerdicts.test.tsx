@@ -366,6 +366,31 @@ describe("TraceTree verdict rows", () => {
     expect([press("ArrowUp"), press("ArrowUp")]).toEqual(["j1", "turn"]);
   });
 
+  it("keeps checks.run selectable when a stray judge span renders before it", async () => {
+    // A t.judge called outside any check, under the agent's turn.
+    const mixed = [
+      span("run", "apo.task.run", null, 0),
+      span("turn", "task.turn", "run", 1),
+      span("js", "judge:outside", "turn", 2),
+      span("cr", "checks.run", "run", 3),
+      span("c1", "check:reply never mentions the note", "cr", 4),
+    ];
+    getCallDetail.mockImplementation(async (_t: string, id: string) =>
+      id === "cr"
+        ? { tool_result: { total: 1, passCount: 1, failCount: 0, results: [{ id: "reply never mentions the note", pass: true }] } }
+        : { tool_result: { pass: true } },
+    );
+    renderTree(mixed);
+    await expandEvaluation();
+    await userEvent.click(screen.getByText("task.turn"));
+
+    const visited = Array.from({ length: 3 }, () => {
+      fireEvent.keyDown(window, { key: "ArrowDown" });
+      return screen.getByTestId("selected").textContent ?? "";
+    });
+    expect(visited).toEqual(["cr", "js", "c1"]);
+  });
+
   it("reaches a legacy judge that renders first in the group but comes later in the calls", async () => {
     // jA is first in call order, but j1 sits under task.turn, which renders before it.
     const legacy = [

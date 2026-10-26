@@ -680,7 +680,7 @@ export function TraceTree({
         node: {
           id: "evaluation-group",
           type: "call" as const,
-          call: split.first.node.call,
+          call: evaluation.checksRun ?? split.first.node.call,
           level: 1,
           isLastSibling: true,
           hasChildren: true,
@@ -871,10 +871,10 @@ export function TraceTree({
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = filteredTree[virtualRow.index];
           const { node, treeLines } = row;
-          // The synthetic group row carries the first row it stands for (the
-          // checks.run span, or on legacy traces the first judge row) as its
-          // call so keyboard nav can select it. It must be matched BEFORE the
-          // tree-row branch below, or it renders as a plain span row.
+          // The synthetic group row carries the checks.run span, which has no
+          // row of its own, or on legacy traces the first judge row it stands
+          // for, as its call so keyboard nav can select it. It must be matched
+          // BEFORE the tree-row branch below, or it renders as a plain span row.
           if ("isEvalGroup" in row && row.isEvalGroup) {
             return (
               <div
