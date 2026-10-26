@@ -627,7 +627,7 @@ export function TraceGanttChart({
     // One scroller holds both the time scale and the rows, so the browser moves
     // them together. Two scrollers syncing scrollLeft in onScroll fight a
     // trackpad swipe: each writes the other's previous-frame offset back.
-    // The scroll padding keeps a focused row from scrolling in under the scale.
+    // The scroll padding keeps a focused bar or chevron from scrolling in under the scale.
     <div
       ref={scrollRef}
       data-testid="trace-gantt-scroller"
