@@ -70,6 +70,9 @@ interface SavedView {
   anchor: { id: string; onScreen: Point } | null;
   position: Point;
   scale: number;
+  // Whether the selected node was in the graph; one that arrives with a
+  // later span is panned to.
+  selectionShown: boolean;
 }
 
 function viewportOf(container: HTMLElement): Viewport {
@@ -89,7 +92,7 @@ function revealNode(network: Network, container: HTMLElement, id: string) {
   }
 }
 
-function saveView(network: Network, container: HTMLElement): SavedView {
+function saveView(network: Network, container: HTMLElement, selectionShown: boolean): SavedView {
   const viewport = viewportOf(container);
   let anchor: SavedView["anchor"] = null;
   let nearest = Infinity;
@@ -101,7 +104,7 @@ function saveView(network: Network, container: HTMLElement): SavedView {
       anchor = { id, onScreen };
     }
   }
-  return { anchor, position: network.getViewPosition(), scale: network.getScale() };
+  return { anchor, position: network.getViewPosition(), scale: network.getScale(), selectionShown };
 }
 
 function restoreView(
@@ -263,7 +266,12 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     network.on("click", (params: { nodes: string[] }) => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
-      selectCall(nodeId === ROOT_ID ? null : nodeId);
+      const callId = nodeId === ROOT_ID ? null : nodeId;
+      // vis has selected the clicked node, which is on screen: marking it as
+      // shown keeps the selection effect from panning it out from under a
+      // double-click.
+      selectedCallIdRef.current = callId;
+      selectCall(callId);
     });
 
     // The expanded view hides the details pane; double-clicking a node collapses it to show them.
@@ -285,15 +293,18 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     } else {
       placeOpeningView(network, container, nodes, selectedCallIdRef.current);
     }
-    if (hasNode(nodes, selectedCallIdRef.current)) {
-      network.selectNodes([selectedCallIdRef.current]);
+    const shownSelection = selectedCallIdRef.current;
+    if (hasNode(nodes, shownSelection)) {
+      network.selectNodes([shownSelection]);
+      if (savedView && !savedView.selectionShown) revealNode(network, container, shownSelection);
     }
 
     // vis-network keeps the centre and scales the view with its container.
     // Keep the zoom and the top-left corner instead, so a bigger panel shows
     // more to the right and below, and keep a selected node that was in view
     // in view (closing the expanded graph on a double-clicked node). "resize"
-    // fires before vis moves the camera, so the reads here are pre-resize.
+    // fires once the canvas has its new size but before vis moves the camera,
+    // so the view read here is the pre-resize one; the old size comes with it.
     network.on("resize", (size: { oldWidth: number; oldHeight: number }) => {
       const scale = network.getScale();
       const topLeft = network.DOMtoCanvas({ x: 0, y: 0 });
@@ -314,7 +325,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     networkRef.current = network;
 
     return () => {
-      savedViewRef.current = saveView(network, container);
+      savedViewRef.current = saveView(network, container, hasNode(nodes, selectedCallIdRef.current));
       networkRef.current = null;
       network.destroy();
     };

@@ -20,6 +20,7 @@ const graph = vi.hoisted(() => ({
 }));
 
 interface FakeNetworkShape {
+  options: { interaction: { keyboard: unknown } };
   fit: Mock<(options?: unknown) => void>;
   moveTo: Mock<(options: MoveOptions) => void>;
   selectNodes: Mock<(ids: string[]) => void>;
@@ -28,37 +29,43 @@ interface FakeNetworkShape {
   setView: (centre: Point, scale: number) => void;
 }
 
-// A camera over the layout in graph.positions when the network was built: the
-// view centre sits at the middle of graph.viewport, as in vis-network.
+// vis-network's camera: screen = canvas * scale + translation, with the view
+// centre at the middle of graph.viewport (the canvas size). Each network keeps
+// the layout graph.positions had when it was built.
 vi.mock("vis-network/standalone", () => {
   class FakeNetwork {
     private handlers = new Map<string, Handler[]>();
     private ids: string[];
     private layout: Record<string, Point>;
     private scale = 1;
-    private centre: Point = { x: 0, y: 0 };
+    private translation: Point = { x: 0, y: 0 };
+    options: FakeNetworkShape["options"];
     fit = vi.fn((options?: unknown) => {
       graph.moves.push(options);
       this.setView({ x: 0, y: 0 }, graph.fitScale);
     });
     moveTo = vi.fn((options: MoveOptions) => {
       graph.moves.push(options);
+      const centre = options.position ?? this.getViewPosition();
       if (options.scale !== undefined) this.scale = options.scale;
-      if (options.position) {
-        const offset = options.offset ?? { x: 0, y: 0 };
-        this.centre = {
-          x: options.position.x - offset.x / this.scale,
-          y: options.position.y - offset.y / this.scale,
-        };
-      }
+      const offset = options.offset ?? { x: 0, y: 0 };
+      this.translation = {
+        x: graph.viewport.width / 2 + offset.x - centre.x * this.scale,
+        y: graph.viewport.height / 2 + offset.y - centre.y * this.scale,
+      };
     });
     selectNodes = vi.fn((_ids: string[]) => {});
     unselectAll = vi.fn(() => {});
     destroy = vi.fn();
 
-    constructor(_container: HTMLElement, data: { nodes: { getIds(): string[] } }) {
+    constructor(
+      _container: HTMLElement,
+      data: { nodes: { getIds(): string[] } },
+      options: FakeNetworkShape["options"],
+    ) {
       this.ids = data.nodes.getIds();
       this.layout = Object.fromEntries(this.ids.map((id) => [id, { ...graph.positions[id] }]));
+      this.options = options;
       graph.instances.push(this);
     }
 
@@ -70,10 +77,13 @@ vi.mock("vis-network/standalone", () => {
       for (const handler of this.handlers.get(event) ?? []) handler(params as never);
     }
 
-    // What a user's wheel zoom or drag does, without going through moveTo.
+    // What a wheel zoom, a drag or vis's own resize handling does to the camera.
     setView(centre: Point, scale: number) {
-      this.centre = centre;
       this.scale = scale;
+      this.translation = {
+        x: graph.viewport.width / 2 - centre.x * scale,
+        y: graph.viewport.height / 2 - centre.y * scale,
+      };
     }
 
     getScale() {
@@ -81,7 +91,7 @@ vi.mock("vis-network/standalone", () => {
     }
 
     getViewPosition() {
-      return this.centre;
+      return this.DOMtoCanvas({ x: graph.viewport.width / 2, y: graph.viewport.height / 2 });
     }
 
     // vis-network throws for an id that is not in the graph.
@@ -101,15 +111,15 @@ vi.mock("vis-network/standalone", () => {
 
     DOMtoCanvas(point: Point) {
       return {
-        x: this.centre.x + (point.x - graph.viewport.width / 2) / this.scale,
-        y: this.centre.y + (point.y - graph.viewport.height / 2) / this.scale,
+        x: (point.x - this.translation.x) / this.scale,
+        y: (point.y - this.translation.y) / this.scale,
       };
     }
 
     canvasToDOM(point: Point) {
       return {
-        x: (point.x - this.centre.x) * this.scale + graph.viewport.width / 2,
-        y: (point.y - this.centre.y) * this.scale + graph.viewport.height / 2,
+        x: point.x * this.scale + this.translation.x,
+        y: point.y * this.scale + this.translation.y,
       };
     }
   }
@@ -130,7 +140,7 @@ function call(id: string, parent: string | null): LoggedCall {
   };
 }
 
-const calls = [call("agent", null), call("near", "agent"), call("far", "agent")];
+const calls = [call("agent", null), call("near", "agent"), call("edge", "agent"), call("far", "agent")];
 
 // Stable like the real providers' callbacks: a new selectCall rebuilds the network.
 const noop = () => {};
@@ -161,6 +171,19 @@ function latestNetwork() {
   return graph.instances[graph.instances.length - 1];
 }
 
+// vis-network sizes the canvas, emits "resize", then moves its camera to keep
+// the old centre at a scale that follows the size.
+async function resizeTo(network: FakeNetworkShape, width: number) {
+  const old = graph.viewport;
+  const centre = { x: 0, y: 0 };
+  await act(async () => {
+    Object.assign(centre, (network as unknown as { getViewPosition(): Point }).getViewPosition());
+    graph.viewport = { width, height: old.height };
+    network.emit("resize", { oldWidth: old.width, oldHeight: old.height });
+    network.setView(centre, 0.3);
+  });
+}
+
 describe("TraceGraph camera", () => {
   beforeEach(() => {
     graph.instances.length = 0;
@@ -171,6 +194,8 @@ describe("TraceGraph camera", () => {
       root: { x: 0, y: 0 },
       agent: { x: 0, y: 120 },
       near: { x: 50, y: 240 },
+      // At 0.6 around "agent", its centre is on screen and its box is not.
+      edge: { x: 290, y: 240 },
       far: { x: 4000, y: 240 },
       late: { x: 4000, y: 320 },
     };
@@ -186,7 +211,7 @@ describe("TraceGraph camera", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens a big trace zoomed in on the selected observation, then pans only to an off-screen node", () => {
+  it("opens a big trace zoomed in on the selected observation, then pans only to a node not fully on screen", () => {
     const { rerender } = render(<Graph calls={calls} selectedCallId="agent" />);
     const network = latestNetwork();
     expect(network.moveTo).toHaveBeenLastCalledWith({
@@ -196,15 +221,17 @@ describe("TraceGraph camera", () => {
       animation: false,
     });
     expect(network.selectNodes).toHaveBeenCalledWith(["agent"]);
+    // Bound to the window, vis swallows + - [ ] and the arrows in every input.
+    expect(network.options.interaction.keyboard).toMatchObject({ bindToWindow: false, autoFocus: false });
     network.moveTo.mockClear();
 
     rerender(<Graph calls={calls} selectedCallId="near" />);
     expect(network.selectNodes).toHaveBeenLastCalledWith(["near"]);
     expect(network.moveTo).not.toHaveBeenCalled();
 
-    rerender(<Graph calls={calls} selectedCallId="far" />);
+    rerender(<Graph calls={calls} selectedCallId="edge" />);
     expect(network.moveTo).toHaveBeenCalledTimes(1);
-    expect(network.moveTo).toHaveBeenCalledWith({ position: { x: 4000, y: 240 }, animation: false });
+    expect(network.moveTo).toHaveBeenCalledWith({ position: { x: 290, y: 240 }, animation: false });
     expect(network.fit).toHaveBeenCalledTimes(1);
   });
 
@@ -230,14 +257,17 @@ describe("TraceGraph camera", () => {
     expect(latestNetwork().moveTo).not.toHaveBeenCalled();
   });
 
-  it("keeps the node in view where it was when new spans rebuild a re-centred layout, without panning back to the selection", () => {
+  it("keeps the node nearest the centre in place when new spans rebuild a re-centred layout, without panning back to the selection", () => {
     const { rerender } = render(<Graph calls={calls} selectedCallId="near" />);
     const first = latestNetwork();
-    // The user pans away from the selection to "far", 60px right of centre.
+    // The user pans away from the selection; "far" ends up 60px right of centre.
     act(() => first.setView({ x: 3900, y: 240 }, 0.6));
 
-    // vis-network re-centres every rebuilt layout, so all nodes shift.
-    for (const position of Object.values(graph.positions)) position.x += 210;
+    // A rebuilt layout moves nodes by different amounts.
+    graph.positions.root.x += 30;
+    graph.positions.agent.x += 100;
+    graph.positions.near.x += 50;
+    graph.positions.far.x += 210;
     rerender(<Graph calls={[...calls, call("late", "agent")]} selectedCallId="near" />);
     const second = latestNetwork();
     expect(second).not.toBe(first);
@@ -248,35 +278,54 @@ describe("TraceGraph camera", () => {
     expect(second.selectNodes).toHaveBeenCalledWith(["near"]);
   });
 
-  it("keeps the zoom, the top-left corner and a selected node in view when the panel narrows", async () => {
+  it("pans to a selected observation that arrives with a later span", () => {
+    const { rerender } = render(<Graph calls={calls} selectedCallId="late" />);
+    expect(latestNetwork().selectNodes).not.toHaveBeenCalled();
+
+    rerender(<Graph calls={[...calls, call("late", "agent")]} selectedCallId="late" />);
+    const rebuilt = latestNetwork();
+    expect(rebuilt.selectNodes).toHaveBeenCalledWith(["late"]);
+    expect(rebuilt.moveTo).toHaveBeenLastCalledWith({ position: { x: 4000, y: 320 }, animation: false });
+  });
+
+  it("keeps the zoom and the top-left corner on resize, and a selected node in view only if it was", async () => {
     render(<Graph calls={calls} selectedCallId="near" />);
     const network = latestNetwork();
     // "near" sits near the right edge of the 400px panel.
     act(() => network.setView({ x: -200, y: 240 }, 0.6));
     network.moveTo.mockClear();
 
-    // vis-network emits "resize", then applies the new size keeping the
-    // centre and scaling the view with it.
-    await act(async () => {
-      network.emit("resize", { oldWidth: 400, oldHeight: 500 });
-      graph.viewport = { width: 200, height: 500 };
-      network.setView({ x: -200, y: 240 }, 0.3);
-    });
-
+    await resizeTo(network, 200);
     // The old top-left corner, (-200 - 200 / 0.6, 240 - 250 / 0.6), stays put.
     expect(network.moveTo.mock.calls).toEqual([
       [{ position: { x: expect.closeTo(-366.67), y: expect.closeTo(240) }, scale: 0.6, animation: false }],
       [{ position: { x: 50, y: 240 }, animation: false }],
     ]);
+    network.moveTo.mockClear();
+
+    // Still in view after growing: no re-centring.
+    await resizeTo(network, 400);
+    expect(network.moveTo).toHaveBeenCalledTimes(1);
+    network.moveTo.mockClear();
+
+    // Out of view before the resize: not brought back.
+    act(() => network.setView({ x: 2000, y: 240 }, 0.6));
+    await resizeTo(network, 200);
+    expect(network.moveTo).toHaveBeenCalledTimes(1);
   });
 
-  it("selects clicked nodes, zooms and fits with the buttons, and expands until Escape or a node double-click", () => {
-    render(<Graph calls={calls} selectedCallId={null} />);
+  it("selects clicked nodes without moving them, zooms and fits with the buttons, and expands until Escape or a node double-click", () => {
+    const { rerender } = render(<Graph calls={calls} selectedCallId={null} />);
     const network = latestNetwork();
     const container = screen.getByTestId("trace-graph");
+    act(() => network.setView({ x: 0, y: 120 }, 0.6));
+    network.moveTo.mockClear();
 
-    act(() => network.emit("click", { nodes: ["near"] }));
-    expect(selectCall).toHaveBeenLastCalledWith("near");
+    // "edge" is clipped; panning it on click would move it out from under a double-click.
+    act(() => network.emit("click", { nodes: ["edge"] }));
+    expect(selectCall).toHaveBeenLastCalledWith("edge");
+    rerender(<Graph calls={calls} selectedCallId="edge" />);
+    expect(network.moveTo).not.toHaveBeenCalled();
     act(() => network.emit("click", { nodes: ["root"] }));
     expect(selectCall).toHaveBeenLastCalledWith(null);
 
@@ -291,6 +340,7 @@ describe("TraceGraph camera", () => {
     expect(container).toHaveAttribute("data-expanded", "true");
     expect(container).toHaveClass("fixed");
     expect(screen.getByRole("dialog", { name: "Trace graph" })).toBe(container);
+    expect(container).toHaveAttribute("aria-modal", "true");
 
     // The traces-list panel closes on Escape from a window listener.
     const panelEscape = vi.fn();
