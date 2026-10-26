@@ -389,9 +389,19 @@ describe("TraceGraph camera", () => {
     expect(network.moveTo).toHaveBeenLastCalledWith({ position: { x: 4000, y: 240 }, animation: false });
     network.moveTo.mockClear();
 
-    // Only that resize: later ones leave a cut-off node where it is.
+    // Only that resize: later ones leave a cut-off node where it is, and a
+    // close leaves a node that is wholly in view where it is.
     act(() => network.setView({ x: 3700, y: 240 }, 0.6));
     await resizeTo(network, 410);
+    expect(network.moveTo).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand graph" }));
+    await resizeTo(network, 1600);
+    // "far" is within the part of the overlay that the panel keeps.
+    act(() => network.setView({ x: 5000, y: 240 }, 0.6));
+    fireEvent.click(screen.getByRole("button", { name: "Close expanded graph" }));
+    network.moveTo.mockClear();
+    await resizeTo(network, 400);
     expect(network.moveTo).toHaveBeenCalledTimes(1);
   });
 

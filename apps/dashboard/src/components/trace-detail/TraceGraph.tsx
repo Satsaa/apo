@@ -371,8 +371,8 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     if (selectedCallId !== clicked) revealNode(network, container, selectedCallId);
   }, [selectedCallId, nodes]);
 
-  // A layout effect: it runs before the browser lays out the smaller panel
-  // and vis-network's resize observer fires.
+  // A layout effect, so the flag is set in the same commit as the DOM change,
+  // before the next frame's resize observer callback reaches vis-network.
   useLayoutEffect(() => {
     if (wasExpandedRef.current && !isExpanded) collapsingRef.current = true;
     wasExpandedRef.current = isExpanded;
