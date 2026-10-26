@@ -47,8 +47,7 @@ function calculateDepth(
   return depth;
 }
 
-// One line per node keeps siblings from overlapping; the tooltip and the
-// details pane carry the full name.
+// Longer labels overlap their siblings; the tooltip and details pane show the full name.
 const MAX_LABEL_LENGTH = 32;
 
 export function graphLabel(name: string): string {

@@ -19,16 +19,10 @@ export const MIN_READABLE_SCALE = 0.6;
 export const ZOOM_STEP = 1.25;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 3;
-// Where the root node's centre lands from the left edge of the viewport.
 const ROOT_LEFT_MARGIN = 80;
 const REVEAL_MARGIN = 40;
 
-/**
- * Where the graph opens. A trace too big to fit at a readable size opens
- * zoomed in on the selected node (centred) or on
- * the root (at the left edge, where the left-to-right layout starts);
- * otherwise the whole graph is shown (`null`).
- */
+/** Readable zoom on the target (root at the left edge, others centred); `null` keeps the fit. */
 export function openingCamera({
   fitScale,
   target,
@@ -48,7 +42,6 @@ export function openingCamera({
   };
 }
 
-/** Whether a node's on-screen position is outside (or hugging the edge of) the viewport. */
 export function isOffscreen(domPosition: Point, viewport: Viewport): boolean {
   return (
     domPosition.x < REVEAL_MARGIN ||

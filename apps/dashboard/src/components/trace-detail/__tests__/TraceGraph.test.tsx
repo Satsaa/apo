@@ -136,30 +136,16 @@ describe("TraceGraph camera", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens a big trace zoomed in on the selected observation instead of fitting it", () => {
-    render(<Graph calls={calls} selectedCallId="far" />);
-
+  it("opens a big trace zoomed in on the selected observation, then keeps the zoom and pans only to an off-screen node", () => {
+    const { rerender } = render(<Graph calls={calls} selectedCallId="agent" />);
     const network = latestNetwork();
     expect(network.moveTo).toHaveBeenLastCalledWith({
-      position: { x: 4000, y: 240 },
+      position: { x: 0, y: 120 },
       scale: 0.6,
       offset: { x: 0, y: 0 },
       animation: false,
     });
-    expect(network.selectNodes).toHaveBeenCalledWith(["far"]);
-  });
-
-  it("shows the whole graph when it fits at a readable size", () => {
-    graph.fitScale = 0.9;
-    render(<Graph calls={calls} selectedCallId={null} />);
-
-    expect(latestNetwork().fit).toHaveBeenCalledTimes(1);
-    expect(latestNetwork().moveTo).not.toHaveBeenCalled();
-  });
-
-  it("keeps the zoom when the selection changes and pans only to an off-screen node", () => {
-    const { rerender } = render(<Graph calls={calls} selectedCallId="agent" />);
-    const network = latestNetwork();
+    expect(network.selectNodes).toHaveBeenCalledWith(["agent"]);
     network.moveTo.mockClear();
 
     rerender(<Graph calls={calls} selectedCallId="near" />);
@@ -172,9 +158,12 @@ describe("TraceGraph camera", () => {
     expect(network.fit).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the user's view when new spans rebuild the graph", () => {
+  it("shows the whole graph when it fits at a readable size and keeps the user's view when new spans rebuild it", () => {
+    graph.fitScale = 0.9;
     const { rerender } = render(<Graph calls={calls} selectedCallId={null} />);
     const first = latestNetwork();
+    expect(first.fit).toHaveBeenCalledTimes(1);
+    expect(first.moveTo).not.toHaveBeenCalled();
     act(() => first.moveTo({ position: { x: 900, y: 300 }, scale: 1.2 }));
 
     rerender(<Graph calls={[...calls, call("late", "agent")]} selectedCallId={null} />);
@@ -189,19 +178,15 @@ describe("TraceGraph camera", () => {
     });
   });
 
-  it("zooms with the buttons", () => {
+  it("zooms with the buttons and expands to fill the window until Escape or a node double-click", () => {
     render(<Graph calls={calls} selectedCallId={null} />);
     const network = latestNetwork();
+    const container = screen.getByTestId("trace-graph");
 
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(network.moveTo).toHaveBeenLastCalledWith(
       expect.objectContaining({ scale: expect.closeTo(0.75) }),
     );
-  });
-
-  it("expands to fill the window and closes on Escape or a node double-click", () => {
-    render(<Graph calls={calls} selectedCallId={null} />);
-    const container = screen.getByTestId("trace-graph");
 
     fireEvent.click(screen.getByRole("button", { name: "Expand graph" }));
     expect(container).toHaveAttribute("data-expanded", "true");
@@ -211,7 +196,7 @@ describe("TraceGraph camera", () => {
     expect(container).toHaveAttribute("data-expanded", "false");
 
     fireEvent.click(screen.getByRole("button", { name: "Expand graph" }));
-    act(() => latestNetwork().emit("doubleClick", { nodes: ["near"] }));
+    act(() => network.emit("doubleClick", { nodes: ["near"] }));
     expect(container).toHaveAttribute("data-expanded", "false");
   });
 });

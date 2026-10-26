@@ -16,9 +16,8 @@ interface TraceGraphProps {
 }
 
 const ROOT_ID = "root";
-// Every camera move is instant. vis-network keeps an animated move's redraw
-// listener when a second one starts before the first has drawn a frame, and
-// that orphan rewrites the view on every redraw: zoom and pan stop working.
+// Never animate: vis-network breaks zoom and pan for good when an animated
+// move is interrupted before its first frame.
 const INSTANT = { animation: false } as const;
 
 function getThemeColors() {
@@ -108,8 +107,7 @@ function GraphControlButton({
 export function TraceGraph({ calls }: TraceGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
-  // The view survives a rebuild of the network (new live spans, a theme flip)
-  // so the place the user navigated to does not jump back.
+  // Restored when new spans or a theme flip rebuild the network, so the view does not jump back.
   const savedViewRef = useRef<{ position: { x: number; y: number }; scale: number } | null>(null);
   const isDark = useIsDarkMode();
   const { nodes, edges } = useGraphData(calls, isDark);
@@ -200,8 +198,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       selectCall(nodeId === ROOT_ID ? null : nodeId);
     });
 
-    // In the expanded view the details pane is hidden, so a double-click
-    // closes it on the node the first click selected.
+    // The expanded view hides the details pane; double-clicking a node collapses it to show them.
     network.on("doubleClick", (params: { nodes: string[] }) => {
       if (params.nodes.length > 0) setIsExpanded(false);
     });
@@ -224,8 +221,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       network.selectNodes([selectedCallIdRef.current]);
     }
 
-    // vis-network scales the view with its container; keep the zoom
-    // instead, so expanding or widening the panel shows more of the graph.
+    // vis-network rescales the view with its container; keep the zoom so a bigger panel shows more.
     network.on("resize", () => {
       const scale = network.getScale();
       queueMicrotask(() => {
