@@ -372,6 +372,29 @@ describe("TraceGraph camera", () => {
     expect(network.moveTo).toHaveBeenLastCalledWith({ position: { x: 290, y: 240 }, animation: false });
   });
 
+  it("brings a double-clicked node fully into view when the expanded view closes on it", async () => {
+    render(<Graph calls={calls} selectedCallId="agent" />);
+    const network = latestNetwork();
+    fireEvent.click(screen.getByRole("button", { name: "Expand graph" }));
+    await resizeTo(network, 1600);
+    // "far" sits where the collapsed panel's right edge will cut it.
+    act(() => network.setView({ x: 4700, y: 240 }, 0.6));
+    network.moveTo.mockClear();
+
+    act(() => {
+      network.emit("click", { nodes: ["far"] });
+      network.emit("doubleClick", { nodes: ["far"] });
+    });
+    await resizeTo(network, 400);
+    expect(network.moveTo).toHaveBeenLastCalledWith({ position: { x: 4000, y: 240 }, animation: false });
+    network.moveTo.mockClear();
+
+    // Only that resize: later ones leave a cut-off node where it is.
+    act(() => network.setView({ x: 3700, y: 240 }, 0.6));
+    await resizeTo(network, 410);
+    expect(network.moveTo).toHaveBeenCalledTimes(1);
+  });
+
   it("selects clicked nodes without moving them, zooms and fits with the buttons, and expands until Escape or a node double-click", () => {
     const { rerender } = render(<Graph calls={calls} selectedCallId="near" />);
     const network = latestNetwork();

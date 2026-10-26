@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { Network } from "vis-network/standalone";
 import type { DataSet } from "vis-data/peer";
 import type { LoggedCall } from "./contexts";
@@ -185,6 +193,9 @@ export function TraceGraph({ calls }: TraceGraphProps) {
   // out from under the second click of a double-click. undefined: no click.
   const clickedCallIdRef = useRef<string | null | undefined>(undefined);
   const [isExpanded, setIsExpanded] = useState(false);
+  // Set when the expanded view closes, for the resize that follows.
+  const collapsingRef = useRef(false);
+  const wasExpandedRef = useRef(false);
 
   const getNetworkOptions = useCallback(() => {
     const theme = getThemeColors();
@@ -304,14 +315,16 @@ export function TraceGraph({ calls }: TraceGraphProps) {
 
     // vis-network keeps the centre and scales the view with its container.
     // Keep the zoom and the top-left corner instead, so a bigger panel shows
-    // more to the right and below, and bring back a selected node (or one
-    // just clicked) that was in view but no longer is: closing the expanded
-    // graph on a double-clicked node. "resize" fires once the canvas has its
-    // new size but before vis moves the camera, so the view read here is the
-    // pre-resize one; the old size comes with it.
+    // more to the right and below. A selected node (or one just clicked) that
+    // was in view is brought back once it is wholly out of view, or, when the
+    // expanded view closes on it, as soon as it is cut off. "resize" fires
+    // once the canvas has its new size but before vis moves the camera, so
+    // the view read here is the pre-resize one; the old size comes with it.
     network.on("resize", (size: { oldWidth: number; oldHeight: number }) => {
       const scale = network.getScale();
       const topLeft = network.DOMtoCanvas({ x: 0, y: 0 });
+      const collapsing = collapsingRef.current;
+      collapsingRef.current = false;
       const clicked = clickedCallIdRef.current;
       const selected = clicked !== undefined ? clicked : selectedCallIdRef.current;
       const keepInView =
@@ -323,7 +336,10 @@ export function TraceGraph({ calls }: TraceGraphProps) {
         if (networkRef.current !== network) return;
         const position = centreKeeping(topLeft, { x: 0, y: 0 }, scale, viewportOf(container));
         network.moveTo({ position, scale, ...INSTANT });
-        if (keepInView && !isInView(screenBox(network, keepInView), viewportOf(container))) {
+        if (!keepInView) return;
+        const box = screenBox(network, keepInView);
+        const viewport = viewportOf(container);
+        if (collapsing ? isOffscreen(box, viewport) : !isInView(box, viewport)) {
           network.moveTo({ position: network.getPosition(keepInView), ...INSTANT });
         }
       });
@@ -354,6 +370,13 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     network.selectNodes([selectedCallId]);
     if (selectedCallId !== clicked) revealNode(network, container, selectedCallId);
   }, [selectedCallId, nodes]);
+
+  // A layout effect: it runs before the browser lays out the smaller panel
+  // and vis-network's resize observer fires.
+  useLayoutEffect(() => {
+    if (wasExpandedRef.current && !isExpanded) collapsingRef.current = true;
+    wasExpandedRef.current = isExpanded;
+  }, [isExpanded]);
 
   useEffect(() => {
     if (!isExpanded) return;
