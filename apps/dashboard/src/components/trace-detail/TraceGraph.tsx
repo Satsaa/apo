@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { Network } from "vis-network/standalone";
+import type { DataSet } from "vis-data/peer";
 import type { LoggedCall } from "./contexts";
 import { useSelection } from "./contexts/SelectionContext";
-import { useGraphData } from "./graph/useGraphData";
-import { Maximize2 } from "lucide-react";
+import { useGraphData, type GraphNode } from "./graph/useGraphData";
+import { isOffscreen, openingCamera, zoomedScale, ZOOM_STEP } from "./graph/graph-camera";
+import { Maximize2, Minimize2, Scan, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface TraceGraphProps {
   calls: LoggedCall[];
 }
+
+const ROOT_ID = "root";
+// Every camera move is instant. vis-network keeps an animated move's redraw
+// listener when a second one starts before the first has drawn a frame, and
+// that orphan rewrites the view on every redraw: zoom and pan stop working.
+const INSTANT = { animation: false } as const;
 
 function getThemeColors() {
   if (typeof document === "undefined") {
@@ -48,13 +56,66 @@ function useIsDarkMode() {
   );
 }
 
+function viewportOf(container: HTMLElement) {
+  return { width: container.clientWidth, height: container.clientHeight };
+}
+
+function hasNode(nodes: DataSet<GraphNode>, id: string | null): id is string {
+  return id !== null && nodes.get(id) !== null;
+}
+
+function placeOpeningView(
+  network: Network,
+  container: HTMLElement,
+  nodes: DataSet<GraphNode>,
+  selectedCallId: string | null,
+) {
+  network.fit(INSTANT);
+  const targetId = hasNode(nodes, selectedCallId) ? selectedCallId : ROOT_ID;
+  const camera = openingCamera({
+    fitScale: network.getScale(),
+    target: network.getPosition(targetId),
+    targetIsRoot: targetId === ROOT_ID,
+    viewport: viewportOf(container),
+  });
+  if (camera) network.moveTo({ ...camera, ...INSTANT });
+}
+
+function GraphControlButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      onClick={onClick}
+      className="h-7 w-7 p-0"
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </Button>
+  );
+}
+
 export function TraceGraph({ calls }: TraceGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
+  // The view survives a rebuild of the network (new live spans, a theme flip)
+  // so the place the user navigated to does not jump back.
+  const savedViewRef = useRef<{ position: { x: number; y: number }; scale: number } | null>(null);
   const isDark = useIsDarkMode();
   const { nodes, edges } = useGraphData(calls, isDark);
   const { selectCall, selectedCallId } = useSelection();
-  const [_isFit, setIsFit] = useState(true);
+  const selectedCallIdRef = useRef(selectedCallId);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const getNetworkOptions = useCallback(() => {
     const theme = getThemeColors();
@@ -71,9 +132,6 @@ export function TraceGraph({ calls }: TraceGraphProps) {
           right: 20,
           bottom: 16,
           left: 20,
-        },
-        widthConstraint: {
-          maximum: 300,
         },
         color: {
           background: theme.bg,
@@ -92,7 +150,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
         smooth: {
           enabled: true,
           type: "cubicBezier",
-          forceDirection: "vertical",
+          forceDirection: "horizontal",
           roundness: 0.4,
         },
         arrows: {
@@ -111,22 +169,14 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       layout: {
         hierarchical: {
           enabled: true,
-          direction: "UD",
+          direction: "LR",
           sortMethod: "directed",
-          levelSeparation: 120,
-          nodeSpacing: 100,
-          treeSpacing: 180,
+          levelSeparation: 420,
+          nodeSpacing: 70,
+          treeSpacing: 70,
         },
       },
-      physics: {
-        enabled: true,
-        hierarchicalRepulsion: {
-          nodeDistance: 150,
-        },
-        stabilization: {
-          iterations: 200,
-        },
-      },
+      physics: false,
       interaction: {
         hover: true,
         tooltipDelay: 200,
@@ -137,84 +187,95 @@ export function TraceGraph({ calls }: TraceGraphProps) {
   }, [isDark]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
     if (calls.length === 0) return;
 
-    const network = new Network(
-      containerRef.current,
-      { nodes, edges },
-      getNetworkOptions()
-    );
+    const network = new Network(container, { nodes, edges }, getNetworkOptions());
 
-    network.on("click", (params) => {
-      if (params.nodes.length > 0) {
-        const nodeId = params.nodes[0];
-        if (nodeId !== "root") {
-          selectCall(nodeId);
-        } else {
-          selectCall(null);
-        }
-      }
+    network.on("click", (params: { nodes: string[] }) => {
+      if (params.nodes.length === 0) return;
+      const nodeId = params.nodes[0];
+      selectCall(nodeId === ROOT_ID ? null : nodeId);
+    });
+
+    // In the expanded view the details pane is hidden, so a double-click
+    // closes it on the node the first click selected.
+    network.on("doubleClick", (params: { nodes: string[] }) => {
+      if (params.nodes.length > 0) setIsExpanded(false);
     });
 
     network.on("hoverNode", () => {
-      if (containerRef.current) {
-        containerRef.current.style.cursor = "pointer";
-      }
+      container.style.cursor = "pointer";
     });
 
     network.on("blurNode", () => {
-      if (containerRef.current) {
-        containerRef.current.style.cursor = "default";
-      }
+      container.style.cursor = "default";
     });
 
-    network.once("stabilizationIterationsDone", () => {
-      network.fit({
-        animation: {
-          duration: 500,
-          easingFunction: "easeInOutQuad",
-        },
+    const savedView = savedViewRef.current;
+    if (savedView) {
+      network.moveTo({ ...savedView, ...INSTANT });
+    } else {
+      placeOpeningView(network, container, nodes, selectedCallIdRef.current);
+    }
+    if (hasNode(nodes, selectedCallIdRef.current)) {
+      network.selectNodes([selectedCallIdRef.current]);
+    }
+
+    // vis-network scales the view with its container; keep the zoom
+    // instead, so expanding or widening the panel shows more of the graph.
+    network.on("resize", () => {
+      const scale = network.getScale();
+      queueMicrotask(() => {
+        if (networkRef.current === network) network.moveTo({ scale, ...INSTANT });
       });
     });
 
     networkRef.current = network;
 
     return () => {
-      network.destroy();
+      savedViewRef.current = { position: network.getViewPosition(), scale: network.getScale() };
       networkRef.current = null;
+      network.destroy();
     };
   }, [calls.length, nodes, edges, selectCall, getNetworkOptions]);
 
   useEffect(() => {
-    if (networkRef.current) {
-      networkRef.current.setData({ nodes, edges });
+    selectedCallIdRef.current = selectedCallId;
+    const network = networkRef.current;
+    const container = containerRef.current;
+    if (!network || !container) return;
+
+    if (!hasNode(nodes, selectedCallId)) {
+      network.unselectAll();
+      return;
     }
-  }, [nodes, edges]);
+    network.selectNodes([selectedCallId]);
+    const position = network.getPosition(selectedCallId);
+    if (isOffscreen(network.canvasToDOM(position), viewportOf(container))) {
+      network.moveTo({ position, ...INSTANT });
+    }
+  }, [selectedCallId, nodes]);
 
   useEffect(() => {
-    if (!networkRef.current || !selectedCallId) return;
+    if (!isExpanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsExpanded(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isExpanded]);
 
-    networkRef.current.selectNodes([selectedCallId]);
-    networkRef.current.fit({
-      animation: {
-        duration: 300,
-        easingFunction: "easeInOutQuad",
-      },
-    });
-  }, [selectedCallId]);
+  const zoomBy = (factor: number) => {
+    const network = networkRef.current;
+    if (!network) return;
+    network.moveTo({ scale: zoomedScale(network.getScale(), factor), ...INSTANT });
+  };
 
-  const handleFit = () => {
-    if (networkRef.current) {
-      networkRef.current.fit({
-        animation: {
-          duration: 500,
-          easingFunction: "easeInOutQuad",
-        },
-      });
-      setIsFit(true);
-    }
+  const fitAll = () => {
+    networkRef.current?.fit(INSTANT);
   };
 
   if (calls.length === 0) {
@@ -229,26 +290,49 @@ export function TraceGraph({ calls }: TraceGraphProps) {
   }
 
   return (
-    <div className="relative h-full w-full bg-background">
-      <div className="absolute top-2 right-2 z-10 flex gap-1">
-        <Button type="button"
-          variant="secondary"
-          size="sm"
-          onClick={handleFit}
-          className="h-7 px-2 text-xs"
-          title="Fit to view"
-        >
-          <Maximize2 className="h-3 w-3" />
-        </Button>
-      </div>
+    <div
+      className={cn(
+        "flex flex-col bg-background",
+        isExpanded ? "fixed inset-0 z-[60]" : "relative h-full w-full",
+      )}
+      data-testid="trace-graph"
+      data-expanded={isExpanded}
+    >
+      {isExpanded && (
+        <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2 text-sm">
+          <span className="font-medium">Trace graph</span>
+          <span className="text-xs text-muted-foreground">
+            Double-click a node to open its details · Esc to close
+          </span>
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1">
+        <div className="absolute top-2 right-2 z-10 flex gap-1">
+          <GraphControlButton label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
+            <ZoomIn className="h-3.5 w-3.5" />
+          </GraphControlButton>
+          <GraphControlButton label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
+            <ZoomOut className="h-3.5 w-3.5" />
+          </GraphControlButton>
+          <GraphControlButton label="Fit whole graph" onClick={fitAll}>
+            <Scan className="h-3.5 w-3.5" />
+          </GraphControlButton>
+          <GraphControlButton
+            label={isExpanded ? "Close expanded graph" : "Expand graph"}
+            onClick={() => setIsExpanded((expanded) => !expanded)}
+          >
+            {isExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </GraphControlButton>
+        </div>
 
-      <div
-        ref={containerRef}
-        className={cn(
-          "h-full w-full min-h-[400px]",
-          "transition-opacity duration-200"
-        )}
-      />
+        <div
+          ref={containerRef}
+          className={cn(
+            "h-full w-full",
+            !isExpanded && "min-h-[400px]",
+          )}
+        />
+      </div>
     </div>
   );
 }

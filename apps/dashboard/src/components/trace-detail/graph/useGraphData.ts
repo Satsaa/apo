@@ -47,6 +47,14 @@ function calculateDepth(
   return depth;
 }
 
+// One line per node keeps siblings from overlapping; the tooltip and the
+// details pane carry the full name.
+const MAX_LABEL_LENGTH = 32;
+
+export function graphLabel(name: string): string {
+  return name.length > MAX_LABEL_LENGTH ? `${name.slice(0, MAX_LABEL_LENGTH - 1)}…` : name;
+}
+
 function getFgColor() {
   if (typeof document === "undefined") return "#0a0a0a";
   const fg = getComputedStyle(document.documentElement)
@@ -109,7 +117,7 @@ export function useGraphData(calls: LoggedCall[], isDark: boolean) {
 
       nodes.add({
         id: call.id,
-        label: stepName,
+        label: graphLabel(stepName),
         title: `${stepName}${model ? `\nModel: ${model}` : ""}${
           latency ? `\nLatency: ${latency}` : ""
         }`,
