@@ -27,6 +27,8 @@ export const ZOOM_STEP = 1.25;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 3;
 const ROOT_LEFT_MARGIN = 80;
+// Selecting a node bolds its label after the check below, widening its box.
+const REVEAL_MARGIN = 16;
 
 /** Readable zoom on the target (root at the left edge, others centred); `null` keeps the fit. */
 export function openingCamera({
@@ -48,9 +50,19 @@ export function openingCamera({
   };
 }
 
-/** Whether any part of a node's on-screen box is outside the viewport. */
+/** Whether any part of a node's on-screen box is outside the viewport (less a margin). */
 export function isOffscreen(box: Box, viewport: Viewport): boolean {
-  return box.left < 0 || box.top < 0 || box.right > viewport.width || box.bottom > viewport.height;
+  return (
+    box.left < REVEAL_MARGIN ||
+    box.top < REVEAL_MARGIN ||
+    box.right > viewport.width - REVEAL_MARGIN ||
+    box.bottom > viewport.height - REVEAL_MARGIN
+  );
+}
+
+/** Whether any part of a node's on-screen box is inside the viewport. */
+export function isInView(box: Box, viewport: Viewport): boolean {
+  return box.right > 0 && box.bottom > 0 && box.left < viewport.width && box.top < viewport.height;
 }
 
 /** The view centre that shows the canvas point `anchor` at `onScreen` (viewport pixels). */

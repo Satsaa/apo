@@ -140,7 +140,13 @@ function call(id: string, parent: string | null): LoggedCall {
   };
 }
 
-const calls = [call("agent", null), call("near", "agent"), call("edge", "agent"), call("far", "agent")];
+const calls = [
+  call("agent", null),
+  call("near", "agent"),
+  call("edge", "agent"),
+  call("far", "agent"),
+  call("corner", "agent"),
+];
 
 // Stable like the real providers' callbacks: a new selectCall rebuilds the network.
 const noop = () => {};
@@ -197,6 +203,7 @@ describe("TraceGraph camera", () => {
       // At 0.6 around "agent", its centre is on screen and its box is not.
       edge: { x: 290, y: 240 },
       far: { x: 4000, y: 240 },
+      corner: { x: 3600, y: 30 },
       late: { x: 4000, y: 320 },
     };
     selectCall.mockClear();
@@ -222,7 +229,11 @@ describe("TraceGraph camera", () => {
     });
     expect(network.selectNodes).toHaveBeenCalledWith(["agent"]);
     // Bound to the window, vis swallows + - [ ] and the arrows in every input.
-    expect(network.options.interaction.keyboard).toMatchObject({ bindToWindow: false, autoFocus: false });
+    expect(network.options.interaction.keyboard).toMatchObject({
+      enabled: true,
+      bindToWindow: false,
+      autoFocus: false,
+    });
     network.moveTo.mockClear();
 
     rerender(<Graph calls={calls} selectedCallId="near" />);
@@ -260,7 +271,8 @@ describe("TraceGraph camera", () => {
   it("keeps the node nearest the centre in place when new spans rebuild a re-centred layout, without panning back to the selection", () => {
     const { rerender } = render(<Graph calls={calls} selectedCallId="near" />);
     const first = latestNetwork();
-    // The user pans away from the selection; "far" ends up 60px right of centre.
+    // The user pans away from the selection; "far" ends up 60px right of
+    // centre and "corner" near the top-left corner.
     act(() => first.setView({ x: 3900, y: 240 }, 0.6));
 
     // A rebuilt layout moves nodes by different amounts.
@@ -291,14 +303,15 @@ describe("TraceGraph camera", () => {
   it("keeps the zoom and the top-left corner on resize, and a selected node in view only if it was", async () => {
     render(<Graph calls={calls} selectedCallId="near" />);
     const network = latestNetwork();
-    // "near" sits near the right edge of the 400px panel.
-    act(() => network.setView({ x: -200, y: 240 }, 0.6));
+    // "near" is partly cut off at the right edge of the 400px panel, as a
+    // double-clicked node in the expanded view can be.
+    act(() => network.setView({ x: -300, y: 240 }, 0.6));
     network.moveTo.mockClear();
 
     await resizeTo(network, 200);
-    // The old top-left corner, (-200 - 200 / 0.6, 240 - 250 / 0.6), stays put.
+    // The old top-left corner, (-300 - 200 / 0.6, 240 - 250 / 0.6), stays put.
     expect(network.moveTo.mock.calls).toEqual([
-      [{ position: { x: expect.closeTo(-366.67), y: expect.closeTo(240) }, scale: 0.6, animation: false }],
+      [{ position: { x: expect.closeTo(-466.67), y: expect.closeTo(240) }, scale: 0.6, animation: false }],
       [{ position: { x: 50, y: 240 }, animation: false }],
     ]);
     network.moveTo.mockClear();
@@ -314,8 +327,22 @@ describe("TraceGraph camera", () => {
     expect(network.moveTo).toHaveBeenCalledTimes(1);
   });
 
+  it("does not pan when a live update lands between a click and its selection", () => {
+    const { rerender } = render(<Graph calls={calls} selectedCallId="far" />);
+    // The user pans to the start of the trace: "near" in view, "far" not.
+    act(() => latestNetwork().setView({ x: 0, y: 120 }, 0.6));
+    act(() => latestNetwork().emit("click", { nodes: ["near"] }));
+
+    const updated = [...calls, call("late", "agent")];
+    rerender(<Graph calls={updated} selectedCallId="far" />);
+    rerender(<Graph calls={updated} selectedCallId="near" />);
+    const rebuilt = latestNetwork();
+    expect(rebuilt.moveTo).toHaveBeenCalledTimes(1);
+    expect(rebuilt.selectNodes).toHaveBeenLastCalledWith(["near"]);
+  });
+
   it("selects clicked nodes without moving them, zooms and fits with the buttons, and expands until Escape or a node double-click", () => {
-    const { rerender } = render(<Graph calls={calls} selectedCallId={null} />);
+    const { rerender } = render(<Graph calls={calls} selectedCallId="near" />);
     const network = latestNetwork();
     const container = screen.getByTestId("trace-graph");
     act(() => network.setView({ x: 0, y: 120 }, 0.6));
@@ -325,9 +352,14 @@ describe("TraceGraph camera", () => {
     act(() => network.emit("click", { nodes: ["edge"] }));
     expect(selectCall).toHaveBeenLastCalledWith("edge");
     rerender(<Graph calls={calls} selectedCallId="edge" />);
+    expect(network.selectNodes).toHaveBeenLastCalledWith(["edge"]);
     expect(network.moveTo).not.toHaveBeenCalled();
     act(() => network.emit("click", { nodes: ["root"] }));
     expect(selectCall).toHaveBeenLastCalledWith(null);
+    rerender(<Graph calls={calls} selectedCallId={null} />);
+    expect(network.unselectAll).toHaveBeenCalledTimes(1);
+    act(() => network.emit("click", { nodes: [] }));
+    expect(selectCall).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(network.moveTo).toHaveBeenLastCalledWith({ scale: expect.closeTo(0.75), animation: false });
@@ -336,19 +368,24 @@ describe("TraceGraph camera", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fit whole graph" }));
     expect(network.fit).toHaveBeenCalledTimes(2);
 
+    // The traces-list panel closes on Escape from a window listener; the
+    // graph takes Escape only while expanded.
+    const panelEscape = vi.fn();
+    window.addEventListener("keydown", panelEscape);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(panelEscape).toHaveBeenCalledTimes(1);
+
     fireEvent.click(screen.getByRole("button", { name: "Expand graph" }));
     expect(container).toHaveAttribute("data-expanded", "true");
     expect(container).toHaveClass("fixed");
     expect(screen.getByRole("dialog", { name: "Trace graph" })).toBe(container);
     expect(container).toHaveAttribute("aria-modal", "true");
 
-    // The traces-list panel closes on Escape from a window listener.
-    const panelEscape = vi.fn();
-    window.addEventListener("keydown", panelEscape);
     fireEvent.keyDown(document.body, { key: "Escape" });
     window.removeEventListener("keydown", panelEscape);
     expect(container).toHaveAttribute("data-expanded", "false");
-    expect(panelEscape).not.toHaveBeenCalled();
+    expect(panelEscape).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Expand graph" }));
     act(() => network.emit("doubleClick", { nodes: [] }));

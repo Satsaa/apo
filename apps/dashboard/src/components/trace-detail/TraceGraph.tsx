@@ -8,6 +8,7 @@ import { useSelection } from "./contexts/SelectionContext";
 import { useGraphData, type GraphNode } from "./graph/useGraphData";
 import {
   centreKeeping,
+  isInView,
   isOffscreen,
   openingCamera,
   zoomedScale,
@@ -178,9 +179,11 @@ export function TraceGraph({ calls }: TraceGraphProps) {
   const isDark = useIsDarkMode();
   const { nodes, edges } = useGraphData(calls, isDark);
   const { selectCall, selectedCallId } = useSelection();
-  // The selection the graph last showed: a rebuild re-applies it, and only a
-  // change from it moves the view.
+  // The selection the graph last showed: a rebuild re-applies it.
   const selectedCallIdRef = useRef(selectedCallId);
+  // A node the user just clicked is on screen; selecting it must not pan it
+  // out from under the second click of a double-click. undefined: no click.
+  const clickedCallIdRef = useRef<string | null | undefined>(undefined);
   const [isExpanded, setIsExpanded] = useState(false);
 
   const getNetworkOptions = useCallback(() => {
@@ -267,10 +270,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const callId = nodeId === ROOT_ID ? null : nodeId;
-      // vis has selected the clicked node, which is on screen: marking it as
-      // shown keeps the selection effect from panning it out from under a
-      // double-click.
-      selectedCallIdRef.current = callId;
+      clickedCallIdRef.current = callId;
       selectCall(callId);
     });
 
@@ -311,7 +311,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       const selected = selectedCallIdRef.current;
       const keepInView =
         hasNode(nodes, selected) &&
-        !isOffscreen(screenBox(network, selected), { width: size.oldWidth, height: size.oldHeight })
+        isInView(screenBox(network, selected), { width: size.oldWidth, height: size.oldHeight })
           ? selected
           : null;
       queueMicrotask(() => {
@@ -337,13 +337,15 @@ export function TraceGraph({ calls }: TraceGraphProps) {
     const network = networkRef.current;
     const container = containerRef.current;
     if (!network || !container || selectedCallId === previous) return;
+    const clicked = clickedCallIdRef.current;
+    clickedCallIdRef.current = undefined;
 
     if (!hasNode(nodes, selectedCallId)) {
       network.unselectAll();
       return;
     }
     network.selectNodes([selectedCallId]);
-    revealNode(network, container, selectedCallId);
+    if (selectedCallId !== clicked) revealNode(network, container, selectedCallId);
   }, [selectedCallId, nodes]);
 
   useEffect(() => {

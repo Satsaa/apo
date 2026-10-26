@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   centreKeeping,
+  isInView,
   isOffscreen,
   MIN_READABLE_SCALE,
   openingCamera,
@@ -25,12 +26,21 @@ describe("openingCamera", () => {
 });
 
 describe("isOffscreen", () => {
-  it("is true when any edge of the box is outside the viewport", () => {
-    expect(isOffscreen({ left: 10, top: 10, right: 390, bottom: 490 }, viewport)).toBe(false);
-    expect(isOffscreen({ left: -1, top: 10, right: 100, bottom: 50 }, viewport)).toBe(true);
-    expect(isOffscreen({ left: 300, top: 10, right: 401, bottom: 50 }, viewport)).toBe(true);
-    expect(isOffscreen({ left: 10, top: -1, right: 100, bottom: 50 }, viewport)).toBe(true);
-    expect(isOffscreen({ left: 10, top: 450, right: 100, bottom: 501 }, viewport)).toBe(true);
+  it("is true when any edge of the box is outside the viewport less the margin", () => {
+    expect(isOffscreen({ left: 20, top: 20, right: 380, bottom: 480 }, viewport)).toBe(false);
+    expect(isOffscreen({ left: 10, top: 20, right: 100, bottom: 60 }, viewport)).toBe(true);
+    expect(isOffscreen({ left: 300, top: 20, right: 390, bottom: 60 }, viewport)).toBe(true);
+    expect(isOffscreen({ left: 20, top: 10, right: 100, bottom: 60 }, viewport)).toBe(true);
+    expect(isOffscreen({ left: 20, top: 440, right: 100, bottom: 490 }, viewport)).toBe(true);
+  });
+});
+
+describe("isInView", () => {
+  it("is true while any part of the box is inside the viewport", () => {
+    expect(isInView({ left: 380, top: 20, right: 440, bottom: 60 }, viewport)).toBe(true);
+    expect(isInView({ left: 400, top: 20, right: 460, bottom: 60 }, viewport)).toBe(false);
+    expect(isInView({ left: 20, top: -40, right: 100, bottom: 0 }, viewport)).toBe(false);
+    expect(isInView({ left: 20, top: 500, right: 100, bottom: 540 }, viewport)).toBe(false);
   });
 });
 
