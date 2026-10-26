@@ -14,13 +14,19 @@ export interface Viewport {
   height: number;
 }
 
+export interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 // Node labels are 20px, so this keeps them at 12px or larger on screen.
 export const MIN_READABLE_SCALE = 0.6;
 export const ZOOM_STEP = 1.25;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 3;
 const ROOT_LEFT_MARGIN = 80;
-const REVEAL_MARGIN = 40;
 
 /** Readable zoom on the target (root at the left edge, others centred); `null` keeps the fit. */
 export function openingCamera({
@@ -42,15 +48,24 @@ export function openingCamera({
   };
 }
 
-export function isOffscreen(domPosition: Point, viewport: Viewport): boolean {
-  return (
-    domPosition.x < REVEAL_MARGIN ||
-    domPosition.y < REVEAL_MARGIN ||
-    domPosition.x > viewport.width - REVEAL_MARGIN ||
-    domPosition.y > viewport.height - REVEAL_MARGIN
-  );
+/** Whether any part of a node's on-screen box is outside the viewport. */
+export function isOffscreen(box: Box, viewport: Viewport): boolean {
+  return box.left < 0 || box.top < 0 || box.right > viewport.width || box.bottom > viewport.height;
 }
 
+/** The view centre that shows the canvas point `anchor` at `onScreen` (viewport pixels). */
+export function centreKeeping(anchor: Point, onScreen: Point, scale: number, viewport: Viewport): Point {
+  return {
+    x: anchor.x - (onScreen.x - viewport.width / 2) / scale,
+    y: anchor.y - (onScreen.y - viewport.height / 2) / scale,
+  };
+}
+
+// Wheel zoom and "fit" can leave the scale outside these limits; a button
+// press then holds the scale rather than stepping the wrong way.
 export function zoomedScale(scale: number, factor: number): number {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale * factor));
+  const next = scale * factor;
+  return factor > 1
+    ? Math.max(scale, Math.min(MAX_ZOOM, next))
+    : Math.min(scale, Math.max(MIN_ZOOM, next));
 }

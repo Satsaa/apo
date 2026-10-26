@@ -6,7 +6,16 @@ import type { DataSet } from "vis-data/peer";
 import type { LoggedCall } from "./contexts";
 import { useSelection } from "./contexts/SelectionContext";
 import { useGraphData, type GraphNode } from "./graph/useGraphData";
-import { isOffscreen, openingCamera, zoomedScale, ZOOM_STEP } from "./graph/graph-camera";
+import {
+  centreKeeping,
+  isOffscreen,
+  openingCamera,
+  zoomedScale,
+  ZOOM_STEP,
+  type Box,
+  type Point,
+  type Viewport,
+} from "./graph/graph-camera";
 import { Maximize2, Minimize2, Scan, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -55,8 +64,62 @@ function useIsDarkMode() {
   );
 }
 
-function viewportOf(container: HTMLElement) {
+interface SavedView {
+  // The node nearest the centre and where it was on screen, so a rebuilt
+  // layout (vis re-centres it on every rebuild) keeps that node in place.
+  anchor: { id: string; onScreen: Point } | null;
+  position: Point;
+  scale: number;
+}
+
+function viewportOf(container: HTMLElement): Viewport {
   return { width: container.clientWidth, height: container.clientHeight };
+}
+
+function screenBox(network: Network, id: string): Box {
+  const box = network.getBoundingBox(id);
+  const topLeft = network.canvasToDOM({ x: box.left, y: box.top });
+  const bottomRight = network.canvasToDOM({ x: box.right, y: box.bottom });
+  return { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y };
+}
+
+function revealNode(network: Network, container: HTMLElement, id: string) {
+  if (isOffscreen(screenBox(network, id), viewportOf(container))) {
+    network.moveTo({ position: network.getPosition(id), ...INSTANT });
+  }
+}
+
+function saveView(network: Network, container: HTMLElement): SavedView {
+  const viewport = viewportOf(container);
+  let anchor: SavedView["anchor"] = null;
+  let nearest = Infinity;
+  for (const [id, position] of Object.entries(network.getPositions())) {
+    const onScreen = network.canvasToDOM(position);
+    const distance = Math.hypot(onScreen.x - viewport.width / 2, onScreen.y - viewport.height / 2);
+    if (distance < nearest) {
+      nearest = distance;
+      anchor = { id, onScreen };
+    }
+  }
+  return { anchor, position: network.getViewPosition(), scale: network.getScale() };
+}
+
+function restoreView(
+  network: Network,
+  container: HTMLElement,
+  nodes: DataSet<GraphNode>,
+  view: SavedView,
+) {
+  const position =
+    view.anchor && hasNode(nodes, view.anchor.id)
+      ? centreKeeping(
+          network.getPosition(view.anchor.id),
+          view.anchor.onScreen,
+          view.scale,
+          viewportOf(container),
+        )
+      : view.position;
+  network.moveTo({ position, scale: view.scale, ...INSTANT });
 }
 
 function hasNode(nodes: DataSet<GraphNode>, id: string | null): id is string {
@@ -108,10 +171,12 @@ export function TraceGraph({ calls }: TraceGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
   // Restored when new spans or a theme flip rebuild the network, so the view does not jump back.
-  const savedViewRef = useRef<{ position: { x: number; y: number }; scale: number } | null>(null);
+  const savedViewRef = useRef<SavedView | null>(null);
   const isDark = useIsDarkMode();
   const { nodes, edges } = useGraphData(calls, isDark);
   const { selectCall, selectedCallId } = useSelection();
+  // The selection the graph last showed: a rebuild re-applies it, and only a
+  // change from it moves the view.
   const selectedCallIdRef = useRef(selectedCallId);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -169,7 +234,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
           enabled: true,
           direction: "LR",
           sortMethod: "directed",
-          levelSeparation: 420,
+          levelSeparation: 460,
           nodeSpacing: 70,
           treeSpacing: 70,
         },
@@ -179,7 +244,10 @@ export function TraceGraph({ calls }: TraceGraphProps) {
         hover: true,
         tooltipDelay: 200,
         navigationButtons: false,
-        keyboard: true,
+        // Bound to the window, vis swallows + - [ ] and the arrow keys in
+        // every input on the page; focus-bound, they work after a click on
+        // the graph. autoFocus would steal focus on mouse-over.
+        keyboard: { enabled: true, bindToWindow: false, autoFocus: false },
       },
     };
   }, [isDark]);
@@ -213,7 +281,7 @@ export function TraceGraph({ calls }: TraceGraphProps) {
 
     const savedView = savedViewRef.current;
     if (savedView) {
-      network.moveTo({ ...savedView, ...INSTANT });
+      restoreView(network, container, nodes, savedView);
     } else {
       placeOpeningView(network, container, nodes, selectedCallIdRef.current);
     }
@@ -221,47 +289,62 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       network.selectNodes([selectedCallIdRef.current]);
     }
 
-    // vis-network rescales the view with its container; keep the zoom so a bigger panel shows more.
-    network.on("resize", () => {
+    // vis-network keeps the centre and scales the view with its container.
+    // Keep the zoom and the top-left corner instead, so a bigger panel shows
+    // more to the right and below, and keep a selected node that was in view
+    // in view (closing the expanded graph on a double-clicked node). "resize"
+    // fires before vis moves the camera, so the reads here are pre-resize.
+    network.on("resize", (size: { oldWidth: number; oldHeight: number }) => {
       const scale = network.getScale();
+      const topLeft = network.DOMtoCanvas({ x: 0, y: 0 });
+      const selected = selectedCallIdRef.current;
+      const keepInView =
+        hasNode(nodes, selected) &&
+        !isOffscreen(screenBox(network, selected), { width: size.oldWidth, height: size.oldHeight })
+          ? selected
+          : null;
       queueMicrotask(() => {
-        if (networkRef.current === network) network.moveTo({ scale, ...INSTANT });
+        if (networkRef.current !== network) return;
+        const position = centreKeeping(topLeft, { x: 0, y: 0 }, scale, viewportOf(container));
+        network.moveTo({ position, scale, ...INSTANT });
+        if (keepInView) revealNode(network, container, keepInView);
       });
     });
 
     networkRef.current = network;
 
     return () => {
-      savedViewRef.current = { position: network.getViewPosition(), scale: network.getScale() };
+      savedViewRef.current = saveView(network, container);
       networkRef.current = null;
       network.destroy();
     };
   }, [calls.length, nodes, edges, selectCall, getNetworkOptions]);
 
   useEffect(() => {
+    const previous = selectedCallIdRef.current;
     selectedCallIdRef.current = selectedCallId;
     const network = networkRef.current;
     const container = containerRef.current;
-    if (!network || !container) return;
+    if (!network || !container || selectedCallId === previous) return;
 
     if (!hasNode(nodes, selectedCallId)) {
       network.unselectAll();
       return;
     }
     network.selectNodes([selectedCallId]);
-    const position = network.getPosition(selectedCallId);
-    if (isOffscreen(network.canvasToDOM(position), viewportOf(container))) {
-      network.moveTo({ position, ...INSTANT });
-    }
+    revealNode(network, container, selectedCallId);
   }, [selectedCallId, nodes]);
 
   useEffect(() => {
     if (!isExpanded) return;
+    // Capture phase, stopped: the traces-list panel also closes on Escape.
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsExpanded(false);
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setIsExpanded(false);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [isExpanded]);
 
   const zoomBy = (factor: number) => {
@@ -293,6 +376,9 @@ export function TraceGraph({ calls }: TraceGraphProps) {
       )}
       data-testid="trace-graph"
       data-expanded={isExpanded}
+      role={isExpanded ? "dialog" : undefined}
+      aria-modal={isExpanded || undefined}
+      aria-label={isExpanded ? "Trace graph" : undefined}
     >
       {isExpanded && (
         <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2 text-sm">

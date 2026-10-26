@@ -51,7 +51,8 @@ function calculateDepth(
 const MAX_LABEL_LENGTH = 32;
 
 export function graphLabel(name: string): string {
-  return name.length > MAX_LABEL_LENGTH ? `${name.slice(0, MAX_LABEL_LENGTH - 1)}…` : name;
+  const chars = Array.from(name);
+  return chars.length > MAX_LABEL_LENGTH ? `${chars.slice(0, MAX_LABEL_LENGTH - 1).join("")}…` : name;
 }
 
 function getFgColor() {
