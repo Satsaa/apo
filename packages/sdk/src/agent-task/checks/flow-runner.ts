@@ -381,29 +381,36 @@ function deriveEvaluatorType(
 }
 
 /**
- * Span output for one check: the verdict, the reasoning, and the
- * per-assertion expected/received pairs a trace reader needs without
- * hopping to the run report. `received` values ride the same truncation
- * contract as submitted check reports, so a judge over a large deliverable
- * does not bloat the span attribute.
+ * Span output for one check, in the judge span's `{ text, verdict }` shape:
+ * `text` is the reasoning, `verdict` the result with the per-assertion
+ * expected/received pairs a trace reader needs without hopping to the run
+ * report. The verdict exports on the tool-result channel, which the trace
+ * view renders as a JSON tree; a bare object would export as an assistant
+ * message holding its JSON as text. `received` values ride the same
+ * truncation contract as submitted check reports, so a judge over a large
+ * deliverable does not bloat the span attribute.
  */
 function summarizeCheckForSpan(result: unknown): Record<string, unknown> {
   const check = result as EvaluationItemResult;
+  const reasoning = check.reasoning.slice(0, 2000);
   return {
-    pass: check.pass,
-    reasoning: check.reasoning.slice(0, 2000),
-    evaluator_type: check.evaluator_type,
-    ...(check.judge ? { judge_model: check.judge.model } : {}),
-    ...(check.assertions
-      ? {
-          assertions: check.assertions.map((a) => ({
-            id: a.id,
-            pass: a.pass,
-            ...(a.expected !== undefined ? { expected: a.expected } : {}),
-            ...(a.received !== undefined ? { received: truncateReceivedValue(a.received) } : {}),
-          })),
-        }
-      : {}),
+    text: reasoning,
+    verdict: {
+      pass: check.pass,
+      reasoning,
+      evaluator_type: check.evaluator_type,
+      ...(check.judge ? { judge_model: check.judge.model } : {}),
+      ...(check.assertions
+        ? {
+            assertions: check.assertions.map((a) => ({
+              id: a.id,
+              pass: a.pass,
+              ...(a.expected !== undefined ? { expected: a.expected } : {}),
+              ...(a.received !== undefined ? { received: truncateReceivedValue(a.received) } : {}),
+            })),
+          }
+        : {}),
+    },
   };
 }
 

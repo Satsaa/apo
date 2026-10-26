@@ -135,18 +135,22 @@ describe("per-check spans (issue #344)", () => {
       judgeTracer: tracer,
     });
 
-    const output = steps[0]!.output as {
-      pass: boolean;
-      reasoning: string;
-      evaluator_type: string;
-      assertions: Array<{ id: string; pass: boolean; expected?: string; received?: unknown }>;
+    const { text, verdict } = steps[0]!.output as {
+      text: string;
+      verdict: {
+        pass: boolean;
+        reasoning: string;
+        evaluator_type: string;
+        assertions: Array<{ id: string; pass: boolean; expected?: string; received?: unknown }>;
+      };
     };
-    expect(output.pass).toBe(false);
-    expect(output.evaluator_type).toBe("code");
-    expect(output.assertions).toHaveLength(1);
+    expect(text).toBe(verdict.reasoning);
+    expect(verdict.pass).toBe(false);
+    expect(verdict.evaluator_type).toBe("code");
+    expect(verdict.assertions).toHaveLength(1);
     // t.check records expected = the matcher's description, received = the
     // actual value the run produced.
-    expect(output.assertions[0]).toMatchObject({ pass: false, received: "2" });
+    expect(verdict.assertions[0]).toMatchObject({ pass: false, received: "2" });
   });
 
   it("nests the judge span under the check that issued it", async () => {
@@ -276,10 +280,10 @@ describe("span output size discipline", () => {
       judgeTracer: tracer,
     });
 
-    const output = steps[0]!.output as {
-      assertions: Array<{ received: unknown }>;
+    const { verdict } = steps[0]!.output as {
+      verdict: { assertions: Array<{ received: unknown }> };
     };
-    expect(output.assertions[0]!.received).toMatchObject({
+    expect(verdict.assertions[0]!.received).toMatchObject({
       kind: "truncated",
       size_bytes: 5 * 1024 + 2,
     });
