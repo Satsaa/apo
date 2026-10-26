@@ -190,6 +190,9 @@ describe("TraceTree verdict rows", () => {
     await expandEvaluation();
 
     expect(visibleText(badgeOf("reply never mentions the note"))).toBe("pass");
+    expect(badgeOf("reply never mentions the note")).toHaveClass("text-success");
+    expect(badgeOf("ticket describes the problem")).toHaveClass("text-destructive");
+    expect(badgeOf("judge never answered")).toHaveClass("text-warning");
     expect(visibleText(badgeOf("ticket describes the problem"))).toBe("fail");
     expect(visibleText(badgeOf("judge never answered"))).toBe("no verdict");
     expect(badgeOf("judge never answered")).toHaveAttribute("title", expect.stringMatching(/without a verdict/));
@@ -361,6 +364,29 @@ describe("TraceTree verdict rows", () => {
     // The group row carries j1, so j1 is selected once for it and its own row.
     expect([press("ArrowDown"), press("ArrowDown"), press("ArrowDown")]).toEqual(["j1", "j2", "j2"]);
     expect([press("ArrowUp"), press("ArrowUp")]).toEqual(["j1", "turn"]);
+  });
+
+  it("reaches a legacy judge that renders first in the group but comes later in the calls", async () => {
+    // jA is first in call order, but j1 sits under task.turn, which renders before it.
+    const legacy = [
+      span("run", "apo.task.run", null, 0),
+      span("turn", "task.turn", "run", 1),
+      span("jA", "judge:a", "run", 3),
+      span("j1", "judge:nested", "turn", 2),
+      span("p1", "adapter.cleanup", "run", 4),
+    ];
+    getCallDetail.mockImplementation(async () => ({ tool_result: { pass: true } }));
+    renderTree(legacy);
+    await expandEvaluation();
+    await userEvent.click(screen.getByText("apo.task.run"));
+
+    const press = (key: string) => {
+      fireEvent.keyDown(window, { key });
+      return screen.getByTestId("selected").textContent ?? "";
+    };
+    const down = Array.from({ length: 5 }, () => press("ArrowDown"));
+    expect(down).toContain("j1");
+    expect(down).toContain("jA");
   });
 
   it("refetches verdicts a live stream flush aborted instead of caching them as unknown", async () => {

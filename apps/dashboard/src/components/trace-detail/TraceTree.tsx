@@ -526,7 +526,6 @@ export function TraceTree({
   // expands it in place.
   const [evalExpanded, setEvalExpanded] = useState(false);
   const evaluation = useMemo(() => findEvaluationGroup(calls), [calls]);
-  const judgeRoots = evaluation?.roots ?? [];
 
   const { selectCall, selectedCallId } = useSelection();
   // A deep link (?observation=, e.g. "View in trace" on a failed check,
@@ -681,7 +680,7 @@ export function TraceTree({
         node: {
           id: "evaluation-group",
           type: "call" as const,
-          call: evaluation.checksRun ?? judgeRoots[0],
+          call: split.first.node.call,
           level: 1,
           isLastSibling: true,
           hasChildren: true,
@@ -696,7 +695,7 @@ export function TraceTree({
       ...(evalExpanded ? evaluationSubtree : []),
       ...split.kept.slice(split.insertAt),
     ];
-  }, [calls, expanded, searchQuery, evaluation, judgeRoots, evalExpanded, spanVerdicts, phaseSummary]);
+  }, [calls, expanded, searchQuery, evaluation, evalExpanded, spanVerdicts, phaseSummary]);
   const timingBounds = useMemo(() => computeTimingBounds(calls), [calls]);
   const totalCost = useMemo(() => calls.reduce((sum, c) => sum + (c.cost ?? 0), 0), [calls]);
 
@@ -790,9 +789,9 @@ export function TraceTree({
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       // On a trace without checks.run the Evaluation row carries the first
-      // judge, which also has its own row when the group is expanded: moving
-      // down continues from the last row holding the selection, moving up
-      // from the first, so neither direction gets stuck between the two.
+      // judge row, which follows it when the group is expanded: moving down
+      // continues from the last row holding the selection, moving up from
+      // the first, so neither direction gets stuck between the two.
       if (e.key === "ArrowDown") {
         e.preventDefault();
         const idx = filteredTree.findLastIndex(n => n.node.call?.id === selectedCallId);
@@ -872,10 +871,10 @@ export function TraceTree({
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = filteredTree[virtualRow.index];
           const { node, treeLines } = row;
-          // The synthetic group row carries the checks.run span (or, on
-          // legacy traces, the first judge) as its call so keyboard nav can
-          // select it. It must be matched BEFORE the tree-row branch below,
-          // or it renders as a plain span row.
+          // The synthetic group row carries the first row it stands for (the
+          // checks.run span, or on legacy traces the first judge row) as its
+          // call so keyboard nav can select it. It must be matched BEFORE the
+          // tree-row branch below, or it renders as a plain span row.
           if ("isEvalGroup" in row && row.isEvalGroup) {
             return (
               <div

@@ -23,9 +23,23 @@ function brief(call: LoggedCall) {
 }
 
 describe("JudgmentBrief", () => {
+  it("shows a pass in green", () => {
+    const { badge, reasoning } = brief(judge({ tool_result: { reasoning: "states the problem", pass: true } }));
+    expect(badge).toHaveAttribute("data-verdict", "pass");
+    expect(badge).toHaveClass("text-success", "px-1.5", "tracking-wide");
+    expect(reasoning).not.toHaveClass("text-destructive");
+  });
+
+  it("shows a judge without a recorded verdict as unknown", () => {
+    const { badge, reasoning } = brief(judge({ tool_result: null }));
+    expect(badge).toHaveAttribute("data-verdict", "unknown");
+    expect(reasoning).not.toHaveClass("text-destructive");
+  });
+
   it("shows a fail in red", () => {
     const { badge, reasoning } = brief(judge({ tool_result: { reasoning: "too vague", pass: false } }));
     expect(badge).toHaveAttribute("data-verdict", "fail");
+    expect(badge).toHaveClass("text-destructive");
     expect(reasoning).toHaveClass("text-destructive");
   });
 

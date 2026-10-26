@@ -525,6 +525,7 @@ describe("partitionEvaluation", () => {
     const split = partitionEvaluation(rows, spanGroup)!;
     expect(split.kept.map((r) => r.node.id)).toEqual(["run", "load"]);
     expect(split.insertAt).toBe(2);
+    expect(split.first.node.id).toBe("cr");
   });
 });
 

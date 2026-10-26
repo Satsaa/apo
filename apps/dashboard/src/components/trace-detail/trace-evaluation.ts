@@ -366,6 +366,9 @@ export interface EvaluationPartition<T extends PartitionableRow> {
   /** Index into `kept` where the Evaluation row belongs: the position the
    * first judge row occupied in the unpartitioned tree. */
   insertAt: number;
+  /** The first member row in tree order (the checks.run span's, when it
+   * has one) — the row the Evaluation row stands in for. */
+  first: T;
 }
 
 /**
@@ -381,5 +384,5 @@ export function partitionEvaluation<T extends PartitionableRow>(
   if (firstMember === -1) return null;
   const kept = rows.filter((row) => !isMember(row));
   const insertAt = rows.slice(0, firstMember).filter((row) => !isMember(row)).length;
-  return { kept, insertAt };
+  return { kept, insertAt, first: rows[firstMember]! };
 }
