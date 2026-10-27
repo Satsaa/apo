@@ -26,8 +26,10 @@ from ..models import (
     AgentTaskRunSummary,
 )
 from ..models.schemas import (
+    RunLabel,
     as_task_run_status,
     as_trace_persistence_status,
+    run_labels_from_metadata,
 )
 from ..models.db import TaskExecutionAttemptDB
 from ..models.execution import (
@@ -96,12 +98,16 @@ def to_task_run_summary(
     tr: AgentTaskRunDB,
     trigger: AgentTaskRunTrigger | None = None,
     primary_model: str | None = None,
+    *,
+    environment: str | None = None,
+    labels: Mapping[str, RunLabel] | None = None,
 ) -> AgentTaskRunSummary:
     """Project a task run DB row to its summary view model.
 
     ``primary_model`` is the model used by the run's trace, looked up by
     the caller from ``RunDB`` via the run's ``trace_run_id``. It is a
     parameter (not read here) so this projection stays a pure function.
+    ``trigger``, ``environment`` and ``labels`` come from the parent Batch.
     """
     # the verdict is a persisted scalar projection; no need to load
     # the check evidence document to count verdicts.
@@ -148,6 +154,8 @@ def to_task_run_summary(
         passed_checks=passed_checks,
         failed_checks=max(total_checks - passed_checks, 0),
         trigger=trigger,
+        environment=environment,
+        labels=dict(labels) if labels else {},
         error_category=classify_run_outcome(
             tr.status, tr.error_message, tr.trace_persistence_status
         ),
@@ -228,6 +236,7 @@ def to_batch_run_summary(
         started_at=br.started_at,
         completed_at=br.completed_at,
         trigger=trigger,
+        labels=run_labels_from_metadata(br.run_metadata),
         configuration=configuration
         or AgentTaskBatchRunConfigurationSummary(state="unknown"),
     )
@@ -250,11 +259,14 @@ def to_batch_run_detail(
     a pure function.
     """
     trigger = parse_trigger(br.run_metadata)
+    labels = run_labels_from_metadata(br.run_metadata)
     task_run_summaries = [
         to_task_run_summary(
             tr,
             trigger,
             primary_model=model_map.get(tr.trace_run_id) if tr.trace_run_id and model_map else None,
+            environment=br.environment,
+            labels=labels,
         )
         for tr in task_runs
     ]
@@ -335,6 +347,7 @@ def to_batch_run_detail(
         started_at=br.started_at,
         completed_at=br.completed_at,
         trigger=trigger,
+        labels=labels,
         task_runs=task_run_summaries,
         failure_breakdown=breakdown,
         task_revision=task_revision,
