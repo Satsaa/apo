@@ -7,7 +7,15 @@ import { History } from "lucide-react";
 import {
   type AgentTaskBatchRunSummary,
   type ModelFacetOption,
+  type RunLabelFacets,
 } from "@/lib/agent-task-api";
+import {
+  isRunScopeActive,
+  parseRunScope,
+  runScopeFacets,
+  runScopeLabelParams,
+  type RunScope,
+} from "@/lib/run-scope";
 import { type ProjectTaskSource } from "@/lib/projects-api";
 import {
   Table,
@@ -39,6 +47,7 @@ export function RunsClient({
   pageSize,
   totalPages,
   modelFacets,
+  labelFacets,
   canDeleteRuns,
 }: {
   batchRuns: AgentTaskBatchRunSummary[];
@@ -49,6 +58,8 @@ export function RunsClient({
   pageSize: number;
   totalPages: number;
   modelFacets: ModelFacetOption[];
+  /** Environment and label options; null when they could not be loaded. */
+  labelFacets: RunLabelFacets | null;
   /** Caller's project role allows run deletion (owner/admin). */
   canDeleteRuns: boolean;
 }) {
@@ -59,12 +70,14 @@ export function RunsClient({
   const clientNow = useClientNow();
   const sourceUnconfigured = taskSource === null && totalCount === 0;
 
+  // A string[] value writes a repeated param (`?label=a:1&label=b:2`).
   const updateUrl = useCallback(
-    (updates: Record<string, string | null>) => {
+    (updates: Record<string, string | string[] | null>) => {
       const params = new URLSearchParams(searchParams.toString());
       for (const [key, value] of Object.entries(updates)) {
-        if (value) params.set(key, value);
-        else params.delete(key);
+        params.delete(key);
+        if (Array.isArray(value)) for (const item of value) params.append(key, item);
+        else if (value) params.set(key, value);
       }
       const qs = params.toString();
       router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
@@ -150,6 +163,23 @@ export function RunsClient({
     [projectId, router],
   );
 
+  // Environment and label scope: `?environment=a,b&label=<key>:<id>` (repeated).
+  const scope = useMemo(() => parseRunScope(searchParams), [searchParams]);
+  const setScope = useCallback(
+    (next: RunScope) => {
+      updateUrl({
+        environment: next.environments.join(",") || null,
+        label: runScopeLabelParams(next),
+        page: null,
+      });
+    },
+    [updateUrl],
+  );
+  const scopeFilters = useMemo(
+    () => runScopeFacets(labelFacets, scope, setScope),
+    [labelFacets, scope, setScope],
+  );
+
   const selectedEfforts = useMemo(() => {
     const raw = searchParams.get("effort") ?? "";
     return new Set(raw.split(",").filter(Boolean));
@@ -185,7 +215,8 @@ export function RunsClient({
     selectedStatuses.size > 0 ||
     urlSince !== null ||
     selectedModels.size > 0 ||
-    selectedEfforts.size > 0;
+    selectedEfforts.size > 0 ||
+    isRunScopeActive(scope);
 
   const clearFilters = useCallback(() => {
     // Cancel any in-flight debounced status write so it cannot resurrect a
@@ -198,6 +229,8 @@ export function RunsClient({
       model: null,
       effort: null,
       since: null,
+      environment: null,
+      label: null,
       page: null,
     });
   }, [updateUrl]);
@@ -259,6 +292,7 @@ export function RunsClient({
         selectedEfforts={selectedEfforts}
         modelOptions={modelOptions}
         effortOptions={effortOptions}
+        scopeFilters={scopeFilters}
         totalCount={totalCount}
         hasActiveFilters={hasActiveFilters}
         updateUrl={updateUrl}

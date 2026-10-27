@@ -3,17 +3,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { FilterBar } from "@/components/filter-bar";
+import type { RunLabelFacets } from "@/lib/agent-task-api";
 import { fetchSavedViews } from "@/lib/agent-task-view-api";
 import type { RunConfigModelFacet } from "@/lib/agent-task-view-api";
 import { TASK_RUN_STATUS_FILTERS } from "@/lib/filter-status";
 import { parseRunCohort, type RunCohort } from "@/lib/run-cohort";
+import {
+  EMPTY_RUN_SCOPE,
+  parseRunScope,
+  runScopeFacets,
+  writeRunScope,
+  type RunScope,
+} from "@/lib/run-scope";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 /**
  * The task detail page's run-history scope — the shared FilterBar over this
  * page's run-level status vocabulary.
  *
- * The URL is the source of truth: the bar reads `?model=&effort=&since=&status=&view=`,
+ * The URL is the source of truth: the bar reads
+ * `?model=&effort=&since=&status=&environment=&label=&view=`,
  * and every control change replaces the search params (never pushes — back must
  * leave the task page, not step through filter states). Status is comma-joined
  * (`?status=passed,error`), the same encoding every other multi-value
@@ -24,17 +33,20 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 export interface TaskRunHistoryScope extends RunCohort {
   status: Set<string>;
+  runScope: RunScope;
 }
 
 export function TaskRunHistoryControls({
   scope,
   facets,
+  labelFacets,
   viewLabel,
   onScopeChange,
   onReset,
 }: {
   scope: TaskRunHistoryScope;
   facets: RunConfigModelFacet[];
+  labelFacets: RunLabelFacets | null;
   viewLabel: string | null;
   onScopeChange: (next: Partial<TaskRunHistoryScope>) => void;
   onReset: () => void;
@@ -56,6 +68,7 @@ export function TaskRunHistoryControls({
       }
       effort={scope.effort}
       onEffortChange={(effort) => onScopeChange({ effort })}
+      facets={runScopeFacets(labelFacets, scope.runScope, (runScope) => onScopeChange({ runScope }))}
       since={scope.since}
       onSinceChange={(since) => onScopeChange({ since })}
       onClearAll={onReset}
@@ -100,9 +113,11 @@ function parseStatusParam(searchParams: URLSearchParams): Set<string> {
 export function RunHistoryScopeBar({
   projectId,
   facets,
+  labelFacets,
 }: {
   projectId: string;
   facets: RunConfigModelFacet[];
+  labelFacets: RunLabelFacets | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -111,7 +126,11 @@ export function RunHistoryScopeBar({
   const viewId = searchParams.get("view");
   const scope = useMemo<TaskRunHistoryScope>(() => {
     const cohort = parseRunCohort(Object.fromEntries(searchParams.entries()));
-    return { ...cohort, status: parseStatusParam(searchParams) };
+    return {
+      ...cohort,
+      status: parseStatusParam(searchParams),
+      runScope: parseRunScope(searchParams),
+    };
   }, [searchParams]);
 
   const [view, setView] = useState<SavedViewShape | null>(null);
@@ -152,6 +171,7 @@ export function RunHistoryScopeBar({
       if (next.status.size > 0) {
         params.set("status", Array.from(next.status).join(","));
       }
+      writeRunScope(params, next.runScope);
       if (keepView && viewId) params.set("view", viewId);
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname);
@@ -165,6 +185,7 @@ export function RunHistoryScopeBar({
       effort: patch.effort !== undefined ? patch.effort : scope.effort,
       since: patch.since !== undefined ? patch.since : scope.since,
       status: patch.status !== undefined ? patch.status : scope.status,
+      runScope: patch.runScope !== undefined ? patch.runScope : scope.runScope,
     }),
     [scope],
   );
@@ -190,7 +211,8 @@ export function RunHistoryScopeBar({
         patch.status !== undefined &&
         patch.model === undefined &&
         patch.effort === undefined &&
-        patch.since === undefined;
+        patch.since === undefined &&
+        patch.runScope === undefined;
       if (statusOnly && patch.status) {
         setStatusMirror(patch.status);
         const next = patch.status;
@@ -212,12 +234,23 @@ export function RunHistoryScopeBar({
     <TaskRunHistoryControls
       scope={{ ...scope, status: statusMirror }}
       facets={facets}
+      labelFacets={labelFacets}
       viewLabel={viewLabel}
       onScopeChange={handleScopeChange}
       onReset={() => {
         clearTimeout(statusTimer.current);
         setStatusMirror(new Set());
-        writeParams({ ...scope, model: null, effort: null, since: null, status: new Set() }, true);
+        writeParams(
+          {
+            ...scope,
+            model: null,
+            effort: null,
+            since: null,
+            status: new Set(),
+            runScope: EMPTY_RUN_SCOPE,
+          },
+          true,
+        );
       }}
     />
   );

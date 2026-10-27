@@ -1,8 +1,11 @@
 import {
+  fetchRunLabelFacets,
   getProjectAgentTask,
   listTaskRuns,
+  type RunLabelFacets,
   type TaskRunCohortFilter,
 } from "@/lib/agent-task-api";
+import { isRunScopeActive, parseRunScope, runScopeQuery } from "@/lib/run-scope";
 import { fetchTaskViewConfigFacets } from "@/lib/agent-task-view-api";
 import { getProject } from "@/lib/projects-api";
 import { Suspense } from "react";
@@ -25,14 +28,16 @@ const joinTaskId = (segments: string[]): string => segments.join("/");
 
 // The run-history scope, carried from the Tasks page's active evidence view
 // (`?model=&effort=&since=`, the same vocabulary the Runs page reads) plus
-// the detail page's own run-status chips and the informational `?view=`.
-// Absent params mean all-history. See `lib/run-cohort`.
+// the detail page's own run-status chips, the environment/label scope
+// (`?environment=&label=`, see `lib/run-scope`) and the informational
+// `?view=`. Absent params mean all-history. See `lib/run-cohort`.
 function parseScope(query: Record<string, string | string[] | undefined>): {
   cohort: TaskRunCohortFilter;
   scopeActive: boolean;
   viewId: string | null;
 } {
   const cohort = parseRunCohort(query);
+  const scope = parseRunScope(query);
   const statusRaw = query.status;
   const statusList = (Array.isArray(statusRaw) ? statusRaw : [statusRaw]).filter(
     (value): value is string => typeof value === "string" && value.length > 0,
@@ -44,9 +49,14 @@ function parseScope(query: Record<string, string | string[] | undefined>): {
     cohort.model !== null ||
     cohort.effort !== null ||
     cohort.since !== null ||
-    statusList.length > 0;
+    statusList.length > 0 ||
+    isRunScopeActive(scope);
   return {
-    cohort: statusList.length > 0 ? { ...cohort, status: statusList } : cohort,
+    cohort: {
+      ...cohort,
+      ...(statusList.length > 0 ? { status: statusList } : {}),
+      ...runScopeQuery(scope),
+    },
     scopeActive,
     viewId,
   };
@@ -94,6 +104,7 @@ export default async function TaskDetailPage({
   let task: Awaited<ReturnType<typeof getProjectAgentTask>> | null = null;
   let taskRuns = EMPTY_TASK_RUNS;
   let facets: Awaited<ReturnType<typeof fetchTaskViewConfigFacets>> = [];
+  let labelFacets: RunLabelFacets | null = null;
   let error: string | null = null;
   let canDeleteRuns = false;
 
@@ -102,15 +113,17 @@ export default async function TaskDetailPage({
     // TASK_RUN_HISTORY_LIMIT rows. Facets feed the control menus and are
     // best-effort (a facets failure must not blank the run history). The
     // project read feeds the run-delete role gate (best-effort too).
-    const [resolved, scoped, facetResult, project] = await Promise.all([
+    const [resolved, scoped, facetResult, labelFacetResult, project] = await Promise.all([
       getProjectAgentTask(projectId, taskId),
       listTaskRuns(taskId, projectId, cohort, TASK_RUN_HISTORY_LIMIT),
       fetchTaskViewConfigFacets(projectId).catch(() => []),
+      fetchRunLabelFacets(projectId).catch(() => null),
       getProject(projectId).catch(() => null),
     ]);
     task = resolved;
     taskRuns = scoped;
     facets = facetResult;
+    labelFacets = labelFacetResult;
     canDeleteRuns =
       project?.current_user_role === "owner" ||
       project?.current_user_role === "admin";
@@ -176,7 +189,7 @@ export default async function TaskDetailPage({
           Next.js would force the whole page into client-side rendering. */}
       <div className="border-b border-border bg-muted/10 px-6 py-2.5">
         <Suspense fallback={null}>
-          <RunHistoryScopeBar projectId={projectId} facets={facets} />
+          <RunHistoryScopeBar projectId={projectId} facets={facets} labelFacets={labelFacets} />
         </Suspense>
       </div>
 

@@ -1,8 +1,10 @@
 import {
+  fetchRunLabelFacets,
   listAgentTaskBatchRuns,
   type AgentTaskBatchRunSummary,
   type ModelFacetOption,
 } from "@/lib/agent-task-api";
+import { parseRunScope, runScopeQuery } from "@/lib/run-scope";
 import { getProject, type ProjectTaskSource } from "@/lib/projects-api";
 import { Suspense } from "react";
 import { RunsClient } from "./runs-client";
@@ -35,6 +37,7 @@ export default async function RunsPage({
   const models = modelParam ? modelParam.split(",").filter(Boolean) : undefined;
   const effortParam = typeof query.effort === "string" ? query.effort : undefined;
   const efforts = effortParam ? effortParam.split(",").filter(Boolean) : undefined;
+  const scope = parseRunScope(query);
 
   let batchRuns: AgentTaskBatchRunSummary[] = [];
   let totalCount = 0;
@@ -43,8 +46,11 @@ export default async function RunsPage({
   let error: string | null = null;
   let taskSource: ProjectTaskSource | null = null;
 
-  // Fetch runs list and project in parallel — they're independent.
+  // Fetch runs list, project and label facets in parallel — they're
+  // independent. Facets only feed the filter pickers, so a failure there must
+  // not blank the list.
   const projectPromise = getProject(projectId).catch(() => null);
+  const labelFacetsPromise = fetchRunLabelFacets(projectId).catch(() => null);
 
   try {
     const paginated = await listAgentTaskBatchRuns(projectId, {
@@ -53,6 +59,7 @@ export default async function RunsPage({
       since,
       model: models,
       effort: efforts,
+      ...runScopeQuery(scope),
       page,
       page_size: pageSize,
     });
@@ -65,7 +72,7 @@ export default async function RunsPage({
   }
 
   // Project result (started in parallel with the runs list).
-  const project = await projectPromise;
+  const [project, labelFacets] = await Promise.all([projectPromise, labelFacetsPromise]);
   taskSource = project?.task_source ?? null;
   const canDeleteRuns =
     project?.current_user_role === "owner" || project?.current_user_role === "admin";
@@ -82,6 +89,7 @@ export default async function RunsPage({
           pageSize={pageSize}
           totalPages={totalPages}
           modelFacets={modelFacets}
+          labelFacets={labelFacets}
           canDeleteRuns={canDeleteRuns}
         />
       </Suspense>

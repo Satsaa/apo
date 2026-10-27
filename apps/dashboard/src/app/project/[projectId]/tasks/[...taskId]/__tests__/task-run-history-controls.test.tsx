@@ -16,6 +16,7 @@ import {
   TaskRunHistoryControls,
 } from "../run-history-scope-bar";
 import type { RunConfigModelFacet } from "@/lib/agent-task-view-api";
+import { EMPTY_RUN_SCOPE } from "@/lib/run-scope";
 
 const FACETS: RunConfigModelFacet[] = [
   {
@@ -66,8 +67,9 @@ describe("TaskRunHistoryControls (presentational)", () => {
   it("renders the model label and an escape link", () => {
     render(
       <TaskRunHistoryControls
-        scope={{ model: "claude-opus-5", effort: null, since: null, status: new Set() }}
+        scope={{ model: "claude-opus-5", effort: null, since: null, status: new Set(), runScope: EMPTY_RUN_SCOPE }}
         facets={FACETS}
+        labelFacets={null}
         viewLabel={null}
         onScopeChange={() => {}}
         onReset={() => {}}
@@ -83,8 +85,9 @@ describe("TaskRunHistoryControls (presentational)", () => {
     const view = (model: string | null) =>
       render(
         <TaskRunHistoryControls
-          scope={{ model, effort: null, since: null, status: new Set() }}
+          scope={{ model, effort: null, since: null, status: new Set(), runScope: EMPTY_RUN_SCOPE }}
           facets={FACETS}
+          labelFacets={null}
           viewLabel={null}
           onScopeChange={() => {}}
           onReset={() => {}}
@@ -110,8 +113,9 @@ describe("TaskRunHistoryControls (presentational)", () => {
     const onScopeChange = vi.fn();
     render(
       <TaskRunHistoryControls
-        scope={{ model: null, effort: null, since: null, status: new Set(["failed"]) }}
+        scope={{ model: null, effort: null, since: null, status: new Set(["failed"]), runScope: EMPTY_RUN_SCOPE }}
         facets={FACETS}
+        labelFacets={null}
         viewLabel={null}
         onScopeChange={onScopeChange}
         onReset={() => {}}
@@ -140,8 +144,9 @@ describe("TaskRunHistoryControls (presentational)", () => {
     const view = (viewLabel: string | null) =>
       render(
         <TaskRunHistoryControls
-          scope={{ model: null, effort: null, since: null, status: new Set() }}
+          scope={{ model: null, effort: null, since: null, status: new Set(), runScope: EMPTY_RUN_SCOPE }}
           facets={FACETS}
+          labelFacets={null}
           viewLabel={viewLabel}
           onScopeChange={() => {}}
           onReset={() => {}}
@@ -157,8 +162,9 @@ describe("TaskRunHistoryControls (presentational)", () => {
     const onReset = vi.fn();
     render(
       <TaskRunHistoryControls
-        scope={{ model: "claude-opus-5", effort: null, since: "7d", status: new Set() }}
+        scope={{ model: "claude-opus-5", effort: null, since: "7d", status: new Set(), runScope: EMPTY_RUN_SCOPE }}
         facets={FACETS}
+        labelFacets={null}
         viewLabel={null}
         onScopeChange={() => {}}
         onReset={onReset}
@@ -172,7 +178,7 @@ describe("TaskRunHistoryControls (presentational)", () => {
 describe("RunHistoryScopeBar (URL ownership)", () => {
   it("replaces the URL with scope params, comma-joined for status, omitting empties", async () => {
     searchParamsHolder = new URLSearchParams("model=claude-opus-5");
-    const { rerender } = render(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    const { rerender } = render(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
 
     // Status writes are debounced (a burst of picks lands as one URL write),
     // so each pick is awaited via the replace it eventually triggers.
@@ -183,14 +189,14 @@ describe("RunHistoryScopeBar (URL ownership)", () => {
       { timeout: 1500 },
     );
     await userEvent.keyboard("{Escape}");
-    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
     await userEvent.click(screen.getByRole("button", { name: "Status filter" }));
     await userEvent.click(screen.getByRole("menuitemcheckbox", { name: /errored/i }));
     await waitFor(
       () => expect(replaceMock).toHaveBeenCalledTimes(2),
       { timeout: 1500 },
     );
-    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
 
     const first = replaceMock.mock.calls[0]?.[0] as string;
     const second = replaceMock.mock.calls[1]?.[0] as string;
@@ -205,7 +211,7 @@ describe("RunHistoryScopeBar (URL ownership)", () => {
 
   it("reset strips only the scope params and keeps the view identity", async () => {
     searchParamsHolder = new URLSearchParams("model=claude-opus-5&since=7d&view=v1");
-    render(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    render(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
 
     await userEvent.click(screen.getByText("All history"));
 
@@ -222,10 +228,10 @@ describe("RunHistoryScopeBar (URL ownership)", () => {
     ]);
 
     const { rerender } = render(
-      <RunHistoryScopeBar projectId="acme" facets={FACETS} />,
+      <RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />,
     );
     searchParamsHolder = new URLSearchParams("model=claude-opus-5&since=7d&view=v1");
-    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
 
     await waitFor(() => {
       expect(screen.getByText("scoped to view: My Opus view")).toBeInTheDocument();
@@ -233,7 +239,7 @@ describe("RunHistoryScopeBar (URL ownership)", () => {
 
     // Diverge: the model no longer matches the view's — the chip disappears.
     searchParamsHolder = new URLSearchParams("model=deepseek-v4&since=7d&view=v1");
-    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    rerender(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
     await waitFor(() => {
       expect(screen.queryByText(/scoped to view:/)).not.toBeInTheDocument();
     });
@@ -242,8 +248,37 @@ describe("RunHistoryScopeBar (URL ownership)", () => {
   it("never renders a chip for an unknown view id", async () => {
     savedViewsMock = vi.fn().mockResolvedValue([]);
     searchParamsHolder = new URLSearchParams("view=ghost");
-    render(<RunHistoryScopeBar projectId="acme" facets={FACETS} />);
+    render(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={null} />);
     await waitFor(() => expect(savedViewsMock).toHaveBeenCalled());
     expect(screen.queryByText(/scoped to view:/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the environment and label scope across other changes and strips it on reset", async () => {
+    searchParamsHolder = new URLSearchParams(
+      "model=claude-opus-5&environment=prod&label=customer:c-1&label=agent:a-1",
+    );
+    const labelFacets = {
+      environments: [
+        { value: "prod", count: 2 },
+        { value: "staging", count: 1 },
+      ],
+      labels: [{ key: "customer", values: [{ id: "c-1", name: "Acme", count: 2 }] }],
+    };
+    render(<RunHistoryScopeBar projectId="acme" facets={FACETS} labelFacets={labelFacets} />);
+    expect(screen.getByRole("combobox", { name: "customer filter" })).toHaveTextContent("Acme");
+
+    await userEvent.click(screen.getByRole("button", { name: "Status filter" }));
+    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: /passed/i }));
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledTimes(1), { timeout: 1500 });
+    const written = String(replaceMock.mock.calls[0]?.[0] ?? "");
+    const kept = new URLSearchParams(written.split("?")[1] ?? "");
+    expect(kept.get("environment")).toBe("prod");
+    expect(kept.getAll("label")).toEqual(["customer:c-1", "agent:a-1"]);
+
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByText("All history"));
+    const reset = replaceMock.mock.calls.at(-1)?.[0] as string;
+    expect(reset).not.toContain("environment=");
+    expect(reset).not.toContain("label=");
   });
 });

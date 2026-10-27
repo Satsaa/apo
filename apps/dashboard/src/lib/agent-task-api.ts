@@ -83,6 +83,31 @@ export interface ModelFacetOption {
   archived: boolean;
 }
 
+/**
+ * A caller-defined run label (`run_metadata.labels.<key>`). `id` is stable and
+ * is what filters match; `name` is display only and may change between runs.
+ */
+export interface RunLabel {
+  id: string;
+  name: string;
+}
+
+/** A run's labels by key, e.g. `{ customer: { id: "c-1", name: "Acme" } }`. */
+export type RunLabels = Record<string, RunLabel>;
+
+export interface RunLabelFacetValue {
+  id: string;
+  /** The name on the newest batch carrying this id. */
+  name: string;
+  count: number;
+}
+
+/** Filter options for the environment and label dimensions of a project's runs. */
+export interface RunLabelFacets {
+  environments: { value: string; count: number }[];
+  labels: { key: string; values: RunLabelFacetValue[] }[];
+}
+
 export interface PaginatedBatchRunSummary {
   data: AgentTaskBatchRunSummary[];
   total_count: number;
@@ -154,6 +179,9 @@ export interface AgentTaskRunSummary {
   error_category: string | null;
   /** adapter-reported model/effort. Absent when not reported. */
   run_configuration: AgentTaskRunConfiguration | null;
+  /** The batch's environment and labels; null/empty for a run without a batch. */
+  environment: string | null;
+  labels: RunLabels;
 }
 
 export interface GenerationExecutionSummary {
@@ -393,6 +421,7 @@ export interface AgentTaskBatchRunSummary {
   total_model_time_ms?: number | null;
   /** derived configuration summary (uniform/mixed/partial/unknown). */
   configuration: AgentTaskBatchRunConfigurationSummary;
+  labels: RunLabels;
 }
 
 export interface AgentTaskBatchRunDetail extends AgentTaskBatchRunSummary {
@@ -691,6 +720,10 @@ export interface TaskRunCohortFilter {
   since?: string | null;
   /** OR'd run statuses (repeatable `?status=`). */
   status?: string[];
+  /** OR'd batch environments. */
+  environment?: string[];
+  /** `<key>:<id>` label filters: OR within a key, AND across keys. */
+  label?: string[];
 }
 
 export const listTaskRuns = (
@@ -708,6 +741,8 @@ export const listTaskRuns = (
       effort: cohort?.effort,
       since: cohort?.since,
       status: cohort?.status,
+      environment: cohort?.environment,
+      label: cohort?.label,
       limit,
     },
   });
@@ -725,6 +760,9 @@ export const listAgentTaskBatchRuns = (
     model?: string[];
     effort?: string[];
     since?: string;
+    environment?: string[];
+    /** `<key>:<id>` label filters: OR within a key, AND across keys. */
+    label?: string[];
     page?: number;
     page_size?: number;
   },
@@ -738,10 +776,19 @@ export const listAgentTaskBatchRuns = (
       model: opts?.model?.join(",") || undefined,
       effort: opts?.effort?.join(",") || undefined,
       since: opts?.since,
+      environment: opts?.environment?.join(",") || undefined,
+      label: opts?.label,
       page: opts?.page,
       page_size: opts?.page_size,
     },
   });
+
+/** Distinct environments and label ids recorded on a project's batches. */
+export const fetchRunLabelFacets = (projectId: string): Promise<RunLabelFacets> =>
+  apiClient(
+    `/v1/projects/${encodeURIComponent(projectId)}/agent-task-run-label-facets`,
+    NO_CACHE,
+  );
 
 export const getAgentTaskBatchRun = (
   batchRunId: string,

@@ -96,6 +96,7 @@ export function TaskRunHistory({ runs, canDelete = false }: TaskRunHistoryProps)
               onToggleCompare={() => toggleCompare(run.id)}
               canDelete={canDelete}
               onDelete={() => handleDeleted(run.id)}
+              showScope
             />
           ))}
         </TableBody>
