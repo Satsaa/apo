@@ -129,6 +129,14 @@ Use the same origin for every client, with the appropriate path:
 
 The CLI and OTEL exporter still require their normal API credentials. Publishing Apo does not enable anonymous access to your data, admission to a hosted installation is invitation-only, and every protected route requires an Apo session, API key, or task token.
 
+To provision a project API key for an automated caller without the dashboard, run the admin command inside the backend container:
+
+```bash
+docker compose exec backend python -m apo.admin create-api-key --project <project-id> --name <name> [--scope ingest|full] [--created-by <user id or email>]
+```
+
+It creates the key exactly as the dashboard does and prints one JSON object, `{"public_key", "secret_key", "name", "project", "scope"}`; the secret is not shown again. A key acts as the user who created it, so it stops working when that user leaves the project: `--created-by` must be a project member and defaults to the project's first owner. The default `ingest` scope is enough to create caller runs and send traces; `full` also reaches management endpoints. An unknown project is refused with a nonzero exit.
+
 One deliberate exception: the read-only **demo workspace** is browsable without an account, so visitors can see Apo in action before committing to anything. Anonymous visitors can only ever read the demo project (at the viewer role); every mutation and every other project behaves exactly like an unauthenticated request. The demo's data is a frozen, fixture-shipped snapshot, nothing a visitor does can change it, and nothing of yours is exposed.
 
 | Variable | Default | Effect |
