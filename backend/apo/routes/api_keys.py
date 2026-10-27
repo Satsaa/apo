@@ -8,7 +8,6 @@ Keys are SHA256 hashed in storage and only shown once at creation time.
 """
 
 import hashlib
-import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -39,6 +38,7 @@ from ..models.schemas import (
     ApiKeyUsageDay,
 )
 from ..services.demo_workspace import require_project_not_demo
+from ..services.project_api_keys import create_project_api_key
 from ..services.project_memberships import (
     enforce_project_role_from_request,
     list_projects_with_minimum_role,
@@ -153,7 +153,7 @@ def create_api_key(
     The public key is always visible in the key list.
     """
     user_id = get_user_id(request)
-    scope = _validate_scope(body.scope)
+    _ = _validate_scope(body.scope)
     expires_at = _parse_expires_at(body.expires_at)
 
     require_project_not_demo(body.project)
@@ -167,33 +167,16 @@ def create_api_key(
         request, session, body.project, minimum_role="admin"
     )
 
-    public_key, secret_key, hashed_secret_key, display_secret_key = generate_key_pair()
-
-    # Explicit body quota wins; otherwise the env default applies
-    # to NEW keys only (existing keys are untouched — bulk-apply in the UI).
-    quota = body.daily_span_quota
-    if quota is None:
-        try:
-            default_quota = int(os.environ.get("APO_DEFAULT_DAILY_SPAN_QUOTA", "0"))
-        except ValueError:
-            default_quota = 0
-        quota = default_quota if default_quota > 0 else None
-
-    api_key = ApiKeyDB(
-        name=body.name,
-        prefix=public_key[:8],
-        public_key=public_key,
-        hashed_secret_key=hashed_secret_key,
-        display_secret_key=display_secret_key,
+    minted = create_project_api_key(
+        session,
         project=body.project,
+        name=body.name,
+        scope=body.scope,
         created_by=user_id,
-        scope=scope,
         expires_at=expires_at,
-        daily_span_quota=quota,
+        daily_span_quota=body.daily_span_quota,
     )
-    session.add(api_key)
-    session.commit()
-    session.refresh(api_key)
+    api_key = minted.row
 
     return ApiKeyCreateResponse(
         id=api_key.id,
@@ -207,9 +190,9 @@ def create_api_key(
         created_at=api_key.created_at.isoformat(),
         last_used_at=api_key.last_used_at.isoformat() if api_key.last_used_at else None,
         expires_at=api_key.expires_at.isoformat() if api_key.expires_at else None,
-        public_key=public_key,
-        secret_key=secret_key,
-        display_secret_key=display_secret_key,
+        public_key=minted.public_key,
+        secret_key=minted.secret_key,
+        display_secret_key=minted.display_secret_key,
     )
 
 
